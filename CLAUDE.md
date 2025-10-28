@@ -50,3 +50,8 @@ source("main.R")
 - Country groupings are defined at the top of main.R and should be updated there if partner definitions change
 - The `partner` classification uses a cascading `case_when()` that checks codes in order (lines 76-84), so order matters
 - File path is currently hardcoded to a specific Windows user directory and will need updating for different environments
+
+## Style
+- never use na.rm = T or any other kind of na filters. if we have missings that's a sign that som
+thing is wrong and it shoudl break accordingly!
+- use single quotes for strings
