@@ -166,28 +166,57 @@ calc_import_shares <- function(hs6_codes, data = hs6_by_country) {
 #'
 #' @param bases Data frame with tariff bases (default: bases_232)
 #' @param params Tariff parameters list (default: params_232)
+#' @param usmca_shares Data frame with USMCA shares by partner and GTAP sector
+#' @param us_auto_assembly_share Share of US content in auto assembly
 #'
 #' @return Data frame with columns: partner, gtap_code, etr, etr_upper
-calc_weighted_etr <- function(bases = bases_232, params = params_232) {
+calc_weighted_etr <- function(bases = bases_232, params = params_232,
+                              usmca_shares = usmca_shares,
+                              us_auto_assembly_share = us_auto_assembly_share) {
 
-  # Extract rates from params
-  rates <- map(names(params), ~ {
+  # Extract rates and usmca_exempt flags from params
+  rates_and_exemptions <- map(names(params), ~ {
     tibble(
-      tariff  = .x,
-      partner = names(params[[.x]]$rate),
-      rate    = unlist(params[[.x]]$rate)
+      tariff       = .x,
+      partner      = names(params[[.x]]$rate),
+      rate         = unlist(params[[.x]]$rate),
+      usmca_exempt = params[[.x]]$usmca_exempt
     )
-  }) %>% 
+  }) %>%
     bind_rows()
 
-  # Join rates to bases and calculate weighted ETR
+  # Reshape USMCA shares long by country
+  usmca_long <- usmca_shares %>%
+    pivot_longer(cols = -gtap_code, names_to = 'partner', values_to = 'usmca_share') %>%
+    mutate(usmca_share = replace_na(usmca_share, 0))
+
+  # Join rates, exemptions, and USMCA shares to bases
   bases %>%
-    left_join(rates, by = c('tariff', 'partner')) %>%
-    mutate(rate = replace_na(rate, 0)) %>%
+    left_join(rates_and_exemptions, by = c('tariff', 'partner')) %>%
+    left_join(usmca_long, by = c('partner', 'gtap_code')) %>%
+    mutate(
+      rate = replace_na(rate, 0),
+      usmca_exempt = replace_na(usmca_exempt, 0),
+      usmca_share = replace_na(usmca_share, 0)
+    ) %>%
+    
+    # Apply USMCA exemption logic
+    mutate(
+      adjusted_usmca_share = if_else(
+        tariff == 'automobiles_passenger_and_light_trucks',
+        usmca_share * us_auto_assembly_share,
+        usmca_share
+      ),
+      adjusted_rate = if_else(
+        usmca_exempt == 1 & partner %in% c('canada', 'mexico'),
+        rate * (1 - adjusted_usmca_share),
+        rate
+      )
+    ) %>%
     group_by(partner, gtap_code) %>%
     summarise(
-      etr       = sum(share * rate),
-      etr_upper = sum(share_upper * rate),
+      etr       = sum(share * adjusted_rate),
+      etr_upper = sum(share_upper * adjusted_rate),
       .groups = 'drop'
     )
 }
@@ -228,15 +257,3 @@ bases <- params_232 %>%
       )
   )
 
-
-calc_weighted_etr(bases, params_232) %>% 
-  left_join(
-    hs6_by_country %>% 
-      group_by(partner, gtap_code), 
-    by = c('partner', 'gtap_code')
-  ) %>% 
-  group_by(partner) %>% 
-  summarise(
-    etr       = weighted.mean(etr, imports),
-    etr_upper = weighted.mean(etr_upper, imports)
-  )
