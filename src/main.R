@@ -304,10 +304,10 @@ bases <- params_232 %>%
   # Get bases for each 232 tariff
   map(~ {
 
-    full_codes <- params_232[[.x]]$base$full
-    all_codes  <- c(params_232[[.x]]$base$full, params_232[[.x]]$base$partial)
+    definite_codes <- params_232[[.x]]$base$definite
+    all_codes      <- c(params_232[[.x]]$base$definite, params_232[[.x]]$base$maybe)
 
-    share       <- calc_import_shares(full_codes)
+    share       <- calc_import_shares(definite_codes)
     share_upper <- calc_import_shares(all_codes) %>% rename(share_upper = share) 
 
     share %>%
