@@ -21,6 +21,8 @@ us_auto_content_share  = 0.4
 us_auto_assembly_share = 0.33
 auto_rebate_rate       = 0.0375 
 
+# Adjust 232 auto rates for rebate
+
 
 
 #----------------------
@@ -238,62 +240,6 @@ calc_weighted_etr <- function(bases_data = bases, params_data = params_232,
 }
 
 
-#' Write shock commands to txt file for downstream model
-#'
-#' @param etr_data Data frame with columns: partner, gtap_code, etr
-#' @param output_file Path to output file (default: 'output/shocks.txt')
-#'
-#' @return Writes file and returns invisibly
-write_shock_commands <- function(etr_data, output_file = 'output/shocks.txt') {
-
-  # Create output directory if it doesn't exist
-  dir.create('output', showWarnings = FALSE)
-
-  # Map partner names to proper format
-  partner_map <- c(
-    'china'  = 'China',
-    'canada' = 'Canada',
-    'mexico' = 'Mexico',
-    'row'    = 'ROW',
-    'japan'  = 'Japan',
-    'eu'     = 'EU',
-    'uk'     = 'UK'
-  )
-
-  # Define partner order for output
-  partner_order <- c('China', 'ROW', 'Canada', 'Mexico', 'Japan', 'EU', 'UK')
-
-  # Prepare data
-  shock_commands <- etr_data %>%
-    mutate(
-      partner_fmt = partner_map[partner],
-      etr_pct = round(etr * 100, 1)
-    ) %>%
-    filter(etr_pct > 0) %>%
-    arrange(match(partner_fmt, partner_order), gtap_code) %>%
-    mutate(
-      command = sprintf('Shock tms("%s","%s","USA") = %.1f;', gtap_code, partner_fmt, etr_pct)
-    )
-
-  # Write to file with blank lines between partners
-  con <- file(output_file, 'w')
-
-  for (p in partner_order) {
-    partner_commands <- shock_commands %>% filter(partner_fmt == p)
-
-    if (nrow(partner_commands) > 0) {
-      writeLines(partner_commands$command, con)
-      writeLines('', con)  # Blank line after each partner
-    }
-  }
-
-  close(con)
-
-  message(sprintf('Wrote %d shock commands to %s', nrow(shock_commands), output_file))
-  invisible(shock_commands)
-}
-
-
 #----------------------------------
 # Calculate tax bases for 232 tariffs
 #----------------------------------
@@ -330,8 +276,4 @@ bases <- params_232 %>%
   )
 
 
-# Calculate ETRs
-etrs <- calc_weighted_etr()
-
-# Write shock commands to file
-write_shock_commands(etrs)
+calc_weighted_etr()
