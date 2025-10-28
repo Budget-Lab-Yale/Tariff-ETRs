@@ -13,11 +13,16 @@ params_232 <- read_yaml('config/232.yaml')
 # IEEPA rates
 params_ieepa = list()
 
-# Other params
-us_auto_assembly_share = 0.4
-
 # USMCA share of trade by sector
 usmca_shares = read_csv('./resources/usmca_shares.csv')
+
+# Other params
+us_auto_content_share  = 0.4
+us_auto_assembly_share = 0.33
+auto_rebate_rate       = 0.0375 
+
+# Adjust 232 auto rates for rebate
+
 
 
 #----------------------
@@ -124,9 +129,9 @@ hs6_by_country <- files_2024 %>%
   relocate(gtap_code, .after = hs6_code)
 
 
-#----------------
+#-----------
 # Functions
-#----------------
+#-----------
 
 #' Calculate import shares for a subset of HS6 codes
 #'
@@ -164,34 +169,38 @@ calc_import_shares <- function(hs6_codes, data = hs6_by_country) {
 
 #' Calculate weighted ETR by partner and GTAP sector
 #'
-#' @param bases Data frame with tariff bases (default: bases_232)
-#' @param params Tariff parameters list (default: params_232)
-#' @param usmca_shares Data frame with USMCA shares by partner and GTAP sector
-#' @param us_auto_assembly_share Share of US content in auto assembly
+#' @param bases_data Data frame with tariff bases
+#' @param params_data Tariff parameters list
+#' @param usmca_data Data frame with USMCA shares by partner and GTAP sector
+#' @param us_auto_share Share of US content in auto assembly
+#' @param auto_rebate Auto rebate rate
+#' @param us_assembly_share Share of US assembly in autos
 #'
 #' @return Data frame with columns: partner, gtap_code, etr, etr_upper
-calc_weighted_etr <- function(bases = bases_232, params = params_232,
-                              usmca_shares = usmca_shares,
-                              us_auto_assembly_share = us_auto_assembly_share) {
+calc_weighted_etr <- function(bases_data = bases, params_data = params_232,
+                              usmca_data = usmca_shares,
+                              us_auto_share = us_auto_content_share,
+                              auto_rebate = auto_rebate_rate,
+                              us_assembly_share = us_auto_assembly_share) {
 
   # Extract rates and usmca_exempt flags from params
-  rates_and_exemptions <- map(names(params), ~ {
+  rates_and_exemptions <- map(names(params_data), ~ {
     tibble(
       tariff       = .x,
-      partner      = names(params[[.x]]$rate),
-      rate         = unlist(params[[.x]]$rate),
-      usmca_exempt = params[[.x]]$usmca_exempt
+      partner      = names(params_data[[.x]]$rate),
+      rate         = unlist(params_data[[.x]]$rate),
+      usmca_exempt = params_data[[.x]]$usmca_exempt
     )
   }) %>%
     bind_rows()
 
   # Reshape USMCA shares long by country
-  usmca_long <- usmca_shares %>%
+  usmca_long <- usmca_data %>%
     pivot_longer(cols = -gtap_code, names_to = 'partner', values_to = 'usmca_share') %>%
     mutate(usmca_share = replace_na(usmca_share, 0))
 
   # Join rates, exemptions, and USMCA shares to bases
-  bases %>%
+  bases_data %>%
     left_join(rates_and_exemptions, by = c('tariff', 'partner')) %>%
     left_join(usmca_long, by = c('partner', 'gtap_code')) %>%
     mutate(
@@ -199,12 +208,21 @@ calc_weighted_etr <- function(bases = bases_232, params = params_232,
       usmca_exempt = replace_na(usmca_exempt, 0),
       usmca_share = replace_na(usmca_share, 0)
     ) %>%
-    
+
+    # Apply auto rebate adjustment for all countries
+    mutate(
+      rate = if_else(
+        tariff %in% c('automobiles_passenger_and_light_trucks', 'automobile_parts'),
+        rate - (auto_rebate * us_assembly_share),
+        rate
+      )
+    ) %>%
+
     # Apply USMCA exemption logic
     mutate(
       adjusted_usmca_share = if_else(
-        tariff == 'automobiles_passenger_and_light_trucks',
-        usmca_share * us_auto_assembly_share,
+        tariff %in% c('automobiles_passenger_and_light_trucks', 'automobile_parts'),
+        usmca_share * us_auto_share,
         usmca_share
       ),
       adjusted_rate = if_else(
@@ -257,3 +275,5 @@ bases <- params_232 %>%
       )
   )
 
+
+calc_weighted_etr()
