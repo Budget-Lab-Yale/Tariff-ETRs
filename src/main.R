@@ -1,14 +1,28 @@
 library(tidyverse)
+library(yaml)
 
-#----------------
-# Load crosswalk
-#----------------
 
-crosswalk <- read_csv('resources/hs6_gtap_crosswalk.csv', show_col_types = FALSE)
 
-#----------------
-# Set parameters
-#----------------
+#---------------------------
+# Set tariff law parameters
+#---------------------------
+
+# Section 232 tariffs
+params_232 <- read_yaml('config/232.yaml')
+
+# IEEPA rates
+params_ieepa = list()
+
+# Other params
+us_auto_assembly_share = 0.4
+
+# USMCA share of trade by sector
+usmca_shares = read_csv('./resources/usmca_shares.csv')
+
+
+#----------------------
+# Set other parameters
+#----------------------
 
 china_codes  <- c('5700')   # China
 canada_codes <- c('1220')   # Canada
@@ -48,10 +62,16 @@ eu_codes <- c(
 )
 
 
-# Get list of all 2024 files
+#------------------
+# Read import data
+#------------------
+
+# Read GTAP crosswalk
+crosswalk <- read_csv('resources/hs6_gtap_crosswalk.csv', show_col_types = FALSE)
+
+# Get list of all 2024 import files
 file_pattern <- 'dporths6ir24'
 files_2024   <- list.files(path = 'C:/Users/jar335/Downloads', pattern = file_pattern, full.names = TRUE)
-
 
 # Define column positions based on the file specification
 col_positions <- fwf_positions(
@@ -59,7 +79,6 @@ col_positions <- fwf_positions(
   end       = c(6, 10, 14, 18, 20, 35),
   col_names = c('hs6_code', 'cty_code', 'port_code', 'year', 'month', 'value_mo')
 )
-
 
 # Build data
 hs6_by_country <- files_2024 %>%
@@ -136,14 +155,88 @@ calc_import_shares <- function(hs6_codes, data = hs6_by_country) {
   # Join and calculate shares
   result <- total_imports %>%
     left_join(subset_imports, by = c('partner', 'gtap_code')) %>%
-    mutate(
-      subset_imports = replace_na(subset_imports, 0),
-      share          = subset_imports / total_imports
-    )
+    mutate(share = replace_na(subset_imports / total_imports, 0)) %>%
+    select(-subset_imports, -total_imports)
 
   return(result)
 }
 
 
+#' Calculate weighted ETR by partner and GTAP sector
+#'
+#' @param bases Data frame with tariff bases (default: bases_232)
+#' @param params Tariff parameters list (default: params_232)
+#'
+#' @return Data frame with columns: partner, gtap_code, etr, etr_upper
+calc_weighted_etr <- function(bases = bases_232, params = params_232) {
+
+  # Extract rates from params
+  rates <- map(names(params), ~ {
+    tibble(
+      tariff  = .x,
+      partner = names(params[[.x]]$rate),
+      rate    = unlist(params[[.x]]$rate)
+    )
+  }) %>% 
+    bind_rows()
+
+  # Join rates to bases and calculate weighted ETR
+  bases %>%
+    left_join(rates, by = c('tariff', 'partner')) %>%
+    mutate(rate = replace_na(rate, 0)) %>%
+    group_by(partner, gtap_code) %>%
+    summarise(
+      etr       = sum(share * rate),
+      etr_upper = sum(share_upper * rate),
+      .groups = 'drop'
+    )
+}
 
 
+#----------------------------------
+# Calculate tax bases for 232 tariffs
+#----------------------------------
+
+bases <- params_232 %>%
+  names() %>%
+
+  # Get bases for each 232 tariff
+  map(~ {
+
+    full_codes <- params_232[[.x]]$base$full
+    all_codes  <- c(params_232[[.x]]$base$full, params_232[[.x]]$base$partial)
+
+    share       <- calc_import_shares(full_codes)
+    share_upper <- calc_import_shares(all_codes) %>% rename(share_upper = share) 
+
+    share %>%
+      left_join(share_upper, by = c('partner', 'gtap_code')) %>%
+      mutate(tariff = .x, .before = 1) %>%
+      return()
+  }) %>%
+  bind_rows() %>%
+
+  # Add residual -- tax base uncovered by 232
+  bind_rows(
+    (.) %>%
+      group_by(partner, gtap_code) %>%
+      summarise(
+        tariff      = 'residual',
+        share       = 1 - sum(share),
+        share_upper = 1 - sum(share_upper),
+        .groups = 'drop'
+      )
+  )
+
+
+calc_weighted_etr(bases, params_232) %>% 
+  left_join(
+    hs6_by_country %>% 
+      group_by(partner, gtap_code), 
+    by = c('partner', 'gtap_code')
+  ) %>% 
+  group_by(partner) %>% 
+  summarise(
+    etr       = weighted.mean(etr, imports),
+    etr_upper = weighted.mean(etr_upper, imports)
+  )
