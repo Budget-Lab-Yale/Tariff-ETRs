@@ -51,10 +51,11 @@ files_2024   <- list.files(path = "C:/Users/jar335/Downloads", pattern = file_pa
 col_positions <- fwf_positions(
   start     = c(1, 7, 11, 15, 19, 21),
   end       = c(6, 10, 14, 18, 20, 35),
-  col_names = c("commodity", "cty_code", "port_code", "year", "month", "value_mo")
+  col_names = c("hs6_code", "cty_code", "port_code", "year", "month", "value_mo")
 )
 
 
+# Build data
 hs6_by_country <- files_2024 %>%
   
   # Read and combine all files
@@ -62,12 +63,12 @@ hs6_by_country <- files_2024 %>%
     file = .x,
     col_positions = col_positions,
     col_types = cols(
-      commodity = col_character(),
-      cty_code = col_character(),
+      hs6_code = col_character(),
+      cty_code  = col_character(),
       port_code = col_character(),
-      year = col_integer(),
-      month = col_integer(),
-      value_mo = col_double()
+      year      = col_integer(),
+      month     = col_integer(),
+      value_mo  = col_double()
     )
   )) %>% 
   
@@ -85,6 +86,15 @@ hs6_by_country <- files_2024 %>%
   ) %>% 
   
   # Get totals
-  group_by(commodity, partner) %>%
-  summarise(total_value_2024 = sum(value_mo), .groups = "drop")
+  group_by(hs6_code, partner) %>%
+  summarise(imports = sum(value_mo), .groups = "drop") %>% 
+  
+  # Add GTAP code
+  left_join(
+    crosswalk %>% 
+      select(hs6_code, gtap_code), 
+    by = "hs6_code"
+  ) %>% 
+  relocate(gtap_code, .after = hs6_code)
+
 
