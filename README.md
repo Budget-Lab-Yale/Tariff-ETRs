@@ -45,9 +45,9 @@ Tariff-ETRs/
 ## Data Sources
 
 **Import Data:**
-- Source: U.S. Census Bureau trade data
+- Source: [U.S. Census Bureau - Port of Entry, HS6 Data](https://www.census.gov/foreign-trade/data/PORTHS6MM.html)
 - Format: Fixed-width format files matching pattern `dporths6ir24*`
-- Location: Place files in `C:/Users/{username}/Downloads/` or update path in `main.R`
+- Location: Download files and place in a local directory, then update the `import_data_path` parameter in `src/main.R` (default: `C:/Users/{username}/Downloads/`)
 - Structure:
   - Columns: HS6 code, country code, port code, year, month, import value
   - Aggregated by HS6 commodity and trading partner

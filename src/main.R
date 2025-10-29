@@ -64,6 +64,9 @@ params_ieepa <- params_ieepa %>%
 # Set other parameters
 #----------------------
 
+# Path to Census Bureau import data files
+import_data_path <- 'C:/Users/jar335/Downloads'
+
 china_codes  <- c('5700')   # China
 canada_codes <- c('1220')   # Canada
 mexico_codes <- c('2010')   # Mexico
@@ -111,7 +114,7 @@ crosswalk <- read_csv('resources/hs6_gtap_crosswalk.csv', show_col_types = FALSE
 
 # Get list of all 2024 import files
 file_pattern <- 'dporths6ir24'
-files_2024   <- list.files(path = 'C:/Users/jar335/Downloads', pattern = file_pattern, full.names = TRUE)
+files_2024   <- list.files(path = import_data_path, pattern = file_pattern, full.names = TRUE)
 
 # Define column positions based on the file specification
 col_positions <- fwf_positions(
