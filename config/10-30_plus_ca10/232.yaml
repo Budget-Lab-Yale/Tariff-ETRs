@@ -75,7 +75,6 @@ vehicles_completed_mhd:
     - 870490
     - 870540
     - 870590
-    - 870600
     - 870911
     - 870919
     maybe: []
@@ -105,7 +104,7 @@ buses_heading_8702:
     uk: 0.1
     eu: 0.1
     row: 0.1
-  usmca_exempt: 0
+  usmca_exempt: 1
 vehicle_parts_mhd:
   base:
     definite:
@@ -503,7 +502,6 @@ automobile_parts:
     - 401590
     - 700721
     - 732020
-    - 830210
     - 840820
     - 840991
     - 840999
