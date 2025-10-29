@@ -62,20 +62,20 @@ params_ieepa <- params_ieepa %>%
   ) %>%
   select(-kr, -vn)
 
-#----------------------
-# Set other parameters
-#----------------------
+
+#------------------
+# Read import data
+#------------------
 
 # Path to Census Bureau import data files
 import_data_path <- 'C:/Users/jar335/Downloads'
 
 # Load country-to-partner mapping
-country_mapping <- read_csv('resources/country_partner_mapping.csv', show_col_types = FALSE)
-
-
-#------------------
-# Read import data
-#------------------
+country_mapping <- read_csv(
+  'resources/country_partner_mapping.csv',
+  col_types = cols(cty_code = col_character()),
+  show_col_types = FALSE
+)
 
 # Read GTAP crosswalk
 crosswalk <- read_csv('resources/hs6_gtap_crosswalk.csv', show_col_types = FALSE)
