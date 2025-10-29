@@ -104,7 +104,7 @@ buses_heading_8702:
     uk: 0.1
     eu: 0.1
     row: 0.1
-  usmca_exempt: 1
+  usmca_exempt: 0
 vehicle_parts_mhd:
   base:
     definite:
@@ -118,7 +118,7 @@ vehicle_parts_mhd:
     uk: 0.25
     eu: 0.25
     row: 0.25
-  usmca_exempt: 0
+  usmca_exempt: 1
 steel:
   base:
     definite:

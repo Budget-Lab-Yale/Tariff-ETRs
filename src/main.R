@@ -51,6 +51,4 @@ for (scenario in scenarios) {
   )
 }
 
-message('\n==========================================================')
-message(sprintf('All scenarios complete! Ran %d scenario(s).', length(scenarios)))
-message('==========================================================\n')
+
