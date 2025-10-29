@@ -134,18 +134,6 @@ b_t,0.3,0.35,0.25,0.15,0.1,0.15,0.1,0.1,0.151,0.273
 
 **Note**: Korea (`kr`) and Vietnam (`vn`) rates are folded into `ftrow` and `row` respectively using trade share parameters.
 
-### Parameters
-
-Key parameters in `main.R`:
-
-```r
-us_auto_content_share  = 0.4    # US content requirement for auto USMCA exemption
-us_auto_assembly_share = 0.33   # Share of US assembly in total auto value
-auto_rebate_rate       = 0.0375 # Auto assembly rebate rate
-ieepa_usmca_exception  = 1      # Apply USMCA exemption to IEEPA tariffs
-kr_share_ftrow         = 0.57   # Korea's share of FTROW trade
-vn_share_row           = 0.94   # Vietnam's share of ROW trade
-```
 
 ## Output
 
