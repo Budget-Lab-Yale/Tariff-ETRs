@@ -42,7 +42,7 @@ params_232 <- read_yaml(sprintf('config/%s/232.yaml', scenario))
 params_ieepa <- read_csv(sprintf('config/%s/ieepa_rates.csv', scenario), show_col_types = FALSE)
 
 # USMCA share of trade by sector
-usmca_shares = read_csv('./resources/usmca_shares.csv')
+usmca_shares <- read_csv('./resources/usmca_shares.csv')
 
 # Other params
 us_auto_content_share  = 0.4
@@ -224,6 +224,14 @@ write_shock_commands(
   etr_data    = etrs,
   output_file = 'shocks.txt',
   scenario    = scenario
+)
+
+# Write sector x country ETR CSVs
+write_sector_country_etrs(
+  etr_data            = etrs,
+  output_file_regular = 'etrs_by_sector_country.csv',
+  output_file_upper   = 'etrs_by_sector_country_upper.csv',
+  scenario            = scenario
 )
 
 # Calculate and print overall ETRs with both GTAP and 2024 Census weights

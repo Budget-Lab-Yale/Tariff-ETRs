@@ -208,6 +208,79 @@ write_shock_commands <- function(etr_data, output_file = 'shocks.txt', scenario 
 }
 
 
+#' Write ETRs to CSV in sector (rows) x country (columns) format
+#'
+#' @param etr_data Data frame with columns: partner, gtap_code, etr, etr_upper
+#' @param output_file_regular Path to output file for regular ETRs (default: 'etrs_by_sector_country.csv')
+#' @param output_file_upper Path to output file for upper bound ETRs (default: 'etrs_by_sector_country_upper.csv')
+#' @param scenario Scenario name for output directory
+#'
+#' @return Writes CSV files and returns invisibly
+write_sector_country_etrs <- function(etr_data,
+                                       output_file_regular = 'etrs_by_sector_country.csv',
+                                       output_file_upper = 'etrs_by_sector_country_upper.csv',
+                                       scenario = NULL) {
+
+  # Create output directory if needed
+  if (!is.null(scenario)) {
+    output_dir <- sprintf('output/%s', scenario)
+    dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+    output_path_regular <- file.path(output_dir, output_file_regular)
+    output_path_upper <- file.path(output_dir, output_file_upper)
+  } else {
+    output_path_regular <- output_file_regular
+    output_path_upper <- output_file_upper
+  }
+
+  # Define sector order
+  sector_order <- c(
+    'pdr', 'wht', 'gro', 'v_f', 'osd', 'c_b', 'pfb', 'ocr', 'ctl', 'oap',
+    'rmk', 'wol', 'frs', 'fsh', 'coa', 'oil', 'gas', 'oxt', 'cmt', 'omt',
+    'vol', 'mil', 'pcr', 'sgr', 'ofd', 'b_t', 'tex', 'wap', 'lea', 'lum',
+    'ppp', 'p_c', 'chm', 'bph', 'rpp', 'nmm', 'i_s', 'nfm', 'fmp', 'ele',
+    'eeq', 'ome', 'mvh', 'otn', 'omf', 'ely', 'gdt', 'wtr', 'cns'
+  )
+
+  # Define country order
+  country_order <- c('china', 'canada', 'mexico', 'uk', 'japan', 'eu', 'row', 'ftrow')
+
+  # Pivot regular ETRs to wide format
+  etrs_regular_wide <- etr_data %>%
+    select(partner, gtap_code, etr) %>%
+    pivot_wider(names_from = partner, values_from = etr, values_fill = 0) %>%
+    select(gtap_code, any_of(country_order))
+
+  # Pivot upper bound ETRs to wide format
+  etrs_upper_wide <- etr_data %>%
+    select(partner, gtap_code, etr_upper) %>%
+    pivot_wider(names_from = partner, values_from = etr_upper, values_fill = 0) %>%
+    select(gtap_code, any_of(country_order))
+
+  # Apply sector ordering
+  existing_sectors <- intersect(sector_order, etrs_regular_wide$gtap_code)
+
+  etrs_regular_wide <- etrs_regular_wide %>%
+    filter(gtap_code %in% existing_sectors) %>%
+    arrange(match(gtap_code, sector_order))
+
+  etrs_upper_wide <- etrs_upper_wide %>%
+    filter(gtap_code %in% existing_sectors) %>%
+    arrange(match(gtap_code, sector_order))
+
+  # Write CSV files
+  write_csv(etrs_regular_wide, output_path_regular)
+  write_csv(etrs_upper_wide, output_path_upper)
+
+  message(sprintf('Wrote regular ETRs by sector and country to %s', output_path_regular))
+  message(sprintf('Wrote upper bound ETRs by sector and country to %s', output_path_upper))
+
+  invisible(list(
+    regular = etrs_regular_wide,
+    upper = etrs_upper_wide
+  ))
+}
+
+
 #' Calculate and print overall ETRs by country and total using both GTAP and 2024 Census weights
 #'
 #' @param etr_data Data frame with columns: partner, gtap_code, etr
@@ -237,20 +310,29 @@ calc_overall_etrs <- function(etr_data, import_data = NULL,
   # Join ETRs with GTAP weights
   gtap_weighted_data <- etr_data %>%
     inner_join(gtap_weights_long, by = c('partner', 'gtap_code')) %>%
-    mutate(weighted_etr = etr * import_weight)
+    mutate(
+      weighted_etr = etr * import_weight,
+      weighted_etr_upper = etr_upper * import_weight
+    )
 
   # Calculate overall ETR by country using GTAP weights
   gtap_country_etrs <- gtap_weighted_data %>%
     group_by(partner) %>%
     summarise(
       gtap_etr = sum(weighted_etr) / sum(import_weight),
+      gtap_etr_upper = sum(weighted_etr_upper) / sum(import_weight),
       .groups = 'drop'
     )
 
   # Calculate total overall ETR using GTAP weights
   gtap_total_etr <- gtap_weighted_data %>%
-    summarise(gtap_etr = sum(weighted_etr) / sum(import_weight)) %>%
-    pull(gtap_etr)
+    summarise(
+      gtap_etr = sum(weighted_etr) / sum(import_weight),
+      gtap_etr_upper = sum(weighted_etr_upper) / sum(import_weight)
+    )
+
+  gtap_total_etr_value <- gtap_total_etr$gtap_etr
+  gtap_total_etr_upper_value <- gtap_total_etr$gtap_etr_upper
 
   # ===========================
   # Calculate 2024 Census-weighted ETRs
@@ -266,20 +348,29 @@ calc_overall_etrs <- function(etr_data, import_data = NULL,
     # Join ETRs with Census weights
     census_weighted_data <- etr_data %>%
       inner_join(census_weights, by = c('partner', 'gtap_code')) %>%
-      mutate(weighted_etr = etr * import_weight)
+      mutate(
+        weighted_etr = etr * import_weight,
+        weighted_etr_upper = etr_upper * import_weight
+      )
 
     # Calculate overall ETR by country using Census weights
     census_country_etrs <- census_weighted_data %>%
       group_by(partner) %>%
       summarise(
         census_etr = sum(weighted_etr) / sum(import_weight),
+        census_etr_upper = sum(weighted_etr_upper) / sum(import_weight),
         .groups = 'drop'
       )
 
     # Calculate total overall ETR using Census weights
     census_total_etr <- census_weighted_data %>%
-      summarise(census_etr = sum(weighted_etr) / sum(import_weight)) %>%
-      pull(census_etr)
+      summarise(
+        census_etr = sum(weighted_etr) / sum(import_weight),
+        census_etr_upper = sum(weighted_etr_upper) / sum(import_weight)
+      )
+
+    census_total_etr_value <- census_total_etr$census_etr
+    census_total_etr_upper_value <- census_total_etr$census_etr_upper
 
     # Combine both sets of results
     country_etrs <- gtap_country_etrs %>%
@@ -289,9 +380,10 @@ calc_overall_etrs <- function(etr_data, import_data = NULL,
   } else {
     # Only GTAP weights available
     country_etrs <- gtap_country_etrs %>%
-      mutate(census_etr = NA) %>%
+      mutate(census_etr = NA, census_etr_upper = NA) %>%
       arrange(desc(gtap_etr))
-    census_total_etr <- NA
+    census_total_etr_value <- NA
+    census_total_etr_upper_value <- NA
   }
 
   # ===========================
@@ -302,30 +394,43 @@ calc_overall_etrs <- function(etr_data, import_data = NULL,
   cat('Overall ETRs by Country:\n')
   cat('========================\n')
   if (!is.null(import_data)) {
-    cat(sprintf('%-10s  %12s  %17s\n', 'Country', 'GTAP Weights', '2024 Census Weights'))
-    cat(sprintf('%-10s  %12s  %17s\n', '-------', '------------', '-------------------'))
+    cat(sprintf('%-10s  %23s  %34s\n', '', 'GTAP Weights', '2024 Census Weights'))
+    cat(sprintf('%-10s  %11s  %11s  %16s  %16s\n', 'Country', 'Regular', 'Upper Bnd', 'Regular', 'Upper Bnd'))
+    cat(sprintf('%-10s  %11s  %11s  %16s  %16s\n', '-------', '-------', '---------', '-------', '---------'))
   } else {
-    cat(sprintf('%-10s  %12s\n', 'Country', 'GTAP Weights'))
-    cat(sprintf('%-10s  %12s\n', '-------', '------------'))
+    cat(sprintf('%-10s  %23s\n', '', 'GTAP Weights'))
+    cat(sprintf('%-10s  %11s  %11s\n', 'Country', 'Regular', 'Upper Bnd'))
+    cat(sprintf('%-10s  %11s  %11s\n', '-------', '-------', '---------'))
   }
 
   for (i in 1:nrow(country_etrs)) {
     if (!is.null(import_data)) {
-      cat(sprintf('%-10s  %11.2f%%  %16.2f%%\n',
+      cat(sprintf('%-10s  %10.2f%%  %10.2f%%  %15.2f%%  %15.2f%%\n',
                   toupper(country_etrs$partner[i]),
                   country_etrs$gtap_etr[i] * 100,
-                  country_etrs$census_etr[i] * 100))
+                  country_etrs$gtap_etr_upper[i] * 100,
+                  country_etrs$census_etr[i] * 100,
+                  country_etrs$census_etr_upper[i] * 100))
     } else {
-      cat(sprintf('%-10s  %11.2f%%\n',
+      cat(sprintf('%-10s  %10.2f%%  %10.2f%%\n',
                   toupper(country_etrs$partner[i]),
-                  country_etrs$gtap_etr[i] * 100))
+                  country_etrs$gtap_etr[i] * 100,
+                  country_etrs$gtap_etr_upper[i] * 100))
     }
   }
   cat('\n')
   if (!is.null(import_data)) {
-    cat(sprintf('%-10s  %11.2f%%  %16.2f%%\n', 'TOTAL', gtap_total_etr * 100, census_total_etr * 100))
+    cat(sprintf('%-10s  %10.2f%%  %10.2f%%  %15.2f%%  %15.2f%%\n',
+                'TOTAL',
+                gtap_total_etr_value * 100,
+                gtap_total_etr_upper_value * 100,
+                census_total_etr_value * 100,
+                census_total_etr_upper_value * 100))
   } else {
-    cat(sprintf('%-10s  %11.2f%%\n', 'TOTAL', gtap_total_etr * 100))
+    cat(sprintf('%-10s  %10.2f%%  %10.2f%%\n',
+                'TOTAL',
+                gtap_total_etr_value * 100,
+                gtap_total_etr_upper_value * 100))
   }
   cat('\n')
 
@@ -348,31 +453,44 @@ calc_overall_etrs <- function(etr_data, import_data = NULL,
   writeLines('', con)
 
   if (!is.null(import_data)) {
-    writeLines(sprintf('%-10s  %12s  %17s', 'Country', 'GTAP Weights', '2024 Census Weights'), con)
-    writeLines(sprintf('%-10s  %12s  %17s', '-------', '------------', '-------------------'), con)
+    writeLines(sprintf('%-10s  %23s  %34s', '', 'GTAP Weights', '2024 Census Weights'), con)
+    writeLines(sprintf('%-10s  %11s  %11s  %16s  %16s', 'Country', 'Regular', 'Upper Bnd', 'Regular', 'Upper Bnd'), con)
+    writeLines(sprintf('%-10s  %11s  %11s  %16s  %16s', '-------', '-------', '---------', '-------', '---------'), con)
   } else {
-    writeLines(sprintf('%-10s  %12s', 'Country', 'GTAP Weights'), con)
-    writeLines(sprintf('%-10s  %12s', '-------', '------------'), con)
+    writeLines(sprintf('%-10s  %23s', '', 'GTAP Weights'), con)
+    writeLines(sprintf('%-10s  %11s  %11s', 'Country', 'Regular', 'Upper Bnd'), con)
+    writeLines(sprintf('%-10s  %11s  %11s', '-------', '-------', '---------'), con)
   }
 
   for (i in 1:nrow(country_etrs)) {
     if (!is.null(import_data)) {
-      writeLines(sprintf('%-10s  %11.2f%%  %16.2f%%',
+      writeLines(sprintf('%-10s  %10.2f%%  %10.2f%%  %15.2f%%  %15.2f%%',
                          toupper(country_etrs$partner[i]),
                          country_etrs$gtap_etr[i] * 100,
-                         country_etrs$census_etr[i] * 100), con)
+                         country_etrs$gtap_etr_upper[i] * 100,
+                         country_etrs$census_etr[i] * 100,
+                         country_etrs$census_etr_upper[i] * 100), con)
     } else {
-      writeLines(sprintf('%-10s  %11.2f%%',
+      writeLines(sprintf('%-10s  %10.2f%%  %10.2f%%',
                          toupper(country_etrs$partner[i]),
-                         country_etrs$gtap_etr[i] * 100), con)
+                         country_etrs$gtap_etr[i] * 100,
+                         country_etrs$gtap_etr_upper[i] * 100), con)
     }
   }
 
   writeLines('', con)
   if (!is.null(import_data)) {
-    writeLines(sprintf('%-10s  %11.2f%%  %16.2f%%', 'TOTAL', gtap_total_etr * 100, census_total_etr * 100), con)
+    writeLines(sprintf('%-10s  %10.2f%%  %10.2f%%  %15.2f%%  %15.2f%%',
+                       'TOTAL',
+                       gtap_total_etr_value * 100,
+                       gtap_total_etr_upper_value * 100,
+                       census_total_etr_value * 100,
+                       census_total_etr_upper_value * 100), con)
   } else {
-    writeLines(sprintf('%-10s  %11.2f%%', 'TOTAL', gtap_total_etr * 100), con)
+    writeLines(sprintf('%-10s  %10.2f%%  %10.2f%%',
+                       'TOTAL',
+                       gtap_total_etr_value * 100,
+                       gtap_total_etr_upper_value * 100), con)
   }
 
   close(con)
@@ -382,7 +500,9 @@ calc_overall_etrs <- function(etr_data, import_data = NULL,
   # Return results invisibly
   invisible(list(
     by_country = country_etrs,
-    gtap_total = gtap_total_etr,
-    census_total = if (!is.null(import_data)) census_total_etr else NA
+    gtap_total = gtap_total_etr_value,
+    gtap_total_upper = gtap_total_etr_upper_value,
+    census_total = if (!is.null(import_data)) census_total_etr_value else NA,
+    census_total_upper = if (!is.null(import_data)) census_total_etr_upper_value else NA
   ))
 }
