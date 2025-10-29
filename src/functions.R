@@ -414,12 +414,14 @@ write_shock_commands <- function(etr_data, output_file = 'shocks.txt', scenario)
 
 #' Write ETRs to CSV in sector (rows) x country (columns) format
 #'
+#' Values are written in percentage points (pp), i.e., multiplied by 100.
+#'
 #' @param etr_data Data frame with columns: partner, gtap_code, etr, etr_upper
 #' @param output_file_regular Path to output file for regular ETRs (default: 'etrs_by_sector_country.csv')
 #' @param output_file_upper Path to output file for upper bound ETRs (default: 'etrs_by_sector_country_upper.csv')
 #' @param scenario Scenario name for output directory
 #'
-#' @return Writes CSV files and returns invisibly
+#' @return Writes CSV files (in pp units) and returns invisibly
 write_sector_country_etrs <- function(etr_data,
                                        output_file_regular = 'etrs_by_sector_country.csv',
                                        output_file_upper = 'etrs_by_sector_country_upper.csv',
@@ -448,17 +450,19 @@ write_sector_country_etrs <- function(etr_data,
   # Define country order
   country_order <- c('china', 'canada', 'mexico', 'uk', 'japan', 'eu', 'row', 'ftrow')
 
-  # Pivot regular ETRs to wide format
+  # Pivot regular ETRs to wide format and convert to percentage points
   etrs_regular_wide <- etr_data %>%
     select(partner, gtap_code, etr) %>%
     pivot_wider(names_from = partner, values_from = etr, values_fill = 0) %>%
-    select(gtap_code, any_of(country_order))
+    select(gtap_code, any_of(country_order)) %>%
+    mutate(across(-gtap_code, ~ .x * 100))
 
-  # Pivot upper bound ETRs to wide format
+  # Pivot upper bound ETRs to wide format and convert to percentage points
   etrs_upper_wide <- etr_data %>%
     select(partner, gtap_code, etr_upper) %>%
     pivot_wider(names_from = partner, values_from = etr_upper, values_fill = 0) %>%
-    select(gtap_code, any_of(country_order))
+    select(gtap_code, any_of(country_order)) %>%
+    mutate(across(-gtap_code, ~ .x * 100))
 
   # Apply sector ordering
   existing_sectors <- intersect(sector_order, etrs_regular_wide$gtap_code)
@@ -475,8 +479,8 @@ write_sector_country_etrs <- function(etr_data,
   write_csv(etrs_regular_wide, output_path_regular)
   write_csv(etrs_upper_wide, output_path_upper)
 
-  message(sprintf('Wrote regular ETRs by sector and country to %s', output_path_regular))
-  message(sprintf('Wrote upper bound ETRs by sector and country to %s', output_path_upper))
+  message(sprintf('Wrote regular ETRs by sector and country to %s (in pp units)', output_path_regular))
+  message(sprintf('Wrote upper bound ETRs by sector and country to %s (in pp units)', output_path_upper))
 
   invisible(list(
     regular = etrs_regular_wide,
