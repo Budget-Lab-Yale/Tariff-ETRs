@@ -179,7 +179,7 @@ calc_import_shares <- function(hs6_codes, data = hs6_by_country) {
 #' @param params_data Tariff parameters list
 #' @param ieepa_data Data frame with IEEPA rates by partner and GTAP sector
 #' @param usmca_data Data frame with USMCA shares by partner and GTAP sector
-#' @param us_auto_share Share of US content in auto assembly
+#' @param us_auto_content_share Share of US content in auto assembly
 #' @param auto_rebate Auto rebate rate
 #' @param us_assembly_share Share of US assembly in autos
 #' @param ieepa_usmca_exempt Apply USMCA exemption to IEEPA tariffs (1 = yes, 0 = no)
@@ -188,7 +188,7 @@ calc_import_shares <- function(hs6_codes, data = hs6_by_country) {
 calc_weighted_etr <- function(bases_data = bases, params_data = params_232,
                               ieepa_data = params_ieepa,
                               usmca_data = usmca_shares,
-                              us_auto_share = us_auto_content_share,
+                              us_auto_content_share = us_auto_content_share,
                               auto_rebate = auto_rebate_rate,
                               us_assembly_share = us_auto_assembly_share,
                               ieepa_usmca_exempt = ieepa_usmca_exception) {
@@ -229,7 +229,7 @@ calc_weighted_etr <- function(bases_data = bases, params_data = params_232,
     # Apply auto rebate adjustment for all countries
     mutate(
       rate = if_else(
-        tariff %in% c('automobiles_passenger_and_light_trucks', 'automobile_parts'),
+        tariff %in% c('automobiles_passenger_and_light_trucks', 'automobile_parts', 'vehicles_completed_mhd'),
         rate - (auto_rebate * us_assembly_share),
         rate
       )
@@ -238,8 +238,8 @@ calc_weighted_etr <- function(bases_data = bases, params_data = params_232,
     # Apply USMCA exemption logic
     mutate(
       adjusted_usmca_share = if_else(
-        tariff %in% c('automobiles_passenger_and_light_trucks', 'automobile_parts'),
-        usmca_share * us_auto_share,
+        tariff %in% c('automobiles_passenger_and_light_trucks', 'automobile_parts', 'vehicles_completed_mhd'),
+        usmca_share * us_auto_content_share,
         usmca_share
       ),
       adjusted_rate = if_else(
