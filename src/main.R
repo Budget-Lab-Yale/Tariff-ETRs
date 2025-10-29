@@ -49,13 +49,16 @@ us_auto_content_share  = 0.4
 us_auto_assembly_share = 0.33
 auto_rebate_rate       = 0.0375
 ieepa_usmca_exception  = 1
+kr_share_ftrow         = 0.57
 vn_share_row           = 0.94
 
-# Adjust IEEPA rates: fold Vietnam into row
-# Note: Korea is now directly classified as ftrow via ftrow_codes
+# Adjust IEEPA rates: fold Korea into ftrow and Vietnam into row
+# Note: Korea and FTROW countries are directly classified via ftrow_codes in import data,
+# but IEEPA config has separate kr column that needs to be merged into ftrow rates
 params_ieepa <- params_ieepa %>%
   mutate(
-    row = row * (1 - vn_share_row) + vn * vn_share_row
+    ftrow = ftrow * (1 - kr_share_ftrow) + kr * kr_share_ftrow,
+    row   = row   * (1 - vn_share_row)   + vn * vn_share_row
   ) %>%
   select(-kr, -vn)
 
