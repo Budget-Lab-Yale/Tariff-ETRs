@@ -122,7 +122,7 @@ col_positions <- fwf_positions(
 
 # Build data
 hs6_by_country <- files_2024 %>%
-  
+
   # Read and combine all files
   map_df(~ read_fwf(
     file = .x,
@@ -135,8 +135,8 @@ hs6_by_country <- files_2024 %>%
       month     = col_integer(),
       value_mo  = col_double()
     )
-  )) %>% 
-  
+  )) %>%
+
   # Tag each row with a partner group
   mutate(
     partner = case_when(
@@ -148,8 +148,8 @@ hs6_by_country <- files_2024 %>%
       cty_code %in% eu_codes     ~ 'eu',
       TRUE                       ~ 'row'
     )
-  ) %>% 
-  
+  ) %>%
+
   # Get totals
   group_by(hs6_code, partner) %>%
   summarise(imports = sum(value_mo), .groups = 'drop') %>%
@@ -159,6 +159,13 @@ hs6_by_country <- files_2024 %>%
     (.) %>%
       filter(partner == 'row') %>%
       mutate(partner = 'ftrow')
+  ) %>%
+
+  # Expand to include all HS6 x partner combinations (fill missing with 0)
+  complete(
+    hs6_code,
+    partner = c('china', 'canada', 'mexico', 'uk', 'japan', 'eu', 'row', 'ftrow'),
+    fill = list(imports = 0)
   ) %>%
 
   # Add GTAP code
