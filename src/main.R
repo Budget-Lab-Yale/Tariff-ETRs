@@ -226,7 +226,11 @@ write_shock_commands(
   scenario    = scenario
 )
 
-# Calculate and print overall ETRs
-calc_overall_etrs(etr_data = etrs)
+# Calculate and print overall ETRs with both GTAP and 2024 Census weights
+calc_overall_etrs(
+  etr_data    = etrs,
+  import_data = hs6_by_country,
+  scenario    = scenario
+)
 
 

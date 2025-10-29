@@ -10,7 +10,7 @@ This project analyzes U.S. import trade data to compute effective tariff rates i
 - **USMCA exemptions**: Trade agreement provisions with content requirements
 - **Country-specific adjustments**: Korea and Vietnam receive separate treatment within broader country groupings
 
-The analysis produces sector-level ETRs by trading partner and aggregated overall ETRs weighted by GTAP import shares.
+The analysis produces sector-level ETRs by trading partner and aggregated overall ETRs. Overall ETRs are calculated using two weighting methods: (1) GTAP import weights and (2) 2024 Census import totals.
 
 ## Repository Structure
 
@@ -29,7 +29,8 @@ Tariff-ETRs/
 │   └── gtap_import_weights.csv    # Import weights for aggregation
 ├── output/
 │   └── {scenario}/         # Scenario-specific output
-│       └── shocks.txt      # GTAP shock commands
+│       ├── shocks.txt      # GTAP shock commands
+│       └── overall_etrs.txt # Overall ETRs by country (both weighting methods)
 └── README.md
 ```
 
@@ -158,20 +159,25 @@ Shock tms("steel","Canada","USA") = 45.2;
 ...
 ```
 
-### Console Output
+### Overall ETRs (`output/{scenario}/overall_etrs.txt`)
 
-Overall ETRs by country and total:
+Overall ETRs by country using both GTAP weights and 2024 Census import weights:
 
 ```
 Overall ETRs by Country:
 ========================
-CHINA     : 25.30%
-ROW       : 18.50%
-FTROW     : 12.40%
+
+Country     GTAP Weights  2024 Census Weights
+-------     ------------  -------------------
+CHINA           25.30%              26.15%
+ROW             18.50%              17.85%
+FTROW           12.40%              11.92%
 ...
 
-Total Overall ETR: 20.45%
+TOTAL           20.45%              20.78%
 ```
+
+This output is both displayed in the console and saved to `output/{scenario}/overall_etrs.txt`.
 
 ## Trading Partner Groups
 
@@ -200,7 +206,7 @@ Total Overall ETR: 20.45%
 - **USMCA Compliance**: Automatically adjusts rates based on qualifying trade shares
 - **Auto Sector Logic**: Special handling for automobile and auto parts tariffs
 - **Country Folding**: Korea and Vietnam rates incorporated into broader groupings
-- **Weighted Aggregation**: Overall ETRs calculated using GTAP import weights
+- **Dual Weighting**: Overall ETRs calculated using both GTAP weights and 2024 Census import totals for comparison
 
 ## Contact
 
