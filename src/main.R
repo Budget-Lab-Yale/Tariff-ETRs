@@ -13,6 +13,18 @@ params_232 <- read_yaml('config/232.yaml')
 # IEEPA rates
 params_ieepa <- read_csv('config/ieepa_rates.csv', show_col_types = FALSE)
 
+# Trade share parameters for Korea and Vietnam
+kr_share_ftrow = 0.57
+vn_share_row   = 0.94
+
+# Adjust IEEPA rates: fold Korea into ftrow and Vietnam into row
+params_ieepa <- params_ieepa %>%
+  mutate(
+    ftrow = ftrow * (1 - kr_share_ftrow) + kr * kr_share_ftrow,
+    row   = row   * (1 - vn_share_row)   + vn * vn_share_row
+  ) %>%
+  select(-kr, -vn)
+
 # USMCA share of trade by sector
 usmca_shares = read_csv('./resources/usmca_shares.csv')
 
@@ -20,8 +32,7 @@ usmca_shares = read_csv('./resources/usmca_shares.csv')
 us_auto_content_share  = 0.4
 us_auto_assembly_share = 0.33
 auto_rebate_rate       = 0.0375
-ieepa_usmca_exception  = 1 
-
+ieepa_usmca_exception  = 1
 
 
 #----------------------
@@ -365,7 +376,18 @@ bases <- params_232 %>%
 
 
 # Calculate ETRs
-etrs <- calc_weighted_etr()
+etrs <- calc_weighted_etr(
+  bases_data            = bases, 
+  params_data           = params_232,
+  ieepa_data            = params_ieepa,
+  usmca_data            = usmca_shares,
+  us_auto_content_share = us_auto_content_share,
+  auto_rebate           = auto_rebate_rate,
+  us_assembly_share     = us_auto_assembly_share,
+  ieepa_usmca_exempt    = ieepa_usmca_exception
+)
 
 # Write shock commands to file
 write_shock_commands(etrs)
+
+
