@@ -6,7 +6,7 @@ library(yaml)
 # Scenario
 #---------
 
-scenario <- 'baseline'
+scenario <- '10_29'
 
 
 #---------------------------
@@ -347,10 +347,67 @@ write_shock_commands <- function(etr_data, output_file = 'shocks.txt', scenario 
 }
 
 
-#----------------------------------
-# Calculate tax bases for 232 tariffs
-#----------------------------------
+#' Calculate and print overall ETRs by country and total
+#'
+#' @param etr_data Data frame with columns: partner, gtap_code, etr
+#' @param weights_file Path to GTAP import weights CSV file
+#'
+#' @return Prints overall ETRs and returns them invisibly
+calc_overall_etrs <- function(etr_data, weights_file = 'resources/gtap_import_weights.csv') {
 
+  # Read GTAP import weights
+  gtap_weights <- read_csv(weights_file, show_col_types = FALSE)
+
+  # Reshape weights to long format
+  weights_long <- gtap_weights %>%
+    pivot_longer(cols = -gtap_code, names_to = 'partner', values_to = 'import_weight') %>%
+    filter(import_weight > 0)
+
+  # Join ETRs with weights
+  weighted_data <- etr_data %>%
+    inner_join(weights_long, by = c('partner', 'gtap_code')) %>%
+    mutate(weighted_etr = etr * import_weight)
+
+  # Calculate overall ETR by country
+  country_etrs <- weighted_data %>%
+    group_by(partner) %>%
+    summarise(
+      overall_etr = sum(weighted_etr) / sum(import_weight),
+      .groups = 'drop'
+    ) %>%
+    arrange(desc(overall_etr))
+
+  # Calculate total overall ETR
+  total_etr <- weighted_data %>%
+    summarise(overall_etr = sum(weighted_etr) / sum(import_weight)) %>%
+    pull(overall_etr)
+
+  # Print results
+  cat('\n')
+  cat('Overall ETRs by Country:\n')
+  cat('========================\n')
+  for (i in 1:nrow(country_etrs)) {
+    cat(sprintf('%-10s: %5.2f%%\n',
+                toupper(country_etrs$partner[i]),
+                country_etrs$overall_etr[i] * 100))
+  }
+  cat('\n')
+  cat(sprintf('Total Overall ETR: %5.2f%%\n', total_etr * 100))
+  cat('\n')
+
+  # Return results invisibly
+  invisible(list(
+    by_country = country_etrs,
+    total = total_etr
+  ))
+}
+
+
+#------------------------------
+# Calculate tax bases and ETRs
+#------------------------------
+
+# Calculate tax bases for 232 -- and IEEPA as residual
 bases <- params_232 %>%
   names() %>%
 
@@ -382,7 +439,6 @@ bases <- params_232 %>%
       )
   )
 
-
 # Calculate ETRs
 etrs <- calc_weighted_etr(
   bases_data            = bases, 
@@ -396,6 +452,13 @@ etrs <- calc_weighted_etr(
 )
 
 # Write shock commands to file
-write_shock_commands(etrs)
+write_shock_commands(
+  etr_data    = etrs,
+  output_file = 'shocks.txt',
+  scenario    = scenario
+)
+
+# Calculate and print overall ETRs
+calc_overall_etrs(etr_data = etrs)
 
 
