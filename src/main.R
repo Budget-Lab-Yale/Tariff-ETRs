@@ -49,14 +49,13 @@ us_auto_content_share  = 0.4
 us_auto_assembly_share = 0.33
 auto_rebate_rate       = 0.0375
 ieepa_usmca_exception  = 1
-kr_share_ftrow         = 0.57
 vn_share_row           = 0.94
 
-# Adjust IEEPA rates: fold Korea into ftrow and Vietnam into row
+# Adjust IEEPA rates: fold Vietnam into row
+# Note: Korea is now directly classified as ftrow via ftrow_codes
 params_ieepa <- params_ieepa %>%
   mutate(
-    ftrow = ftrow * (1 - kr_share_ftrow) + kr * kr_share_ftrow,
-    row   = row   * (1 - vn_share_row)   + vn * vn_share_row
+    row = row * (1 - vn_share_row) + vn * vn_share_row
   ) %>%
   select(-kr, -vn)
 
@@ -104,6 +103,28 @@ eu_codes <- c(
   '4010'  # Sweden (SE)
 )
 
+# FTROW (Free Trade Rest of World) - countries with free trade agreements
+ftrow_codes <- c(
+  '6021', # Australia (AUS)
+  '5800', # Republic of Korea (KOR)
+  '5590', # Singapore (SGP)
+  '3370', # Chile (CHL)
+  '3010', # Colombia (COL)
+  '3330', # Peru (PER)
+  '2230', # Costa Rica (CRI)
+  '2050', # Guatemala (GTM)
+  '2150', # Honduras (HND)
+  '2190', # Nicaragua (NIC)
+  '2250', # Panama (PAN)
+  '2110', # El Salvador (SLV)
+  '2470', # Dominican Republic (DOM)
+  '5250', # Bahrain (BHR)
+  '5081', # Israel (ISR)
+  '5110', # Jordan (JOR)
+  '5230', # Oman (OMN)
+  '7140'  # Morocco (MAR)
+)
+
 
 #------------------
 # Read import data
@@ -149,6 +170,7 @@ hs6_by_country <- files_2024 %>%
       cty_code %in% uk_codes     ~ 'uk',
       cty_code %in% japan_codes  ~ 'japan',
       cty_code %in% eu_codes     ~ 'eu',
+      cty_code %in% ftrow_codes  ~ 'ftrow',
       TRUE                       ~ 'row'
     )
   ) %>%
@@ -156,13 +178,6 @@ hs6_by_country <- files_2024 %>%
   # Get totals
   group_by(hs6_code, partner) %>%
   summarise(imports = sum(value_mo), .groups = 'drop') %>%
-
-  # Add ftrow as a copy of row (free trade rest of world)
-  bind_rows(
-    (.) %>%
-      filter(partner == 'row') %>%
-      mutate(partner = 'ftrow')
-  ) %>%
 
   # Expand to include all HS6 x partner combinations (fill missing with 0)
   complete(
