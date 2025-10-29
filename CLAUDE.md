@@ -52,6 +52,6 @@ source("main.R")
 - File path is currently hardcoded to a specific Windows user directory and will need updating for different environments
 
 ## Style
-- never use na.rm = T or any other kind of na filters. if we have missings that's a sign that som
-thing is wrong and it shoudl break accordingly!
+- never use na.rm = T or any other kind of na filters. if we have missings that's a sign that something is wrong and it should break accordingly!
 - use single quotes for strings
+- please review the readme file each time you make a commit and determine whether you should update that file accordingly. 
