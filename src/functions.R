@@ -6,12 +6,213 @@
 # (ETRs) on U.S. imports by trading partner and GTAP sector.
 #
 # Functions:
+#   - do_scenario():           Run complete ETR analysis for a scenario
 #   - calc_import_shares():    Calculate import shares for specific HS6 codes
 #   - calc_weighted_etr():     Calculate weighted ETRs by partner and sector
 #   - write_shock_commands():  Write GTAP shock commands to output file
 #   - calc_overall_etrs():     Calculate and print overall ETRs by country
 #
 # =============================================================================
+
+
+#' Run complete ETR analysis for a given scenario
+#'
+#' @param scenario Scenario name (corresponds to config/{scenario}/ directory)
+#' @param import_data_path Path to Census Bureau import data files
+#'
+#' @return Returns ETR data invisibly
+do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads') {
+
+  message(sprintf('\n=========================================================='))
+  message(sprintf('Running scenario: %s', scenario))
+  message(sprintf('==========================================================\n'))
+
+  #---------------------------
+  # Load scenario parameters
+  #---------------------------
+
+  message('Loading scenario parameters...')
+
+  # Section 232 tariffs
+  params_232 <- read_yaml(sprintf('config/%s/232.yaml', scenario))
+
+  # IEEPA rates
+  params_ieepa <- read_csv(sprintf('config/%s/ieepa_rates.csv', scenario), show_col_types = FALSE)
+
+  # Other scenario parameters
+  other_params <- read_yaml(sprintf('config/%s/other_params.yaml', scenario))
+
+  # USMCA share of trade by sector
+  usmca_shares <- read_csv('./resources/usmca_shares.csv', show_col_types = FALSE)
+
+  # Adjust IEEPA rates: fold Korea into ftrow and Vietnam into row
+  # Note: Korea and FTROW countries are directly classified via ftrow_codes in import data,
+  # but IEEPA config has separate kr column that needs to be merged into ftrow rates
+  params_ieepa <- params_ieepa %>%
+    mutate(
+      ftrow = ftrow * (1 - other_params$kr_share_ftrow) + kr * other_params$kr_share_ftrow,
+      row   = row   * (1 - other_params$vn_share_row)   + vn * other_params$vn_share_row
+    ) %>%
+    select(-kr, -vn)
+
+  #------------------
+  # Read import data
+  #------------------
+
+  message('Reading import data...')
+
+  # Load country-to-partner mapping
+  country_mapping <- read_csv(
+    'resources/country_partner_mapping.csv',
+    col_types = cols(cty_code = col_character()),
+    show_col_types = FALSE
+  )
+
+  # Read GTAP crosswalk
+  crosswalk <- read_csv('resources/hs6_gtap_crosswalk.csv', show_col_types = FALSE)
+
+  # Get list of all 2024 import files
+  file_pattern <- 'dporths6ir24'
+  files_2024   <- list.files(path = import_data_path, pattern = file_pattern, full.names = TRUE)
+
+  if (length(files_2024) == 0) {
+    stop(sprintf('No import files found at %s matching pattern %s', import_data_path, file_pattern))
+  }
+
+  # Define column positions based on the file specification
+  col_positions <- fwf_positions(
+    start     = c(1, 7, 11, 15, 19, 21),
+    end       = c(6, 10, 14, 18, 20, 35),
+    col_names = c('hs6_code', 'cty_code', 'port_code', 'year', 'month', 'value_mo')
+  )
+
+  # Build data
+  hs6_by_country <- files_2024 %>%
+
+    # Read and combine all files
+    map_df(~ read_fwf(
+      file = .x,
+      col_positions = col_positions,
+      col_types = cols(
+        hs6_code  = col_character(),
+        cty_code  = col_character(),
+        port_code = col_character(),
+        year      = col_integer(),
+        month     = col_integer(),
+        value_mo  = col_double()
+      )
+    )) %>%
+
+    # Tag each row with a partner group using mapping
+    left_join(
+      country_mapping %>% select(cty_code, partner),
+      by = 'cty_code'
+    ) %>%
+    mutate(partner = if_else(is.na(partner), 'row', partner)) %>%
+
+    # Get totals
+    group_by(hs6_code, partner) %>%
+    summarise(imports = sum(value_mo), .groups = 'drop') %>%
+
+    # Expand to include all HS6 x partner combinations (fill missing with 0)
+    complete(
+      hs6_code,
+      partner = c('china', 'canada', 'mexico', 'uk', 'japan', 'eu', 'row', 'ftrow'),
+      fill = list(imports = 0)
+    ) %>%
+
+    # Add GTAP code
+    left_join(
+      crosswalk %>%
+        select(hs6_code, gtap_code),
+      by = 'hs6_code'
+    ) %>%
+    mutate(gtap_code = str_to_lower(gtap_code)) %>%
+    relocate(gtap_code, .after = hs6_code)
+
+  #------------------------------
+  # Calculate tax bases and ETRs
+  #------------------------------
+
+  message('Calculating tax bases and ETRs...')
+
+  # Calculate tax bases for 232 -- and IEEPA as residual
+  bases <- params_232 %>%
+    names() %>%
+
+    # Get bases for each 232 tariff
+    map(~ {
+
+      definite_codes <- params_232[[.x]]$base$definite
+      all_codes      <- c(params_232[[.x]]$base$definite, params_232[[.x]]$base$maybe)
+
+      share       <- calc_import_shares(definite_codes, data = hs6_by_country)
+      share_upper <- calc_import_shares(all_codes, data = hs6_by_country) %>% rename(share_upper = share)
+
+      share %>%
+        left_join(share_upper, by = c('partner', 'gtap_code')) %>%
+        mutate(tariff = .x, .before = 1) %>%
+        return()
+    }) %>%
+    bind_rows() %>%
+
+    # Add residual -- tax base uncovered by 232
+    bind_rows(
+      (.) %>%
+        group_by(partner, gtap_code) %>%
+        summarise(
+          tariff      = 'residual',
+          share       = 1 - sum(share),
+          share_upper = 1 - sum(share_upper),
+          .groups = 'drop'
+        )
+    )
+
+  # Calculate ETRs
+  etrs <- calc_weighted_etr(
+    bases_data            = bases,
+    params_data           = params_232,
+    ieepa_data            = params_ieepa,
+    usmca_data            = usmca_shares,
+    us_auto_content_share = other_params$us_auto_content_share,
+    auto_rebate           = other_params$auto_rebate_rate,
+    us_assembly_share     = other_params$us_auto_assembly_share,
+    ieepa_usmca_exempt    = other_params$ieepa_usmca_exception
+  )
+
+  #------------------
+  # Write outputs
+  #------------------
+
+  message('Writing outputs...')
+
+  # Write shock commands to file
+  write_shock_commands(
+    etr_data    = etrs,
+    output_file = 'shocks.txt',
+    scenario    = scenario
+  )
+
+  # Write sector x country ETR CSVs
+  write_sector_country_etrs(
+    etr_data            = etrs,
+    output_file_regular = 'etrs_by_sector_country.csv',
+    output_file_upper   = 'etrs_by_sector_country_upper.csv',
+    scenario            = scenario
+  )
+
+  # Calculate and print overall ETRs with both GTAP and 2024 Census weights
+  calc_overall_etrs(
+    etr_data    = etrs,
+    import_data = hs6_by_country,
+    scenario    = scenario
+  )
+
+  message(sprintf('\nScenario %s complete!\n', scenario))
+
+  # Return ETR data invisibly
+  invisible(etrs)
+}
 
 
 #' Calculate import shares for a subset of HS6 codes
@@ -25,7 +226,7 @@
 #' @param data Data frame with columns: hs6_code, partner, gtap_code, imports
 #'
 #' @return Data frame with columns: partner, gtap_code, subset_imports, total_imports, share
-calc_import_shares <- function(hs6_codes, data = hs6_by_country) {
+calc_import_shares <- function(hs6_codes, data) {
 
   # Calculate imports for the specified HS6 codes by partner and GTAP
   subset_imports <- data %>%
@@ -60,13 +261,13 @@ calc_import_shares <- function(hs6_codes, data = hs6_by_country) {
 #' @param ieepa_usmca_exempt Apply USMCA exemption to IEEPA tariffs (1 = yes, 0 = no)
 #'
 #' @return Data frame with columns: partner, gtap_code, etr, etr_upper
-calc_weighted_etr <- function(bases_data = bases, params_data = params_232,
-                              ieepa_data = params_ieepa,
-                              usmca_data = usmca_shares,
-                              us_auto_content_share = us_auto_content_share,
-                              auto_rebate = auto_rebate_rate,
-                              us_assembly_share = us_auto_assembly_share,
-                              ieepa_usmca_exempt = ieepa_usmca_exception) {
+calc_weighted_etr <- function(bases_data, params_data,
+                              ieepa_data,
+                              usmca_data,
+                              us_auto_content_share,
+                              auto_rebate,
+                              us_assembly_share,
+                              ieepa_usmca_exempt) {
 
   # Extract rates and usmca_exempt flags from params
   rates_and_exemptions <- map(names(params_data), ~ {
@@ -153,7 +354,7 @@ calc_weighted_etr <- function(bases_data = bases, params_data = params_232,
 #' @param scenario Scenario name for output directory
 #'
 #' @return Writes file and returns invisibly
-write_shock_commands <- function(etr_data, output_file = 'shocks.txt', scenario = scenario) {
+write_shock_commands <- function(etr_data, output_file = 'shocks.txt', scenario) {
 
   # Create output directory if it doesn't exist
   output_dir <- sprintf('output/%s', scenario)
