@@ -2,28 +2,22 @@ library(tidyverse)
 library(yaml)
 
 
+#---------
+# Scenario
+#---------
+
+scenario <- 'baseline'
+
 
 #---------------------------
 # Set tariff law parameters
 #---------------------------
 
 # Section 232 tariffs
-params_232 <- read_yaml('config/232.yaml')
+params_232 <- read_yaml(sprintf('config/%s/232.yaml', scenario))
 
 # IEEPA rates
-params_ieepa <- read_csv('config/ieepa_rates.csv', show_col_types = FALSE)
-
-# Trade share parameters for Korea and Vietnam
-kr_share_ftrow = 0.57
-vn_share_row   = 0.94
-
-# Adjust IEEPA rates: fold Korea into ftrow and Vietnam into row
-params_ieepa <- params_ieepa %>%
-  mutate(
-    ftrow = ftrow * (1 - kr_share_ftrow) + kr * kr_share_ftrow,
-    row   = row   * (1 - vn_share_row)   + vn * vn_share_row
-  ) %>%
-  select(-kr, -vn)
+params_ieepa <- read_csv(sprintf('config/%s/ieepa_rates.csv', scenario), show_col_types = FALSE)
 
 # USMCA share of trade by sector
 usmca_shares = read_csv('./resources/usmca_shares.csv')
@@ -33,7 +27,16 @@ us_auto_content_share  = 0.4
 us_auto_assembly_share = 0.33
 auto_rebate_rate       = 0.0375
 ieepa_usmca_exception  = 1
+kr_share_ftrow         = 0.57
+vn_share_row           = 0.94
 
+# Adjust IEEPA rates: fold Korea into ftrow and Vietnam into row
+params_ieepa <- params_ieepa %>%
+  mutate(
+    ftrow = ftrow * (1 - kr_share_ftrow) + kr * kr_share_ftrow,
+    row   = row   * (1 - vn_share_row)   + vn * vn_share_row
+  ) %>%
+  select(-kr, -vn)
 
 #----------------------
 # Set other parameters
@@ -285,13 +288,18 @@ calc_weighted_etr <- function(bases_data = bases, params_data = params_232,
 #' Write shock commands to txt file for downstream model
 #'
 #' @param etr_data Data frame with columns: partner, gtap_code, etr
-#' @param output_file Path to output file (default: 'output/shocks.txt')
+#' @param output_file Path to output file
+#' @param scenario Scenario name for output directory
 #'
 #' @return Writes file and returns invisibly
-write_shock_commands <- function(etr_data, output_file = 'output/shocks.txt') {
+write_shock_commands <- function(etr_data, output_file = 'shocks.txt', scenario = scenario) {
 
   # Create output directory if it doesn't exist
-  dir.create('output', showWarnings = FALSE)
+  output_dir <- sprintf('output/%s', scenario)
+  dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+
+  # Build full output path
+  output_path <- file.path(output_dir, output_file)
 
   # Map partner names to proper format
   partner_map <- c(
@@ -321,7 +329,7 @@ write_shock_commands <- function(etr_data, output_file = 'output/shocks.txt') {
     )
 
   # Write to file with blank lines between partners
-  con <- file(output_file, 'w')
+  con <- file(output_path, 'w')
 
   for (p in partner_order) {
     partner_commands <- shock_commands %>% filter(partner_fmt == p)
@@ -334,7 +342,7 @@ write_shock_commands <- function(etr_data, output_file = 'output/shocks.txt') {
 
   close(con)
 
-  message(sprintf('Wrote %d shock commands to %s', nrow(shock_commands), output_file))
+  message(sprintf('Wrote %d shock commands to %s', nrow(shock_commands), output_path))
   invisible(shock_commands)
 }
 
