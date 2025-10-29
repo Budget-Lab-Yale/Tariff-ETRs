@@ -69,64 +69,8 @@ params_ieepa <- params_ieepa %>%
 # Path to Census Bureau import data files
 import_data_path <- 'C:/Users/jar335/Downloads'
 
-china_codes  <- c('5700')   # China
-canada_codes <- c('1220')   # Canada
-mexico_codes <- c('2010')   # Mexico
-uk_codes     <- c('4120')   # United Kingdom (GB)
-japan_codes  <- c('5880')   # Japan
-
-# EU-27 cty_code values from your crosswalk (excludes UK)
-eu_codes <- c(
-  '4330', # Austria (AT)
-  '4231', # Belgium (BE)
-  '4870', # Bulgaria (BG)
-  '4791', # Croatia (HR)
-  '4910', # Cyprus (CY)
-  '4351', # Czech Republic (CZ)
-  '4099', # Denmark (DK) - 'except Greenland'
-  '4470', # Estonia (EE)
-  '4050', # Finland (FI)
-  '4279', # France (FR)
-  '4280', # Germany (DE)
-  '4840', # Greece (GR)
-  '4370', # Hungary (HU)
-  '4190', # Ireland (IE)
-  '4759', # Italy (IT)
-  '4490', # Latvia (LV)
-  '4510', # Lithuania (LT)
-  '4239', # Luxembourg (LU)
-  '4730', # Malta (MT)
-  '4210', # Netherlands (NL)
-  '4550', # Poland (PL)
-  '4710', # Portugal (PT)
-  '4850', # Romania (RO)
-  '4359', # Slovakia (SK)
-  '4792', # Slovenia (SI)
-  '4700', # Spain (ES)
-  '4010'  # Sweden (SE)
-)
-
-# FTROW (Free Trade Rest of World) - countries with free trade agreements
-ftrow_codes <- c(
-  '6021', # Australia (AUS)
-  '5800', # Republic of Korea (KOR)
-  '5590', # Singapore (SGP)
-  '3370', # Chile (CHL)
-  '3010', # Colombia (COL)
-  '3330', # Peru (PER)
-  '2230', # Costa Rica (CRI)
-  '2050', # Guatemala (GTM)
-  '2150', # Honduras (HND)
-  '2190', # Nicaragua (NIC)
-  '2250', # Panama (PAN)
-  '2110', # El Salvador (SLV)
-  '2470', # Dominican Republic (DOM)
-  '5250', # Bahrain (BHR)
-  '5081', # Israel (ISR)
-  '5110', # Jordan (JOR)
-  '5230', # Oman (OMN)
-  '7140'  # Morocco (MAR)
-)
+# Load country-to-partner mapping
+country_mapping <- read_csv('resources/country_partner_mapping.csv', show_col_types = FALSE)
 
 
 #------------------
@@ -164,19 +108,12 @@ hs6_by_country <- files_2024 %>%
     )
   )) %>%
 
-  # Tag each row with a partner group
-  mutate(
-    partner = case_when(
-      cty_code %in% china_codes  ~ 'china',
-      cty_code %in% canada_codes ~ 'canada',
-      cty_code %in% mexico_codes ~ 'mexico',
-      cty_code %in% uk_codes     ~ 'uk',
-      cty_code %in% japan_codes  ~ 'japan',
-      cty_code %in% eu_codes     ~ 'eu',
-      cty_code %in% ftrow_codes  ~ 'ftrow',
-      TRUE                       ~ 'row'
-    )
+  # Tag each row with a partner group using mapping
+  left_join(
+    country_mapping %>% select(cty_code, partner),
+    by = 'cty_code'
   ) %>%
+  mutate(partner = if_else(is.na(partner), 'row', partner)) %>%
 
   # Get totals
   group_by(hs6_code, partner) %>%
