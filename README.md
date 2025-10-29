@@ -61,6 +61,10 @@ The project uses Census Bureau country codes (not ISO codes):
 - EU-27: 27 individual country codes (see `main.R` for complete list)
 - All others: Classified as "ROW" (Rest of World)
 
+**GTAP-HS6 Crosswalk**
+We map six-digit HS systems using the [crosswalk developed by Angel Aguiar](https://www.gtap.agecon.purdue.edu/resources/res_display.asp?RecordID=5111). 
+
+
 ## Usage
 
 ### Running a Scenario
@@ -99,7 +103,7 @@ The project uses Census Bureau country codes (not ISO codes):
 
 ### Section 232 Tariffs (`232.yaml`)
 
-Defines tariff rates and product coverage for each Section 232 tariff:
+Defines tariff rates and product coverage for each Section 232 tariff. Since official proclamations specify policy at the 10-digit level, there is necessarily some degree of judgement involved in configuring policy. We welcome feedback on our choices here. 
 
 ```yaml
 steel:
@@ -119,7 +123,7 @@ steel:
 
 ### IEEPA Rates (`ieepa_rates.csv`)
 
-Specifies residual tariff rates by GTAP sector and trading partner:
+Specifies IEEPA tariff rates by GTAP sector and trading partner:
 
 ```csv
 gtap_code,china,canada,mexico,japan,uk,eu,row,ftrow,kr,vn
