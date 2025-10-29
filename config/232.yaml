@@ -10,6 +10,7 @@ softwood:
     uk: 0.10
     eu: 0.10
     row: 0.10
+    ftrow: 0.10
   usmca_exempt: 0
 
 upholstered_wooden_furniture:
@@ -24,6 +25,7 @@ upholstered_wooden_furniture:
     uk: 0.10
     eu: 0.15
     row: 0.25
+    ftrow: 0.25
   usmca_exempt: 0
 
 kitchen_cabinets_and_parts:
@@ -38,6 +40,7 @@ kitchen_cabinets_and_parts:
     uk: 0.10
     eu: 0.15
     row: 0.25
+    ftrow: 0.25
   usmca_exempt: 0
 
 vehicles_completed_mhd:
@@ -52,6 +55,7 @@ vehicles_completed_mhd:
     uk: 0.25
     eu: 0.25
     row: 0.25
+    ftrow: 0.25
   usmca_exempt: 0
 
 buses_heading_8702:
@@ -66,6 +70,7 @@ buses_heading_8702:
     uk: 0.10
     eu: 0.10
     row: 0.10
+    ftrow: 0.10
   usmca_exempt: 0
 
 vehicle_parts_mhd:
@@ -80,6 +85,7 @@ vehicle_parts_mhd:
     uk: 0.25
     eu: 0.25
     row: 0.25
+    ftrow: 0.25
   usmca_exempt: 0
 
 steel:
@@ -94,6 +100,7 @@ steel:
     uk: 0.25
     eu: 0.25
     row: 0.25
+    ftrow: 0.25
   usmca_exempt: 0
 
 aluminum_base_articles:
@@ -108,6 +115,7 @@ aluminum_base_articles:
     uk: 0.25
     eu: 0.25
     row: 0.25
+    ftrow: 0.25
   usmca_exempt: 0
 
 aluminum_derivative_9903_85_04:
@@ -122,6 +130,7 @@ aluminum_derivative_9903_85_04:
     uk: 0.25
     eu: 0.25
     row: 0.25
+    ftrow: 0.25
   usmca_exempt: 0
 
 aluminum_derivative_9903_85_07:
@@ -136,6 +145,7 @@ aluminum_derivative_9903_85_07:
     uk: 0.25
     eu: 0.25
     row: 0.25
+    ftrow: 0.25
   usmca_exempt: 0
 
 aluminum_derivative_9903_85_08:
@@ -150,6 +160,7 @@ aluminum_derivative_9903_85_08:
     uk: 0.25
     eu: 0.25
     row: 0.25
+    ftrow: 0.25
   usmca_exempt: 0
 
 copper_derivatives:
@@ -164,6 +175,7 @@ copper_derivatives:
     uk: 0.50
     eu: 0.50
     row: 0.50
+    ftrow: 0.50
   usmca_exempt: 0
 
 automobiles_passenger_and_light_trucks:
@@ -178,8 +190,9 @@ automobiles_passenger_and_light_trucks:
     uk: 0.25
     eu: 0.25
     row: 0.25
+    ftrow: 0.25
   usmca_exempt: 1
-  
+
 automobile_parts:
   base:
     definite: [400912, 400922, 400932, 400942, 700910, 732010, 830120, 830230, 840731, 840732, 840733, 840734, 841520, 842123, 842132, 842549, 842691, 843110, 847100, 848220, 848240, 848250, 850131, 850132, 850133, 850140, 850151, 850152, 850710, 850760, 851110, 851120, 851130, 851140, 851150, 851230, 852721, 852729, 853641, 853710, 853720, 853910, 854430, 870600, 870700, 870710, 870790, 870821, 870822, 870829, 870830, 870850, 870870, 870880, 870891, 870894, 870895, 870899, 901510, 902910, 940120]
@@ -192,5 +205,6 @@ automobile_parts:
     uk: 0.25
     eu: 0.25
     row: 0.25
+    ftrow: 0.25
   usmca_exempt: 1
 
