@@ -198,19 +198,7 @@ Total Overall ETR: 20.45%
 - **Country Folding**: Korea and Vietnam rates incorporated into broader groupings
 - **Weighted Aggregation**: Overall ETRs calculated using GTAP import weights
 
-## Contributing
-
-When modifying code:
-1. Keep functions in `src/functions.R`
-2. Keep execution logic in `src/main.R`
-3. Use single quotes for strings
-4. Never use `na.rm` filters - missing values should break the code
-5. Follow tidyverse style guide
-
-## License
-
-[Your License Here]
-
 ## Contact
 
-[Your Contact Information]
+Email: john.ricco@yale.edu
+Twitter: @riccoja 
