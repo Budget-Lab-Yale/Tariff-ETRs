@@ -2,15 +2,16 @@
 # functions.R
 # =============================================================================
 #
-# This file contains helper functions for calculating effective tariff rates
-# (ETRs) on U.S. imports by trading partner and GTAP sector.
+# This file contains helper functions for calculating effective tariff rate
+# (ETR) changes on U.S. imports by trading partner and GTAP sector. All ETR
+# values represent changes from an early 2025 baseline.
 #
 # Functions:
 #   - do_scenario():           Run complete ETR analysis for a scenario
 #   - calc_import_shares():    Calculate import shares for specific HS6 codes
-#   - calc_weighted_etr():     Calculate weighted ETRs by partner and sector
+#   - calc_weighted_etr():     Calculate weighted ETR changes by partner and sector
 #   - write_shock_commands():  Write GTAP shock commands to output file
-#   - calc_overall_etrs():     Calculate and print overall ETRs by country
+#   - calc_overall_etrs():     Calculate and print overall ETR changes by country
 #
 # =============================================================================
 
@@ -249,7 +250,9 @@ calc_import_shares <- function(hs6_codes, data) {
 }
 
 
-#' Calculate weighted ETR by partner and GTAP sector
+#' Calculate weighted ETR changes by partner and GTAP sector
+#'
+#' Calculates change in effective tariff rates from early 2025 baseline.
 #'
 #' @param bases_data Data frame with tariff bases
 #' @param params_data Tariff parameters list
@@ -260,7 +263,7 @@ calc_import_shares <- function(hs6_codes, data) {
 #' @param us_assembly_share Share of US assembly in autos
 #' @param ieepa_usmca_exempt Apply USMCA exemption to IEEPA tariffs (1 = yes, 0 = no)
 #'
-#' @return Data frame with columns: partner, gtap_code, etr, etr_upper
+#' @return Data frame with columns: partner, gtap_code, etr, etr_upper (change from baseline)
 calc_weighted_etr <- function(bases_data, params_data,
                               ieepa_data,
                               usmca_data,
@@ -482,15 +485,17 @@ write_sector_country_etrs <- function(etr_data,
 }
 
 
-#' Calculate and print overall ETRs by country and total using both GTAP and 2024 Census weights
+#' Calculate and print overall ETR changes by country and total using both GTAP and 2024 Census weights
 #'
-#' @param etr_data Data frame with columns: partner, gtap_code, etr
+#' Calculates and prints change in effective tariff rates from early 2025 baseline.
+#'
+#' @param etr_data Data frame with columns: partner, gtap_code, etr (change from baseline)
 #' @param import_data Data frame with columns: partner, gtap_code, imports (2024 import values)
 #' @param weights_file Path to GTAP import weights CSV file
 #' @param output_file Path to output text file (default: 'output/overall_etrs.txt')
 #' @param scenario Scenario name for output directory
 #'
-#' @return Prints overall ETRs and returns them invisibly
+#' @return Prints overall ETR changes and returns them invisibly
 calc_overall_etrs <- function(etr_data, import_data = NULL,
                               weights_file = 'resources/gtap_import_weights.csv',
                               output_file = 'overall_etrs.txt',
@@ -592,8 +597,8 @@ calc_overall_etrs <- function(etr_data, import_data = NULL,
   # ===========================
 
   cat('\n')
-  cat('Overall ETRs by Country:\n')
-  cat('========================\n')
+  cat('Overall ETRs by Country (change from early 2025 baseline):\n')
+  cat('==========================================================\n')
   if (!is.null(import_data)) {
     cat(sprintf('%-10s  %23s  %34s\n', '', 'GTAP Weights', '2024 Census Weights'))
     cat(sprintf('%-10s  %11s  %11s  %16s  %16s\n', 'Country', 'Regular', 'Upper Bnd', 'Regular', 'Upper Bnd'))
@@ -649,8 +654,8 @@ calc_overall_etrs <- function(etr_data, import_data = NULL,
 
   con <- file(output_path, 'w')
 
-  writeLines('Overall ETRs by Country:', con)
-  writeLines('========================', con)
+  writeLines('Overall ETRs by Country (change from early 2025 baseline):', con)
+  writeLines('==========================================================', con)
   writeLines('', con)
 
   if (!is.null(import_data)) {

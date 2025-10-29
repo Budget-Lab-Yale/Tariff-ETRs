@@ -3,7 +3,8 @@
 # =============================================================================
 #
 # This script runs effective tariff rate (ETR) analysis for one or more
-# scenarios. Each scenario consists of:
+# scenarios. ETR values represent changes from an early 2025 baseline.
+# Each scenario consists of:
 #   - Section 232 tariffs (steel, aluminum, softwood, furniture, autos, etc.)
 #   - IEEPA tariffs (residual catch-all for imports not covered by 232)
 #   - USMCA exemptions with content requirements

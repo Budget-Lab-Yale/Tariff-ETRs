@@ -1,16 +1,16 @@
 # Tariff ETR Calculator
 
-Calculate effective tariff rates (ETRs) on U.S. imports by trading partner and GTAP sector under various tariff policy scenarios.
+Calculate effective tariff rate (ETR) changes on U.S. imports by trading partner and GTAP sector under various tariff policy scenarios. **All ETR values represent changes from an early 2025 baseline.**
 
 ## Overview
 
-This project analyzes U.S. import trade data to compute effective tariff rates incorporating:
+This project analyzes U.S. import trade data to compute effective tariff rate changes incorporating:
 - **Section 232 tariffs**: Steel, aluminum, softwood lumber, furniture, automobiles, and auto parts
 - **IEEPA tariffs**: Residual catch-all rates for imports not covered by Section 232
 - **USMCA exemptions**: Trade agreement provisions with content requirements
 - **Country-specific adjustments**: Korea and Vietnam receive separate treatment within broader country groupings
 
-The analysis produces sector-level ETRs by trading partner and aggregated overall ETRs. Overall ETRs are calculated using two weighting methods: (1) GTAP import weights and (2) 2024 Census import totals.
+The analysis produces sector-level ETR changes by trading partner and aggregated overall ETR changes. Overall ETRs are calculated using two weighting methods: (1) GTAP import weights and (2) 2024 Census import totals.
 
 ## Repository Structure
 
@@ -149,11 +149,11 @@ Shock tms("steel","Canada","USA") = 45.2;
 
 ### Overall ETRs (`output/{scenario}/overall_etrs.txt`)
 
-Overall ETRs by country using both GTAP weights and 2024 Census import weights:
+Overall ETR changes by country using both GTAP weights and 2024 Census import weights (change from early 2025 baseline):
 
 ```
-Overall ETRs by Country:
-========================
+Overall ETRs by Country (change from early 2025 baseline):
+==========================================================
 
 Country     GTAP Weights  2024 Census Weights
 -------     ------------  -------------------
@@ -184,8 +184,8 @@ This output is both displayed in the console and saved to `output/{scenario}/ove
 2. **Process Import Data**: Read Census Bureau fixed-width format files and aggregate by HS6 and trading partner
 3. **Map to GTAP**: Convert HS6 codes to GTAP sectors using crosswalk
 4. **Calculate Tax Bases**: Determine import shares subject to each tariff by partner and sector
-5. **Compute ETRs**: Apply tariff rates with USMCA exemptions, auto rebates, and country-specific adjustments
-6. **Generate Output**: Write GTAP shock commands and calculate overall ETRs
+5. **Compute ETR Changes**: Apply tariff rates with USMCA exemptions, auto rebates, and country-specific adjustments (relative to early 2025 baseline)
+6. **Generate Output**: Write GTAP shock commands and calculate overall ETR changes
 
 ## Key Features
 
