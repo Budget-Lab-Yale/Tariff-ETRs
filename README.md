@@ -68,11 +68,11 @@ We map six-digit HS systems using the [crosswalk developed by Angel Aguiar](http
 
 ## Usage
 
-### Running a Scenario
+### Running Scenarios
 
-1. **Set the scenario** in `src/main.R`:
+1. **Set the scenarios** in `src/main.R`:
    ```r
-   scenario <- 'baseline'  # or '10_29', etc.
+   scenarios <- c('10_30', '10_30_ex_ieepa') 
    ```
 
 2. **Ensure config files exist** in `config/{scenario}/`:
@@ -93,7 +93,7 @@ We map six-digit HS systems using the [crosswalk developed by Angel Aguiar](http
 
 2. Modify the config files in `config/my_scenario/`
 
-3. Update `scenario` variable in `main.R`:
+3. Update `scenarios` variable in `main.R`:
    ```r
    scenario <- 'my_scenario'
    ```
