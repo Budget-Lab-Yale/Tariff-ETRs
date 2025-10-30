@@ -25,6 +25,7 @@ softwood:
     uk: 0.1
     eu: 0.1
     row: 0.1
+    ftrow: 0.1
   usmca_exempt: 0
 upholstered_wooden_furniture:
   base:
@@ -39,6 +40,7 @@ upholstered_wooden_furniture:
     uk: 0.1
     eu: 0.15
     row: 0.25
+    ftrow: 0.25
   usmca_exempt: 0
 kitchen_cabinets_and_parts:
   base:
@@ -55,6 +57,7 @@ kitchen_cabinets_and_parts:
     uk: 0.1
     eu: 0.15
     row: 0.25
+    ftrow: 0.25
   usmca_exempt: 0
 vehicles_completed_mhd:
   base:
@@ -86,6 +89,7 @@ vehicles_completed_mhd:
     uk: 0.25
     eu: 0.25
     row: 0.25
+    ftrow: 0.25
   usmca_exempt: 1
 buses_heading_8702:
   base:
@@ -104,6 +108,7 @@ buses_heading_8702:
     uk: 0.1
     eu: 0.1
     row: 0.1
+    ftrow: 0.1
   usmca_exempt: 0
 vehicle_parts_mhd:
   base:
@@ -118,6 +123,7 @@ vehicle_parts_mhd:
     uk: 0.25
     eu: 0.25
     row: 0.25
+    ftrow: 0.25
   usmca_exempt: 1
 steel:
   base:
@@ -215,6 +221,7 @@ steel:
     uk: 0.25
     eu: 0.5
     row: 0.5
+    ftrow: 0.5
   usmca_exempt: 0
 aluminum_base_articles:
   base:
@@ -247,6 +254,7 @@ aluminum_base_articles:
     uk: 0.25
     eu: 0.5
     row: 0.5
+    ftrow: 0.5
   usmca_exempt: 0
 aluminum_derivative_9903_85_04:
   base:
@@ -262,6 +270,7 @@ aluminum_derivative_9903_85_04:
     uk: 0.25
     eu: 0.5
     row: 0.5
+    ftrow: 0.5
   usmca_exempt: 0
 aluminum_derivative_9903_85_07:
   base:
@@ -281,6 +290,7 @@ aluminum_derivative_9903_85_07:
     uk: 0.25
     eu: 0.5
     row: 0.5
+    ftrow: 0.5
   usmca_exempt: 0
 aluminum_derivative_9903_85_08:
   base:
@@ -346,6 +356,7 @@ aluminum_derivative_9903_85_08:
     uk: 0.25
     eu: 0.5
     row: 0.5
+    ftrow: 0.5
   usmca_exempt: 0
 copper_derivatives:
   base:
@@ -399,6 +410,7 @@ copper_derivatives:
     uk: 0.5
     eu: 0.5
     row: 0.5
+    ftrow: 0.5
   usmca_exempt: 0
 automobiles_passenger_and_light_trucks:
   base:
@@ -428,6 +440,7 @@ automobiles_passenger_and_light_trucks:
     uk: 0.25
     eu: 0.25
     row: 0.25
+    ftrow: 0.25
   usmca_exempt: 1
 automobile_parts:
   base:
@@ -534,4 +547,5 @@ automobile_parts:
     uk: 0.25
     eu: 0.25
     row: 0.25
+    ftrow: 0.25
   usmca_exempt: 1
