@@ -34,7 +34,7 @@ import_data_path <- 'C:/Users/jar335/Downloads'
 
 # Scenarios to run (add/remove as needed)
 scenarios <- c(
-  '10-30_ex_trucks', 
+  '10-17', 
   '10-30', 
   '10-30_plus_ca10'
 )
