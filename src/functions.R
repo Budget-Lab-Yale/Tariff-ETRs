@@ -267,16 +267,16 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
   # Read GTAP crosswalk (now HS10 -> GTAP)
   crosswalk <- read_csv('resources/hs10_gtap_crosswalk.csv', show_col_types = FALSE)
 
-  # Define cache path
+  # Define cache path for processed data
   cache_dir <- 'cache'
   dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
-  cache_file <- file.path(cache_dir, 'hs10_country_2024_con.rds')
+  cache_file <- file.path(cache_dir, 'hs10_by_partner_gtap_2024_con.rds')
 
-  # Load HS10-level import data (from cache or raw files)
+  # Load processed HS10 x partner x GTAP data (from cache or build from raw)
   if (use_cache && file.exists(cache_file)) {
-    message(sprintf('Loading cached HS10 data from %s...', cache_file))
-    hs10_raw <- readRDS(cache_file)
-    message(sprintf('Loaded %s cached records', format(nrow(hs10_raw), big.mark = ',')))
+    message(sprintf('Loading cached HS10 x partner x GTAP data from %s...', cache_file))
+    hs10_by_country <- readRDS(cache_file)
+    message(sprintf('Loaded %s cached records', format(nrow(hs10_by_country), big.mark = ',')))
   } else {
     if (use_cache) {
       message('No cache found, processing raw import files...')
@@ -284,48 +284,48 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
       message('Cache disabled, processing raw import files...')
     }
 
-    # Load HS10-level import data using new function
+    # Load raw HS10-level import data
     hs10_raw <- load_imports_hs10_country(
       import_data_path = import_data_path,
       year = 2024,
       type = 'con'
     )
 
-    # Save to cache for next time
+    # Build data: aggregate and map to partners and GTAP sectors
+    hs10_by_country <- hs10_raw %>%
+
+      # Tag each row with a partner group using mapping
+      left_join(
+        country_mapping %>% select(cty_code, partner),
+        by = 'cty_code'
+      ) %>%
+      mutate(partner = if_else(is.na(partner), 'row', partner)) %>%
+
+      # Get totals by HS10 and partner
+      group_by(hs10, partner) %>%
+      summarise(imports = sum(value), .groups = 'drop') %>%
+
+      # Expand to include all HS10 x partner combinations (fill missing with 0)
+      complete(
+        hs10,
+        partner = c('china', 'canada', 'mexico', 'uk', 'japan', 'eu', 'row', 'ftrow'),
+        fill = list(imports = 0)
+      ) %>%
+
+      # Add GTAP code
+      left_join(
+        crosswalk %>%
+          select(hs10, gtap_code),
+        by = 'hs10'
+      ) %>%
+      mutate(gtap_code = str_to_lower(gtap_code)) %>%
+      relocate(gtap_code, .after = hs10)
+
+    # Save processed data to cache for next time
     message(sprintf('Saving processed data to cache at %s...', cache_file))
-    saveRDS(hs10_raw, cache_file)
+    saveRDS(hs10_by_country, cache_file)
     message('Cache saved successfully')
   }
-
-  # Build data: aggregate and map to partners and GTAP sectors
-  hs10_by_country <- hs10_raw %>%
-
-    # Tag each row with a partner group using mapping
-    left_join(
-      country_mapping %>% select(cty_code, partner),
-      by = 'cty_code'
-    ) %>%
-    mutate(partner = if_else(is.na(partner), 'row', partner)) %>%
-
-    # Get totals by HS10 and partner
-    group_by(hs10, partner) %>%
-    summarise(imports = sum(value), .groups = 'drop') %>%
-
-    # Expand to include all HS10 x partner combinations (fill missing with 0)
-    complete(
-      hs10,
-      partner = c('china', 'canada', 'mexico', 'uk', 'japan', 'eu', 'row', 'ftrow'),
-      fill = list(imports = 0)
-    ) %>%
-
-    # Add GTAP code
-    left_join(
-      crosswalk %>%
-        select(hs10, gtap_code),
-      by = 'hs10'
-    ) %>%
-    mutate(gtap_code = str_to_lower(gtap_code)) %>%
-    relocate(gtap_code, .after = hs10)
 
   #------------------------------
   # Calculate tax bases and ETRs
