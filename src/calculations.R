@@ -624,10 +624,15 @@ calc_overall_etrs <- function(etr_data, import_data = NULL,
 
   if (!is.null(bases_data) && !is.null(ieepa_data) && !is.null(import_data)) {
 
+    # Aggregate import data by partner and GTAP code
+    import_by_partner_gtap <- import_data %>%
+      group_by(partner, gtap_code) %>%
+      summarise(imports = sum(imports), .groups = 'drop')
+
     # Join bases with imports and IEEPA rates
     coverage_data <- bases_data %>%
       left_join(
-        import_data %>% select(partner, gtap_code, imports),
+        import_by_partner_gtap,
         by = c('partner', 'gtap_code')
       ) %>%
       left_join(
