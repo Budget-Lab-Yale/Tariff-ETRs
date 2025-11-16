@@ -237,7 +237,45 @@ load_ieepa_rates_yaml <- function(yaml_file,
   # Step 3: Apply product × country rates
   # ===========================
 
-  # TODO: Implement when needed
+  if (!is.null(config$product_country_rates) && length(config$product_country_rates) > 0) {
+
+    # Build product×country rate lookup by iterating through each exemption
+    product_country_overrides <- config$product_country_rates %>%
+      map_df(function(exemption) {
+        # Get the country code and rate for this exemption
+        country_code <- as.character(exemption$country)
+        exemption_rate <- exemption$rate
+
+        # Expand HTS codes to matching HS10 codes
+        matching_hs10 <- exemption$hts %>%
+          map(function(hts_code) {
+            hs10_codes[str_starts(hs10_codes, hts_code)]
+          }) %>%
+          unlist() %>%
+          unique()
+
+        # Create a tibble for this exemption
+        if (length(matching_hs10) > 0) {
+          tibble(
+            hs10 = matching_hs10,
+            cty_code = country_code,
+            product_country_rate = exemption_rate
+          )
+        } else {
+          tibble(
+            hs10 = character(),
+            cty_code = character(),
+            product_country_rate = numeric()
+          )
+        }
+      })
+
+    # Apply product×country rate overrides
+    rate_matrix <- rate_matrix %>%
+      left_join(product_country_overrides, by = c('hs10', 'cty_code')) %>%
+      mutate(rate = if_else(!is.na(product_country_rate), product_country_rate, rate)) %>%
+      select(-product_country_rate)
+  }
 
   # ===========================
   # Filter to sparse matrix (only non-zero rates) and return
