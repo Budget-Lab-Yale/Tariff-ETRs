@@ -64,7 +64,10 @@ The refactor successfully enables variable-length HTS codes, but produces differ
 ## 232.yaml Deduplication (November 15, 2025)
 
 ### Issue Found
-The 232.yaml config file contained **99 duplicate HS codes** across multiple categories, where the same code appeared in different tariff categories.
+The 232.yaml config file contained **99 duplicate HS codes** across multiple categories, where the same code appeared in different tariff categories. This happened because:
+- 90 codes appeared in BOTH `vehicle_parts_mhd` AND `automobile_parts`
+- 4 codes appeared in both vehicle categories AND `steel`
+- 3 codes appeared in vehicle categories AND aluminum derivative categories
 
 ### Deduplication Strategy
 For each duplicate code:
@@ -85,18 +88,42 @@ For each duplicate code:
 | `automobile_parts` | 2 codes | Moved to `vehicles_completed_mhd` as more appropriate |
 | **TOTAL** | **99 codes** | |
 
-### Result Validation
+### Why Duplicates Changed Results
 
-**Overall ETR after deduplication (10-30 scenario):**
-- TOTAL ETR: **15.90%** (2024 Census Weights)
-- TOTAL ETR: **16.59%** (GTAP Weights)
+The duplicates DID affect results because of how `calc_import_shares()` works:
+- Each category's codes are matched independently via regex
+- Import shares are calculated separately for each category
+- The same HS10 imports could be counted in MULTIPLE category shares
+- When aggregating ETRs: `etr = share_A * rate_A + share_B * rate_B + ...`
+- If code X appears in both A and B, its imports contribute to BOTH shares
+- This means shares could sum to >100% across all categories (double-counting)
 
-**Comparison with pre-deduplication:**
-- Results are **IDENTICAL** to those obtained before removing duplicates
-- This confirms that the duplicates were truly redundant (same codes receiving same effective tariff treatment)
-- The deduplication cleaned up the config without changing the economic model
+### Actual Impact (10-30 scenario)
+
+**BEFORE deduplication (with duplicates):**
+- Total ETR: **15.90%** (2024 Census Weights)
+- File size: 967 lines
+
+**AFTER deduplication (properly cleaned):**
+- Total ETR: **15.69%** (2024 Census Weights)
+- File size: 856 lines (111 lines removed)
+
+**Change: -0.21 percentage points (-1.3% relative decrease)**
+
+| Country | Before | After | Change |
+|---------|--------|-------|--------|
+| CHINA | 21.28% | 21.01% | -0.27 pp |
+| JAPAN | 18.85% | 18.00% | -0.85 pp |
+| ROW | 22.56% | 22.50% | -0.06 pp |
+| EU | 12.21% | 12.01% | -0.20 pp |
+| FTROW | 14.35% | 14.03% | -0.32 pp |
+| MEXICO | 13.07% | 12.82% | -0.25 pp |
+| UK | 10.89% | 10.70% | -0.19 pp |
+| CANADA | 7.23% | 7.15% | -0.08 pp |
+| **TOTAL** | **15.90%** | **15.69%** | **-0.21 pp** |
 
 ### Final State
-- **Unique codes**: 688 (down from 787 entries with duplicates)
+- **Total codes**: 688 (down from 787 with duplicates)
 - **Zero duplicate codes** remaining
-- **Config integrity**: Verified through test run of full 10-30 scenario
+- **Config integrity**: Verified through full scenario run
+- **Impact**: Small but measurable decrease in ETR estimates across all partners
