@@ -24,7 +24,7 @@ Tariff-ETRs/
 │       ├── 232.yaml        # Section 232 tariff parameters
 │       └── ieepa_rates.csv # IEEPA tariff rates by sector
 ├── resources/
-│   ├── hs6_gtap_crosswalk.csv      # HS6 to GTAP sector mapping
+│   ├── hs10_gtap_crosswalk.csv     # HS10 to GTAP sector mapping
 │   ├── usmca_shares.csv            # USMCA-qualifying trade shares
 │   └── gtap_import_weights.csv    # Import weights for aggregation
 ├── output/
@@ -45,12 +45,12 @@ Tariff-ETRs/
 ## Data Sources
 
 **Import Data:**
-- Source: [U.S. Census Bureau - Port of Entry, HS6 Data](https://www.census.gov/foreign-trade/data/PORTHS6MM.html)
-- Format: Fixed-width format files matching pattern `dporths6ir24*`
-- Location: Download files and place in a local directory, then update the `import_data_path` parameter in `src/main.R` (default: `C:/Users/{username}/Downloads/`)
+- Source: [U.S. Census Bureau - Merchandise Trade Imports](https://www.census.gov/foreign-trade/data/cd.html)
+- Format: Monthly ZIP files (IMDByymm.ZIP) containing IMP_DETL.TXT fixed-width format files
+- Location: Download files and place in a local directory, then update the `import_data_path` parameter in `do_scenario()` calls (default: `C:/Users/{username}/Downloads/`)
 - Structure:
-  - Columns: HS6 code, country code, port code, year, month, import value
-  - Aggregated by HS6 commodity and trading partner
+  - Columns: HS10 code (10-digit), country code, year, month, import value (consumption and general)
+  - Aggregated by HS10 commodity and trading partner
 
 **Country Codes:**
 The project uses Census Bureau country codes (not ISO codes):
@@ -62,8 +62,8 @@ The project uses Census Bureau country codes (not ISO codes):
 - EU-27: 27 individual country codes (see `main.R` for complete list)
 - All others: Classified as "ROW" (Rest of World)
 
-**GTAP-HS6 Crosswalk**
-We map six-digit HS systems using the [crosswalk developed by Angel Aguiar](https://www.gtap.agecon.purdue.edu/resources/res_display.asp?RecordID=5111). 
+**GTAP-HS Crosswalk**
+We map HS10 codes to GTAP sectors using a crosswalk derived from the [6-digit crosswalk developed by Angel Aguiar](https://www.gtap.agecon.purdue.edu/resources/res_display.asp?RecordID=5111). Each HS10 code inherits its GTAP sector from its 6-digit prefix. 
 
 
 ## Usage
@@ -76,7 +76,7 @@ We map six-digit HS systems using the [crosswalk developed by Angel Aguiar](http
    ```
 
 2. **Ensure config files exist** in `config/{scenario}/`:
-   - `232.yaml` - Section 232 tariff rates and HS6 code definitions
+   - `232.yaml` - Section 232 tariff rates and HTS code definitions (variable length: 4, 6, 8, or 10 digits)
    - `ieepa_rates.csv` - IEEPA rates by GTAP sector and trading partner
 
 3. **Run the analysis**:
@@ -104,13 +104,16 @@ We map six-digit HS systems using the [crosswalk developed by Angel Aguiar](http
 
 ### Section 232 Tariffs (`232.yaml`)
 
-Defines tariff rates and product coverage for each Section 232 tariff. Since official proclamations specify policy at the 10-digit level, there is necessarily some degree of judgement involved in configuring policy. We welcome feedback on our choices here. 
+Defines tariff rates and product coverage for each Section 232 tariff. Codes can be specified at any level of granularity (4, 6, 8, or 10 digits) and use prefix matching - e.g., `'8703'` matches all HS10 codes starting with 8703.
 
 ```yaml
 steel:
   base:
-    definite: [730120, 730230, ...]  # HS6 codes definitely covered
-    maybe: [730721, 730722, ...]     # HS6 codes possibly covered
+    - '73012010'  # 8-digit code: matches all HS10 codes starting with 73012010
+    - '73012050'
+    - '73023000'
+    - '7307'      # 4-digit code: matches all HS10 codes starting with 7307
+    # ... additional codes
   rate:
     china: 0.50
     canada: 0.50
@@ -119,6 +122,7 @@ steel:
     uk: 0.25
     eu: 0.50
     row: 0.50
+    ftrow: 0.50
   usmca_exempt: 0  # 1 = USMCA exemption applies, 0 = no exemption
 ```
 
@@ -181,9 +185,9 @@ This output is both displayed in the console and saved to `output/{scenario}/ove
 ## How It Works
 
 1. **Load Configuration**: Read scenario-specific tariff parameters from `config/{scenario}/`
-2. **Process Import Data**: Read Census Bureau fixed-width format files and aggregate by HS6 and trading partner
-3. **Map to GTAP**: Convert HS6 codes to GTAP sectors using crosswalk
-4. **Calculate Tax Bases**: Determine import shares subject to each tariff by partner and sector
+2. **Process Import Data**: Read Census Bureau IMP_DETL.TXT files from monthly ZIP archives and aggregate by HS10 and trading partner
+3. **Map to GTAP**: Convert HS10 codes to GTAP sectors using crosswalk
+4. **Calculate Tax Bases**: Determine import shares subject to each tariff by partner and sector using prefix matching on variable-length HTS codes
 5. **Compute ETR Changes**: Apply tariff rates with USMCA exemptions, auto rebates, and country-specific adjustments (relative to early 2025 baseline)
 6. **Generate Output**: Write GTAP shock commands and calculate overall ETR changes
 
