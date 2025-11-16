@@ -258,6 +258,7 @@ calc_weighted_etr <- function(rates_232,
 
   # =============================================================================
   # Build complete rate matrix by joining config tables with import data
+  # Config tables are now sparse (only non-zero rates), so NAs from joins = 0
   # =============================================================================
 
   rate_matrix <- import_data %>%
@@ -265,6 +266,18 @@ calc_weighted_etr <- function(rates_232,
     left_join(rates_232, by = c('hs10', 'cty_code')) %>%
     left_join(rates_ieepa_reciprocal, by = c('hs10', 'cty_code')) %>%
     left_join(rates_ieepa_fentanyl, by = c('hs10', 'cty_code'))
+
+  # Get all 232 rate column names
+  rate_232_cols <- names(rate_matrix)[str_detect(names(rate_matrix), '^s232_.*_rate$')]
+
+  # Replace NAs (indicates no tariff) with 0 for all rate columns
+  rate_matrix <- rate_matrix %>%
+    mutate(
+      across(
+        .cols = all_of(c(rate_232_cols, 'ieepa_reciprocal_rate', 'ieepa_fentanyl_rate')), 
+        .fns  = ~ if_else(is.na(.), 0, .)
+      )
+    )
 
   # =============================================================================
   # Apply USMCA exemptions and auto rebates
@@ -277,7 +290,7 @@ calc_weighted_etr <- function(rates_232,
       cty_code = case_when(
         partner == 'canada' ~ '1220',
         partner == 'mexico' ~ '2010',
-        TRUE ~ NA_character_
+        TRUE ~ NA
       )
     ) %>%
     filter(!is.na(cty_code)) %>%
@@ -291,8 +304,8 @@ calc_weighted_etr <- function(rates_232,
   # Auto tariff list
   auto_tariffs <- c('automobiles_passenger_and_light_trucks', 'automobile_parts', 'vehicles_completed_mhd')
 
-  # Get tariff names from usmca_exempt_232 vector
-  tariff_names <- names(usmca_exempt_232)
+  # Get tariff names from rate column names
+  tariff_names <- str_replace(rate_232_cols, '^s232_(.*)_rate$', '\\1')
 
   # Apply auto rebate and USMCA exemptions to each 232 tariff
   for (tariff_name in tariff_names) {
@@ -308,8 +321,9 @@ calc_weighted_etr <- function(rates_232,
 
     # Apply USMCA exemption if enabled for this tariff
     if (usmca_exempt_232[[tariff_name]] == 1) {
+      
+      # Auto tariffs use adjusted USMCA share
       if (tariff_name %in% auto_tariffs) {
-        # Auto tariffs use adjusted USMCA share
         rate_matrix <- rate_matrix %>%
           mutate(
             adjusted_usmca_share = usmca_share * us_auto_content_share,
@@ -320,8 +334,9 @@ calc_weighted_etr <- function(rates_232,
             )
           ) %>%
           select(-adjusted_usmca_share)
+        
+      # Non-auto tariffs use standard USMCA share
       } else {
-        # Non-auto tariffs use standard USMCA share
         rate_matrix <- rate_matrix %>%
           mutate(
             !!rate_col := if_else(
@@ -355,19 +370,33 @@ calc_weighted_etr <- function(rates_232,
   rate_matrix <- rate_matrix %>%
     select(-usmca_share)
 
+  
   # =============================================================================
   # Apply stacking rules to calculate final_rate
   # =============================================================================
 
-  # Get all 232 rate column names
-  rate_232_cols <- paste0('s232_', tariff_names, '_rate')
-
   # Calculate max of all 232 rates
+  if (length(tariff_names) > 0) {
+    
+    # Get all 232 rate column names
+    rate_232_cols <- paste0('s232_', tariff_names, '_rate')
+
+    rate_matrix <- rate_matrix %>%
+      mutate(
+        
+        # Max 232 rate across all tariffs
+        rate_232_max = pmax(!!!syms(rate_232_cols)),
+        rate_232_max = if_else(is.infinite(rate_232_max), 0, rate_232_max)
+      )
+    
+  # No 232 tariffs - set max to 0
+  } else {
+    rate_matrix <- rate_matrix %>%
+      mutate(rate_232_max = 0)
+  }
+
   rate_matrix <- rate_matrix %>%
     mutate(
-      # Max 232 rate across all tariffs
-      rate_232_max = pmax(!!!syms(rate_232_cols), na.rm = TRUE),
-      rate_232_max = if_else(is.infinite(rate_232_max), 0, rate_232_max),
 
       # Stacking rules:
       # 1. IEEPA Reciprocal: Mutually exclusive with 232 (applies only to uncovered base)
@@ -376,18 +405,15 @@ calc_weighted_etr <- function(rates_232,
       #    - Others: Only applies to base not covered by 232 or reciprocal
 
       final_rate = case_when(
-        # China: Stack everything
-        cty_code == '5700' ~ rate_232_max + ieepa_reciprocal_rate + ieepa_fentanyl_rate,
+        # China: Fentanyl stacks on top of normal 232-repicorical logic
+        cty_code == '5700' ~ if_else(rate_232_max > 0, rate_232_max, ieepa_reciprocal_rate) + ieepa_fentanyl_rate,
 
-        # Everyone else: 232 takes precedence, then reciprocal, then fentanyl
+        # Everyone else: 232 takes precedence, then reciprocal + fentanyl
         # If 232 applies, use 232
         rate_232_max > 0 ~ rate_232_max,
 
-        # If no 232 but reciprocal applies, use reciprocal
-        ieepa_reciprocal_rate > 0 ~ ieepa_reciprocal_rate,
-
-        # Otherwise use fentanyl
-        TRUE ~ ieepa_fentanyl_rate
+        # Otherwise use all IEEPA
+        TRUE ~ ieepa_reciprocal_rate + ieepa_fentanyl_rate
       )
     )
 

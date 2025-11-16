@@ -65,7 +65,9 @@ load_232_rates <- function(yaml_file,
   # Extract USMCA exempt flags
   usmca_exempt_flags <- sapply(names(params_232), function(t) params_232[[t]]$usmca_exempt)
 
-  # For each tariff, add a rate column
+  # For each tariff, build a sparse rate matrix (only non-zero rates)
+  tariff_matrices <- list()
+
   for (tariff_name in names(params_232)) {
 
     # Get HTS codes that define coverage
@@ -85,8 +87,8 @@ load_232_rates <- function(yaml_file,
       pattern <- '^$'  # Matches nothing
     }
 
-    # Build country rates lookup
-    country_rates <- tibble(
+    # Build country rates lookup (only countries with non-zero rates)
+    country_rates_nonzero <- tibble(
       cty_code = all_country_codes,
       country_rate = sapply(all_country_codes, function(code) {
         if (!is.null(rates_config[[code]])) {
@@ -95,18 +97,44 @@ load_232_rates <- function(yaml_file,
           default_rate
         }
       })
+    ) %>%
+      filter(country_rate > 0)
+
+    # Build sparse rate matrix for this tariff
+    if (nrow(country_rates_nonzero) > 0 && length(hts_codes) > 0) {
+      # Get covered HS10 codes
+      covered_hs10 <- hs10_codes[str_detect(hs10_codes, pattern)]
+
+      if (length(covered_hs10) > 0) {
+        rate_col_name <- paste0('s232_', tariff_name, '_rate')
+
+        tariff_matrix <- expand_grid(
+          hs10 = covered_hs10,
+          cty_code = country_rates_nonzero$cty_code
+        ) %>%
+          left_join(country_rates_nonzero, by = 'cty_code') %>%
+          rename(!!rate_col_name := country_rate)
+
+        tariff_matrices[[tariff_name]] <- tariff_matrix
+      }
+    }
+  }
+
+  # Join all tariff matrices together
+  if (length(tariff_matrices) > 0) {
+    rate_matrix <- tariff_matrices[[1]]
+    if (length(tariff_matrices) > 1) {
+      for (i in 2:length(tariff_matrices)) {
+        rate_matrix <- rate_matrix %>%
+          full_join(tariff_matrices[[i]], by = c('hs10', 'cty_code'))
+      }
+    }
+  } else {
+    # No tariffs with non-zero rates - return empty tibble with correct structure
+    rate_matrix <- tibble(
+      hs10 = character(),
+      cty_code = character()
     )
-
-    # Add this tariff's rate column
-    rate_col_name <- paste0('s232_', tariff_name, '_rate')
-
-    rate_matrix <- rate_matrix %>%
-      mutate(covered = if_else(str_detect(hs10, pattern), 1, 0)) %>%
-      left_join(country_rates, by = 'cty_code') %>%
-      mutate(
-        !!rate_col_name := if_else(covered == 1, country_rate, 0)
-      ) %>%
-      select(-covered, -country_rate)
   }
 
   message(sprintf('Loaded 232 rates for %d tariffs across %s HS10 × country combinations',
@@ -212,11 +240,11 @@ load_ieepa_rates_yaml <- function(yaml_file,
   # TODO: Implement when needed
 
   # ===========================
-  # Return complete rate matrix
+  # Filter to sparse matrix (only non-zero rates) and return
   # ===========================
 
-  # Rename rate column to specified name
   rate_matrix <- rate_matrix %>%
+    filter(rate > 0) %>%
     rename(!!rate_col_name := rate)
 
   message(sprintf('Loaded %s for %s HS10 × country combinations',
