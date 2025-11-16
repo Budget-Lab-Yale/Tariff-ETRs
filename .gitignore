@@ -6,3 +6,6 @@
 
 # Output directory
 output/
+
+# Cache directory
+cache/

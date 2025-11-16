@@ -32,12 +32,12 @@ source('src/functions.R')
 # Path to Census Bureau import data files
 import_data_path <- 'C:/Users/jar335/Downloads'
 
+# Use cached data if available (set to FALSE to force re-processing)
+use_cache <- TRUE
+
 # Scenarios to run (add/remove as needed)
 scenarios <- c(
-  '10-17',
-  '10-30_ex_cn',
-  '10-30',
-  '10-30_ex_ieepa'
+  '10-30'
 )
 
 
@@ -49,7 +49,8 @@ scenarios <- c(
 for (scenario in scenarios) {
   do_scenario(
     scenario         = scenario,
-    import_data_path = import_data_path
+    import_data_path = import_data_path,
+    use_cache        = use_cache
   )
 }
 

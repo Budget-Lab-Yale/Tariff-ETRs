@@ -128,9 +128,10 @@ load_imports_hs10_country <- function(import_data_path, year, type = c('con', 'g
 #'
 #' @param scenario Scenario name (corresponds to config/{scenario}/ directory)
 #' @param import_data_path Path to Census Bureau import data files
+#' @param use_cache Use cached HS10 data if available (default: TRUE)
 #'
 #' @return Returns ETR data invisibly
-do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads') {
+do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads', use_cache = TRUE) {
 
   message(sprintf('\n=========================================================='))
   message(sprintf('Running scenario: %s', scenario))
@@ -180,12 +181,35 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
   # Read GTAP crosswalk (now HS10 -> GTAP)
   crosswalk <- read_csv('resources/hs10_gtap_crosswalk.csv', show_col_types = FALSE)
 
-  # Load HS10-level import data using new function
-  hs10_raw <- load_imports_hs10_country(
-    import_data_path = import_data_path,
-    year = 2024,
-    type = 'con'
-  )
+  # Define cache path
+  cache_dir <- 'cache'
+  dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
+  cache_file <- file.path(cache_dir, 'hs10_country_2024_con.rds')
+
+  # Load HS10-level import data (from cache or raw files)
+  if (use_cache && file.exists(cache_file)) {
+    message(sprintf('Loading cached HS10 data from %s...', cache_file))
+    hs10_raw <- readRDS(cache_file)
+    message(sprintf('Loaded %s cached records', format(nrow(hs10_raw), big.mark = ',')))
+  } else {
+    if (use_cache) {
+      message('No cache found, processing raw import files...')
+    } else {
+      message('Cache disabled, processing raw import files...')
+    }
+
+    # Load HS10-level import data using new function
+    hs10_raw <- load_imports_hs10_country(
+      import_data_path = import_data_path,
+      year = 2024,
+      type = 'con'
+    )
+
+    # Save to cache for next time
+    message(sprintf('Saving processed data to cache at %s...', cache_file))
+    saveRDS(hs10_raw, cache_file)
+    message('Cache saved successfully')
+  }
 
   # Build data: aggregate and map to partners and GTAP sectors
   hs10_by_country <- hs10_raw %>%
