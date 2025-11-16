@@ -1,0 +1,32 @@
+Overall ETRs by Country (change from early 2025 baseline):
+==========================================================
+
+               GTAP Weights  2024 Census Weights
+Country                                        
+-------        ------------   -----------------
+CHINA                19.38%              19.54%
+JAPAN                19.18%              18.49%
+EU                   14.71%              12.51%
+ROW                  13.00%              15.17%
+FTROW                12.66%              12.75%
+UK                   10.99%              11.36%
+MEXICO               10.87%              11.00%
+CANADA                7.74%                 NA%
+
+TOTAL                13.93%                 NA%
+
+
+Tariff Coverage by Country (fraction of 2024 import value):
+==========================================================
+Country        Under 232   Under IEEPA       Neither
+-------        ---------   -----------       -------
+CANADA             21.6%         36.8%         41.6%
+CHINA              25.1%         57.1%         17.8%
+EU                 17.3%         49.5%         33.2%
+FTROW              23.2%         44.5%         32.3%
+JAPAN              44.0%         46.3%          9.7%
+MEXICO             48.9%         41.2%          9.9%
+ROW                15.2%         51.7%         33.0%
+UK                 26.2%         50.1%         23.7%
+
+TOTAL              25.3%         47.6%         27.1%

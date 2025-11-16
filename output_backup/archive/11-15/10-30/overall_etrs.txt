@@ -1,0 +1,16 @@
+Overall ETRs by Country (change from early 2025 baseline):
+==========================================================
+
+               GTAP Weights  2024 Census Weights
+Country                                        
+-------        ------------   -----------------
+CHINA                20.51%              20.26%
+ROW                  19.69%              22.45%
+JAPAN                18.25%              16.99%
+EU                   14.50%              11.69%
+FTROW                13.91%              13.37%
+UK                   11.11%              10.56%
+MEXICO               10.93%              10.72%
+CANADA                7.60%               6.25%
+
+TOTAL                15.51%              14.97%
