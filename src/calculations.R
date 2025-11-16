@@ -722,7 +722,8 @@ calc_overall_etrs <- function(etr_data, hs10_country_etrs = NULL,
       mutate(
         partner = if_else(is.na(partner), 'row', partner),
         imports = replace_na(imports, 0),
-        rate = replace_na(rate, 0)
+        # Use IEEPA default rate for unmapped countries (same as in ETR calculation)
+        rate = replace_na(rate, ieepa_data$default_rate)
       )
 
     # Calculate coverage by partner (aggregate from country level)
