@@ -178,12 +178,12 @@ load_232_rates <- function(yaml_file, country_mapping_file = 'resources/country_
 #'
 #' @param yaml_file Path to IEEPA YAML configuration file
 #' @param crosswalk_file Path to HS10-GTAP crosswalk CSV file
-#' @param country_mapping_file Path to country-partner mapping CSV
+#' @param census_codes_file Path to Census country codes CSV file
 #'
 #' @return Tibble with columns: hs10, cty_code, rate (long format)
 load_ieepa_rates_yaml <- function(yaml_file,
                                   crosswalk_file = 'resources/hs10_gtap_crosswalk.csv',
-                                  country_mapping_file = 'resources/country_partner_mapping.csv') {
+                                  census_codes_file = 'resources/census_codes.csv') {
 
   message('Loading IEEPA rates from YAML...')
 
@@ -197,15 +197,15 @@ load_ieepa_rates_yaml <- function(yaml_file,
   # Get unique HS10 codes
   hs10_codes <- unique(crosswalk$hs10)
 
-  # Read country mapping to get all possible country codes
-  country_mapping <- read_csv(
-    country_mapping_file,
-    col_types = cols(cty_code = col_character()),
+  # Read Census codes to get all possible country codes
+  census_codes <- read_csv(
+    census_codes_file,
+    col_types = cols(Code = col_character()),
     show_col_types = FALSE
   )
 
-  # Get all unique country codes
-  all_country_codes <- unique(country_mapping$cty_code)
+  # Get all country codes (as character strings to match YAML keys)
+  all_country_codes <- as.character(census_codes$Code)
 
   # Get default rate
   default_rate <- config$headline_rates$default
