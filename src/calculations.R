@@ -197,6 +197,8 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
   calc_overall_etrs(
     etr_data    = etrs,
     import_data = hs10_by_country,
+    bases_data  = bases,
+    ieepa_data  = params_ieepa,
     scenario    = scenario
   )
 
@@ -485,12 +487,15 @@ write_sector_country_etrs <- function(etr_data,
 #'
 #' @param etr_data Data frame with columns: partner, gtap_code, etr (change from baseline)
 #' @param import_data Data frame with columns: partner, gtap_code, imports (2024 import values)
+#' @param bases_data Data frame with columns: tariff, partner, gtap_code, share (optional, for coverage calculation)
+#' @param ieepa_data Data frame with columns: gtap_code, partner, rate (optional, for coverage calculation)
 #' @param weights_file Path to GTAP import weights CSV file
 #' @param output_file Path to output text file (default: 'overall_etrs.txt')
 #' @param scenario Scenario name for output directory
 #'
 #' @return Prints overall ETR changes and returns them invisibly
 calc_overall_etrs <- function(etr_data, import_data = NULL,
+                              bases_data = NULL, ieepa_data = NULL,
                               weights_file = 'resources/gtap_import_weights.csv',
                               output_file = 'overall_etrs.txt',
                               scenario = NULL) {
@@ -612,6 +617,101 @@ calc_overall_etrs <- function(etr_data, import_data = NULL,
   cat('\n')
 
   # ===========================
+  # Calculate and print tariff coverage
+  # ===========================
+
+  coverage_stats <- NULL
+
+  if (!is.null(bases_data) && !is.null(ieepa_data) && !is.null(import_data)) {
+
+    # Join bases with imports and IEEPA rates
+    coverage_data <- bases_data %>%
+      left_join(
+        import_data %>% select(partner, gtap_code, imports),
+        by = c('partner', 'gtap_code')
+      ) %>%
+      left_join(
+        ieepa_data %>% select(partner, gtap_code, rate),
+        by = c('partner', 'gtap_code')
+      ) %>%
+      mutate(
+        imports = replace_na(imports, 0),
+        rate = replace_na(rate, 0)
+      )
+
+    # Calculate coverage by partner
+    coverage_by_partner <- coverage_data %>%
+      mutate(
+        # Calculate import value covered by each tariff category
+        import_value = imports * share,
+        is_232 = tariff != 'residual',
+        is_ieepa = tariff == 'residual' & rate > 0,
+        is_neither = tariff == 'residual' & rate == 0
+      ) %>%
+      group_by(partner) %>%
+      summarise(
+        total_imports = sum(import_value),
+        imports_232 = sum(import_value * is_232),
+        imports_ieepa = sum(import_value * is_ieepa),
+        imports_neither = sum(import_value * is_neither),
+        .groups = 'drop'
+      ) %>%
+      mutate(
+        share_232 = imports_232 / total_imports,
+        share_ieepa = imports_ieepa / total_imports,
+        share_neither = imports_neither / total_imports
+      )
+
+    # Calculate total coverage across all partners
+    coverage_total <- coverage_data %>%
+      mutate(
+        import_value = imports * share,
+        is_232 = tariff != 'residual',
+        is_ieepa = tariff == 'residual' & rate > 0,
+        is_neither = tariff == 'residual' & rate == 0
+      ) %>%
+      summarise(
+        total_imports = sum(import_value),
+        imports_232 = sum(import_value * is_232),
+        imports_ieepa = sum(import_value * is_ieepa),
+        imports_neither = sum(import_value * is_neither)
+      ) %>%
+      mutate(
+        share_232 = imports_232 / total_imports,
+        share_ieepa = imports_ieepa / total_imports,
+        share_neither = imports_neither / total_imports
+      )
+
+    coverage_stats <- list(
+      by_partner = coverage_by_partner,
+      total = coverage_total
+    )
+
+    # Print coverage table
+    cat('\n')
+    cat('Tariff Coverage by Country (fraction of 2024 import value):\n')
+    cat('==========================================================\n')
+    cat(sprintf('%-10s  %12s  %12s  %12s\n', 'Country', 'Under 232', 'Under IEEPA', 'Neither'))
+    cat(sprintf('%-10s  %12s  %12s  %12s\n', '-------', '---------', '-----------', '-------'))
+
+    for (i in 1:nrow(coverage_by_partner)) {
+      cat(sprintf('%-10s  %11.1f%%  %11.1f%%  %11.1f%%\n',
+                  toupper(coverage_by_partner$partner[i]),
+                  coverage_by_partner$share_232[i] * 100,
+                  coverage_by_partner$share_ieepa[i] * 100,
+                  coverage_by_partner$share_neither[i] * 100))
+    }
+
+    cat('\n')
+    cat(sprintf('%-10s  %11.1f%%  %11.1f%%  %11.1f%%\n',
+                'TOTAL',
+                coverage_total$share_232 * 100,
+                coverage_total$share_ieepa * 100,
+                coverage_total$share_neither * 100))
+    cat('\n')
+  }
+
+  # ===========================
   # Write results to file
   # ===========================
 
@@ -662,6 +762,33 @@ calc_overall_etrs <- function(etr_data, import_data = NULL,
     writeLines(sprintf('%-10s  %14.2f%%',
                        'TOTAL',
                        gtap_total_etr_value * 100), con)
+  }
+
+  # Write coverage table if available
+  if (!is.null(coverage_stats)) {
+    writeLines('', con)
+    writeLines('', con)
+    writeLines('Tariff Coverage by Country (fraction of 2024 import value):', con)
+    writeLines('==========================================================', con)
+    writeLines(sprintf('%-10s  %12s  %12s  %12s', 'Country', 'Under 232', 'Under IEEPA', 'Neither'), con)
+    writeLines(sprintf('%-10s  %12s  %12s  %12s', '-------', '---------', '-----------', '-------'), con)
+
+    coverage_by_partner <- coverage_stats$by_partner
+    for (i in 1:nrow(coverage_by_partner)) {
+      writeLines(sprintf('%-10s  %11.1f%%  %11.1f%%  %11.1f%%',
+                         toupper(coverage_by_partner$partner[i]),
+                         coverage_by_partner$share_232[i] * 100,
+                         coverage_by_partner$share_ieepa[i] * 100,
+                         coverage_by_partner$share_neither[i] * 100), con)
+    }
+
+    writeLines('', con)
+    coverage_total <- coverage_stats$total
+    writeLines(sprintf('%-10s  %11.1f%%  %11.1f%%  %11.1f%%',
+                       'TOTAL',
+                       coverage_total$share_232 * 100,
+                       coverage_total$share_ieepa * 100,
+                       coverage_total$share_neither * 100), con)
   }
 
   close(con)
