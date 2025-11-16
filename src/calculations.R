@@ -81,9 +81,12 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
   if (use_cache && file.exists(cache_file)) {
     message(sprintf('Loading cached HS10 x country x GTAP data from %s...', cache_file))
     hs10_by_country <- readRDS(cache_file) %>%
-      
+
       # Filter out special HTS codes (chapters 98-99) in case cache predates this filter
-      filter(!str_detect(hs10, '^(98|99)'))
+      filter(!str_detect(hs10, '^(98|99)')) %>%
+
+      # Filter out rows with missing GTAP codes (unmapped HS10 codes)
+      filter(!is.na(gtap_code))
     message(sprintf('Loaded %s cached records', format(nrow(hs10_by_country), big.mark = ',')))
   } else {
     if (use_cache) {
@@ -116,7 +119,10 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
         by = 'hs10'
       ) %>%
       mutate(gtap_code = str_to_lower(gtap_code)) %>%
-      relocate(gtap_code, .after = hs10)
+      relocate(gtap_code, .after = hs10) %>%
+
+      # Filter out rows with missing GTAP codes (unmapped HS10 codes)
+      filter(!is.na(gtap_code))
 
     # Save processed data to cache for next time
     message(sprintf('Saving processed data to cache at %s...', cache_file))
@@ -515,7 +521,7 @@ write_shock_commands <- function(etr_data, output_file = 'shocks.txt', scenario)
       partner_fmt = partner_map[partner],
       etr_pct = round(etr * 100, 1)
     ) %>%
-    filter(etr_pct > 0) %>%
+    filter(etr_pct > 0, !is.na(gtap_code)) %>%
     arrange(match(partner_fmt, partner_order), gtap_code) %>%
     mutate(
       command = sprintf('Shock tms("%s","%s","USA") = %.1f;', gtap_code, partner_fmt, etr_pct)
