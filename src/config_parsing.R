@@ -276,10 +276,27 @@ load_ieepa_rates_yaml <- function(yaml_file,
   message(sprintf('Loaded IEEPA rates for %d HS10 codes x %d countries',
                   length(hs10_codes), length(all_country_codes)))
 
-  # Return list with rate_matrix and default_rate
-  # The default_rate will be used for countries not in country_partner_mapping.csv
+  # Extract product-level defaults that apply to ALL countries (including unmapped)
+  # These override the headline default_rate for specific HS10 codes
+  product_defaults <- NULL
+  if (!is.null(config$product_rates) && length(config$product_rates) > 0) {
+    product_defaults <- names(config$product_rates) %>%
+      map_df(function(hts_code) {
+        matching_hs10 <- hs10_codes[str_starts(hs10_codes, hts_code)]
+        tibble(
+          hs10 = matching_hs10,
+          product_default = config$product_rates[[hts_code]]
+        )
+      })
+  }
+
+  # Return list with rate_matrix, default_rate, and product_defaults
+  # - rate_matrix: rates for mapped countries (in country_partner_mapping.csv)
+  # - default_rate: headline default for unmapped countries with no product override
+  # - product_defaults: product-level defaults that override headline default for specific HS10 codes
   return(list(
     rate_matrix = rate_matrix,
-    default_rate = default_rate
+    default_rate = default_rate,
+    product_defaults = product_defaults
   ))
 }

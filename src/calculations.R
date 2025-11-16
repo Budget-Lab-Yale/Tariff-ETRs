@@ -327,14 +327,28 @@ calc_weighted_etr <- function(bases_data, params_data,
   }) %>%
     bind_rows()
 
+  # Extract product defaults for unmapped countries
+  ieepa_product_defaults <- ieepa_data$product_defaults
+
   # Join rates, exemptions, and USMCA shares to bases
   hs10_level_data <- bases_with_context %>%
     left_join(rates_and_exemptions_232, by = c('tariff', 'cty_code')) %>%
     left_join(default_rates_232, by = 'tariff') %>%
     left_join(usmca_long, by = c('cty_code', 'gtap_code')) %>%
-    left_join(ieepa_long, by = c('hs10', 'cty_code')) %>%
+    left_join(ieepa_long, by = c('hs10', 'cty_code'))
+
+  # Join product defaults if they exist (for unmapped countries)
+  if (!is.null(ieepa_product_defaults)) {
+    hs10_level_data <- hs10_level_data %>%
+      left_join(ieepa_product_defaults, by = 'hs10')
+  } else {
+    hs10_level_data <- hs10_level_data %>%
+      mutate(product_default = NA_real_)
+  }
+
+  hs10_level_data <- hs10_level_data %>%
     mutate(
-      
+
       base = share * imports,
 
       # Use default rates for unmapped countries, 0 only if no default available
@@ -342,9 +356,16 @@ calc_weighted_etr <- function(bases_data, params_data,
       usmca_exempt_232 = if_else(cty_code %in% c('1220', '2010'), usmca_exempt_232, 0),
       usmca_share      = if_else(cty_code %in% c('1220', '2010'), usmca_share, 0),
 
-      # Use IEEPA default rate for unmapped countries
-      rate_ieepa = replace_na(rate_ieepa, ieepa_data$default_rate)
+      # For unmapped countries (rate_ieepa is NA):
+      # 1. First try product_default (product-level rates apply to ALL countries)
+      # 2. Fall back to headline default_rate
+      rate_ieepa = case_when(
+        !is.na(rate_ieepa) ~ rate_ieepa,                    # Mapped country with explicit rate
+        !is.na(product_default) ~ product_default,          # Unmapped country, use product default
+        TRUE ~ ieepa_data$default_rate                      # Unmapped country, use headline default
+      )
     ) %>%
+    select(-product_default) %>%  # Clean up temporary column
 
     # Apply auto rebate adjustment for all countries
     mutate(
@@ -389,9 +410,10 @@ calc_weighted_etr <- function(bases_data, params_data,
     summarise(
       imports = sum(base),
       etr = if_else(imports > 0, weighted.mean(adjusted_rate, base), 0),
+      
       # Track coverage bases for downstream aggregation
-      base_232 = sum(if_else(tariff != 'residual', base, 0)),
-      base_ieepa = sum(if_else(tariff == 'residual' & rate_ieepa > 0, base, 0)),
+      base_232     = sum(if_else(tariff != 'residual', base, 0)),
+      base_ieepa   = sum(if_else(tariff == 'residual' & rate_ieepa > 0, base, 0)),
       base_neither = sum(if_else(tariff == 'residual' & rate_ieepa == 0, base, 0)),
       .groups = 'drop'
     )
