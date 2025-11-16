@@ -207,6 +207,144 @@ load_imports_hs10_country <- function(import_data_path, year, type = c('con', 'g
 }
 
 
+#' Load IEEPA rates from YAML configuration with hierarchical rate structure
+#'
+#' Reads IEEPA rates from YAML file with three levels of specificity:
+#' 1. Headline rates: Default rate for each partner across all GTAP sectors
+#' 2. Product rates: Override headline for specific HTS codes (variable length)
+#' 3. Product x country rates: Override everything for specific HTS x partner combinations
+#'
+#' @param yaml_file Path to IEEPA YAML configuration file
+#' @param crosswalk_file Path to HS10-GTAP crosswalk CSV file
+#'
+#' @return Tibble with columns: gtap_code, partner, rate (long format)
+load_ieepa_rates_yaml <- function(yaml_file, crosswalk_file = 'resources/hs10_gtap_crosswalk.csv') {
+
+  message('Loading IEEPA rates from YAML...')
+
+  # Read YAML configuration
+  config <- read_yaml(yaml_file)
+
+  # Read HS10-GTAP crosswalk
+  crosswalk <- read_csv(crosswalk_file, show_col_types = FALSE) %>%
+    mutate(
+      hs10 = as.character(hs10),
+      gtap_code = str_to_lower(gtap_code)
+    )
+
+  # Get unique GTAP sectors
+  gtap_sectors <- unique(crosswalk$gtap_code)
+
+  # Define partner list
+  partners <- c('china', 'canada', 'mexico', 'uk', 'japan', 'eu', 'row', 'ftrow')
+
+  # ===========================
+  # Step 1: Initialize with headline rates
+  # ===========================
+
+  # Create matrix with headline rates for all GTAP x partner combinations
+  rate_matrix <- expand.grid(
+    gtap_code = gtap_sectors,
+    partner = partners,
+    stringsAsFactors = FALSE
+  ) %>%
+    as_tibble() %>%
+    mutate(
+      rate = case_when(
+        partner == 'china'  ~ config$headline_rates$china,
+        partner == 'canada' ~ config$headline_rates$canada,
+        partner == 'mexico' ~ config$headline_rates$mexico,
+        partner == 'uk'     ~ config$headline_rates$uk,
+        partner == 'japan'  ~ config$headline_rates$japan,
+        partner == 'eu'     ~ config$headline_rates$eu,
+        partner == 'row'    ~ config$headline_rates$row,
+        partner == 'ftrow'  ~ config$headline_rates$ftrow,
+        TRUE ~ 0
+      )
+    )
+
+  # ===========================
+  # Step 2: Apply product-level rates
+  # ===========================
+
+  if (!is.null(config$product_rates) && length(config$product_rates) > 0) {
+
+    for (prod_rate in config$product_rates) {
+
+      hts_codes <- prod_rate$hts_codes
+      rate <- prod_rate$rate
+      target_partners <- prod_rate$partners
+
+      # Determine which partners to apply this rate to
+      if (is.character(target_partners) && target_partners[1] == 'all') {
+        apply_to_partners <- partners
+      } else {
+        apply_to_partners <- target_partners
+      }
+
+      # Map HTS codes to GTAP sectors using prefix matching
+      pattern <- paste0('^(', paste(hts_codes, collapse = '|'), ')')
+
+      affected_gtap_sectors <- crosswalk %>%
+        filter(str_detect(hs10, pattern)) %>%
+        pull(gtap_code) %>%
+        unique()
+
+      # Update rate matrix for these GTAP sectors and partners
+      rate_matrix <- rate_matrix %>%
+        mutate(
+          rate = if_else(
+            gtap_code %in% affected_gtap_sectors & partner %in% apply_to_partners,
+            !!rate,
+            rate
+          )
+        )
+    }
+  }
+
+  # ===========================
+  # Step 3: Apply product x country rates
+  # ===========================
+
+  if (!is.null(config$product_country_rates) && length(config$product_country_rates) > 0) {
+
+    for (prod_country_rate in config$product_country_rates) {
+
+      hts_codes <- prod_country_rate$hts_codes
+      target_partner <- prod_country_rate$partner
+      rate <- prod_country_rate$rate
+
+      # Map HTS codes to GTAP sectors using prefix matching
+      pattern <- paste0('^(', paste(hts_codes, collapse = '|'), ')')
+
+      affected_gtap_sectors <- crosswalk %>%
+        filter(str_detect(hs10, pattern)) %>%
+        pull(gtap_code) %>%
+        unique()
+
+      # Update rate matrix for these specific GTAP sectors and partner
+      rate_matrix <- rate_matrix %>%
+        mutate(
+          rate = if_else(
+            gtap_code %in% affected_gtap_sectors & partner == !!target_partner,
+            !!rate,
+            rate
+          )
+        )
+    }
+  }
+
+  # ===========================
+  # Return long format
+  # ===========================
+
+  message(sprintf('Loaded IEEPA rates for %d GTAP sectors x %d partners',
+                  length(gtap_sectors), length(partners)))
+
+  return(rate_matrix)
+}
+
+
 #' Run complete ETR analysis for a given scenario
 #'
 #' @param scenario Scenario name (corresponds to config/{scenario}/ directory)
@@ -232,24 +370,14 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
   # Deduplicate 232 codes to prevent double-counting
   params_232 <- deduplicate_232_codes(params_232)
 
-  # IEEPA rates
-  params_ieepa <- read_csv(sprintf('config/%s/ieepa_rates.csv', scenario), show_col_types = FALSE)
+  # IEEPA rates (from new YAML format)
+  params_ieepa <- load_ieepa_rates_yaml(sprintf('config/%s/ieepa_rates.yaml', scenario))
 
   # Other scenario parameters
   other_params <- read_yaml(sprintf('config/%s/other_params.yaml', scenario))
 
   # USMCA share of trade by sector
   usmca_shares <- read_csv('./resources/usmca_shares.csv', show_col_types = FALSE)
-
-  # Adjust IEEPA rates: fold Korea into ftrow and Vietnam into row
-  # Note: Korea and FTROW countries are directly classified via ftrow_codes in import data,
-  # but IEEPA config has separate kr column that needs to be merged into ftrow rates
-  params_ieepa <- params_ieepa %>%
-    mutate(
-      ftrow = ftrow * (1 - other_params$kr_share_ftrow) + kr * other_params$kr_share_ftrow,
-      row   = row   * (1 - other_params$vn_share_row)   + vn * other_params$vn_share_row
-    ) %>%
-    select(-kr, -vn)
 
   #------------------
   # Read import data
@@ -500,9 +628,10 @@ calc_weighted_etr <- function(bases_data, params_data,
     pivot_longer(cols = -gtap_code, names_to = 'partner', values_to = 'usmca_share') %>%
     mutate(usmca_share = replace_na(usmca_share, 0))
 
-  # Reshape IEEPA rates long by country
+  # IEEPA rates are already in long format (gtap_code, partner, rate)
+  # Just rename 'rate' column to 'ieepa_rate' for consistency
   ieepa_long <- ieepa_data %>%
-    pivot_longer(cols = -gtap_code, names_to = 'partner', values_to = 'ieepa_rate') %>%
+    rename(ieepa_rate = rate) %>%
     mutate(ieepa_rate = replace_na(ieepa_rate, 0))
 
   # Join rates, exemptions, and USMCA shares to bases

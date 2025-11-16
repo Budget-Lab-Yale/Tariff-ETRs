@@ -1,0 +1,16 @@
+# IEEPA rates configuration for 10-30-ex-ieepa scenario
+# This scenario has no IEEPA tariffs (all zeros)
+
+headline_rates:
+  china: 0
+  canada: 0
+  mexico: 0
+  japan: 0
+  uk: 0
+  eu: 0
+  row: 0
+  ftrow: 0
+
+product_rates: []
+
+product_country_rates: []

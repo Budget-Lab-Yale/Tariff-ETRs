@@ -33,7 +33,7 @@ source('src/functions.R')
 import_data_path <- 'C:/Users/jar335/Downloads'
 
 # Use cached data if available (set to FALSE to force re-processing)
-use_cache <- TRUE
+use_cache <- T
 
 # Scenarios to run (add/remove as needed)
 scenarios <- c(

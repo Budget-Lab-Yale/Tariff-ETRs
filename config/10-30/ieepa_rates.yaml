@@ -1,0 +1,23 @@
+# IEEPA rates configuration for 10-30 scenario
+# Three levels of specificity (highest precedence last):
+# 1. Headline rates (default for all GTAP sectors)
+# 2. Product rates (HTS code-based overrides)
+# 3. Product x country rates (most specific)
+
+headline_rates:
+  china: 0.2
+  canada: 0.35
+  mexico: 0.25
+  japan: 0.15
+  uk: 0.1
+  eu: 0.15
+  row: 0.1
+  ftrow: 0.1
+
+# Note: The old CSV had special handling for Korea and Vietnam rates
+# which were folded into ftrow and row respectively. This is no longer used.
+# Korea is now directly mapped to ftrow and Vietnam to row in the country mapping.
+
+product_rates: []
+
+product_country_rates: []
