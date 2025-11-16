@@ -368,9 +368,14 @@ calc_weighted_etr <- function(bases_data, params_data,
   gtap_etrs <- hs10_etrs %>%
     group_by(partner, gtap_code) %>%
     summarise(
-      etr = sum(etr_hs10 * imports) / sum(imports),
+      total_imports = sum(imports),
+      etr = sum(etr_hs10 * imports),
       .groups = 'drop'
-    )
+    ) %>%
+    mutate(
+      etr = if_else(total_imports > 0, etr / total_imports, 0)
+    ) %>%
+    select(partner, gtap_code, etr)
 
   return(gtap_etrs)
 }
