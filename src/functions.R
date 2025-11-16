@@ -269,32 +269,26 @@ load_ieepa_rates_yaml <- function(yaml_file, crosswalk_file = 'resources/hs10_gt
 
   if (!is.null(config$product_rates) && length(config$product_rates) > 0) {
 
-    for (prod_rate in config$product_rates) {
+    # config$product_rates is a simple dict: HTS code (key) -> rate (value)
+    # Apply each rate to ALL partners
 
-      hts_codes <- prod_rate$hts_codes
-      rate <- prod_rate$rate
-      target_partners <- prod_rate$partners
+    for (hts_code in names(config$product_rates)) {
 
-      # Determine which partners to apply this rate to
-      if (is.character(target_partners) && target_partners[1] == 'all') {
-        apply_to_partners <- partners
-      } else {
-        apply_to_partners <- target_partners
-      }
+      rate <- config$product_rates[[hts_code]]
 
-      # Map HTS codes to GTAP sectors using prefix matching
-      pattern <- paste0('^(', paste(hts_codes, collapse = '|'), ')')
+      # Map this HTS code to GTAP sectors using prefix matching
+      pattern <- paste0('^', hts_code)
 
       affected_gtap_sectors <- crosswalk %>%
         filter(str_detect(hs10, pattern)) %>%
         pull(gtap_code) %>%
         unique()
 
-      # Update rate matrix for these GTAP sectors and partners
+      # Update rate matrix for these GTAP sectors (all partners)
       rate_matrix <- rate_matrix %>%
         mutate(
           rate = if_else(
-            gtap_code %in% affected_gtap_sectors & partner %in% apply_to_partners,
+            gtap_code %in% affected_gtap_sectors,
             !!rate,
             rate
           )
