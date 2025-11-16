@@ -75,7 +75,9 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
   # Load processed HS10 x country x GTAP data (from cache or build from raw)
   if (use_cache && file.exists(cache_file)) {
     message(sprintf('Loading cached HS10 x country x GTAP data from %s...', cache_file))
-    hs10_by_country <- readRDS(cache_file)
+    hs10_by_country <- readRDS(cache_file) %>%
+      # Filter out special HTS codes (chapters 98-99) in case cache predates this filter
+      filter(!str_detect(hs10, '^(98|99)'))
     message(sprintf('Loaded %s cached records', format(nrow(hs10_by_country), big.mark = ',')))
   } else {
     if (use_cache) {
@@ -97,6 +99,9 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
       # Get totals by HS10 and country
       group_by(hs10, cty_code) %>%
       summarise(imports = sum(value), .groups = 'drop') %>%
+
+      # Filter out special HTS codes (chapters 98-99: re-imports, special provisions, etc.)
+      filter(!str_detect(hs10, '^(98|99)')) %>%
 
       # Add GTAP code
       left_join(
@@ -277,41 +282,36 @@ calc_weighted_etr <- function(bases_data, params_data,
                               ieepa_usmca_exempt) {
 
   # Extract rates and usmca_exempt flags from params
-  rates_and_exemptions <- map(names(params_data), ~ {
+  rates_and_exemptions_232 <- map(names(params_data), ~ {
     tibble(
-      tariff       = .x,
-      cty_code     = names(params_data[[.x]]$rate),
-      rate         = unlist(params_data[[.x]]$rate),
-      usmca_exempt = params_data[[.x]]$usmca_exempt
+      tariff           = .x,
+      cty_code         = names(params_data[[.x]]$rate),
+      rate_232         = unlist(params_data[[.x]]$rate),
+      usmca_exempt_232 = params_data[[.x]]$usmca_exempt
     )
   }) %>%
     bind_rows()
 
-  # Map countries to partners for USMCA lookup
+  # Map countries to GTAP partners for USMCA lookup
   country_to_partner <- country_mapping %>%
     select(cty_code, partner) %>%
     distinct()
 
-  # Reshape USMCA shares long by partner (this is still partner-based)
-  usmca_by_partner <- usmca_data %>%
-    pivot_longer(cols = -gtap_code, names_to = 'partner', values_to = 'usmca_share') %>%
-    mutate(usmca_share = replace_na(usmca_share, 0))
+  # Reshape USMCA shares long 
+  usmca_long <- usmca_data %>%
+    pivot_longer(cols = -gtap_code, names_to = 'partner', values_to = 'usmca_share') %>% 
+    mutate(
+      cty_code = case_when(
+        partner == 'canada' ~ '1220', 
+        partner == 'mexico' ~ '2010', 
+        T ~ NA
+      )
+    ) %>%
+    select(-partner)
 
-  # Join USMCA shares to countries via partner mapping
-  usmca_long <- country_to_partner %>%
-    left_join(usmca_by_partner, by = 'partner') %>%
-    select(cty_code, gtap_code, usmca_share) %>%
-    mutate(usmca_share = replace_na(usmca_share, 0))
-
-  # IEEPA rates come as a list with rate_matrix and default_rate
-  # Extract rate_matrix and default_rate
-  ieepa_rate_matrix <- ieepa_data$rate_matrix
-  ieepa_default_rate <- ieepa_data$default_rate
-
-  # Rename 'rate' column to 'ieepa_rate' for consistency
-  ieepa_long <- ieepa_rate_matrix %>%
-    rename(ieepa_rate = rate) %>%
-    mutate(ieepa_rate = replace_na(ieepa_rate, 0))
+  # Rename IEEPA 'rate' column to 'ieepa_rate' for consistency
+  ieepa_long <- ieepa_data$rate_matrix %>%
+    rename(rate_ieepa = rate)
 
   # Add gtap_code and imports to bases for aggregation
   bases_with_context <- bases_data %>%
@@ -323,34 +323,37 @@ calc_weighted_etr <- function(bases_data, params_data,
   # Extract default rates from params for unmapped countries
   default_rates_232 <- map(names(params_data), ~ {
     tibble(
-      tariff       = .x,
-      default_rate = params_data[[.x]]$default_rate
+      tariff           = .x,
+      default_rate_232 = params_data[[.x]]$default_rate
     )
   }) %>%
     bind_rows()
 
   # Join rates, exemptions, and USMCA shares to bases
   hs10_level_data <- bases_with_context %>%
-    left_join(rates_and_exemptions, by = c('tariff', 'cty_code')) %>%
+    left_join(rates_and_exemptions_232, by = c('tariff', 'cty_code')) %>%
     left_join(default_rates_232, by = 'tariff') %>%
     left_join(usmca_long, by = c('cty_code', 'gtap_code')) %>%
     left_join(ieepa_long, by = c('hs10', 'cty_code')) %>%
     mutate(
+      
+      base = share * imports,
+
       # Use default rates for unmapped countries, 0 only if no default available
-      rate = if_else(is.na(rate) & !is.na(default_rate), default_rate, replace_na(rate, 0)),
-      usmca_exempt = replace_na(usmca_exempt, 0),
-      usmca_share = replace_na(usmca_share, 0),
+      rate_232         = if_else(is.na(rate_232) & !is.na(default_rate_232), default_rate_232, replace_na(rate_232, 0)),
+      usmca_exempt_232 = if_else(cty_code %in% c('1220', '2010'), usmca_exempt_232, 0),
+      usmca_share      = if_else(cty_code %in% c('1220', '2010'), usmca_share, 0),
+
       # Use IEEPA default rate for unmapped countries
-      ieepa_rate = replace_na(ieepa_rate, ieepa_default_rate),
-      imports = replace_na(imports, 0)
+      rate_ieepa = replace_na(rate_ieepa, ieepa_data$default_rate)
     ) %>%
 
     # Apply auto rebate adjustment for all countries
     mutate(
-      rate = if_else(
+      rate_232 = if_else(
         tariff %in% c('automobiles_passenger_and_light_trucks', 'automobile_parts', 'vehicles_completed_mhd'),
-        rate - (auto_rebate * us_assembly_share),
-        rate
+        rate_232 - (auto_rebate * us_assembly_share),
+        rate_232
       )
     ) %>%
 
@@ -362,10 +365,10 @@ calc_weighted_etr <- function(bases_data, params_data,
         usmca_share * us_auto_content_share,
         usmca_share
       ),
-      adjusted_rate = if_else(
-        usmca_exempt == 1 & cty_code %in% c('1220', '2010'),
-        rate * (1 - adjusted_usmca_share),
-        rate
+      adjusted_rate_232 = if_else(
+        usmca_exempt_232 == 1 & cty_code %in% c('1220', '2010'),
+        rate_232 * (1 - adjusted_usmca_share),
+        rate_232
       )
     ) %>%
 
@@ -375,19 +378,19 @@ calc_weighted_etr <- function(bases_data, params_data,
         tariff == 'residual',
         if_else(
           ieepa_usmca_exempt == 1 & cty_code %in% c('1220', '2010'),
-          ieepa_rate * (1 - adjusted_usmca_share),
-          ieepa_rate
+          rate_ieepa * (1 - adjusted_usmca_share),
+          rate_ieepa
         ),
-        adjusted_rate
+        adjusted_rate_232
       )
     )
 
   # Calculate HS10-level ETRs (sum across tariff categories)
-  hs10_etrs <- hs10_level_data %>%
-    group_by(hs10, cty_code, gtap_code) %>%
+  hs10_etrs <- hs10_level_data %>% 
+    group_by(hs10, cty_code, gtap_code) %>% 
     summarise(
-      etr_hs10 = sum(share * adjusted_rate),
-      imports = first(imports),  # Same for all tariff rows in group
+      imports = sum(base),
+      etr_hs10 = if_else(imports > 0, weighted.mean(adjusted_rate, base), 0),
       .groups = 'drop'
     )
 
@@ -396,13 +399,9 @@ calc_weighted_etr <- function(bases_data, params_data,
     group_by(cty_code, gtap_code) %>%
     summarise(
       total_imports = sum(imports),
-      etr = sum(etr_hs10 * imports),
+      etr = if_else(total_imports > 0, weighted.mean(etr_hs10, imports), 0),
       .groups = 'drop'
-    ) %>%
-    mutate(
-      etr = if_else(total_imports > 0, etr / total_imports, 0)
-    ) %>%
-    select(cty_code, gtap_code, etr)
+    ) 
 
   return(gtap_etrs)
 }
@@ -445,7 +444,6 @@ aggregate_countries_to_partners <- function(country_etrs, import_data, country_m
       imports_with_partner %>% select(cty_code, gtap_code, imports),
       by = c('cty_code', 'gtap_code')
     ) %>%
-    mutate(imports = replace_na(imports, 0)) %>%
     group_by(partner, gtap_code) %>%
     summarise(
       total_imports = sum(imports),
@@ -638,6 +636,7 @@ calc_overall_etrs <- function(etr_data, import_data = NULL,
 
   if (!is.null(import_data) && !is.null(country_mapping)) {
     # Aggregate country-level imports to partner level for Census weights
+    # Use only partner×gtap combinations that exist in etr_data to ensure consistency
     partner_imports <- import_data %>%
       left_join(
         country_mapping %>% select(cty_code, partner) %>% distinct(),
@@ -646,7 +645,9 @@ calc_overall_etrs <- function(etr_data, import_data = NULL,
       mutate(partner = if_else(is.na(partner), 'row', partner)) %>%
       group_by(partner, gtap_code) %>%
       summarise(import_weight = sum(imports), .groups = 'drop') %>%
-      filter(import_weight > 0)
+      filter(import_weight > 0) %>%
+      # Keep only combinations that have ETRs
+      semi_join(etr_data, by = c('partner', 'gtap_code'))
 
     # Calculate 2024 Census weights from aggregated import data
     census_weights <- partner_imports

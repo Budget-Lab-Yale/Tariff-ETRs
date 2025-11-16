@@ -130,7 +130,7 @@ Each scenario in `config/{scenario}/` requires:
 - Update this for different environments
 
 ## Style
-- never use na.rm = T or any other kind of na filters. if we have missings that's a sign that something is wrong and it should break accordingly!
+- never use na.rm = T or any other kind of na filters (including preemptive replace_na() calls). if we have missings that's a sign that something is wrong and it should break accordingly!
 - use single quotes for strings
 - **prefer tabular data structures over loops**: when processing config data or doing complex transformations, convert list structures to tibbles early and use joins/vectorized operations instead of loops. This is more readable, more performant, and more idiomatic R. Example: instead of looping through a list to match values, convert the list to a tibble and use `left_join()`.
 - please review the readme file each time you make a commit and determine whether you should update that file accordingly. 
