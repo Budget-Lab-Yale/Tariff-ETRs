@@ -153,11 +153,9 @@ headline_rates:
   # ... other country codes from country_partner_mapping.csv
 
 product_rates:
-  '8703': 0.30     # Simple rate: applies to all countries
-
-  '8704':          # Dict format: country-specific rates for this HTS code
-    default: 0.25
-    '5700': 0.40   # China gets higher rate for this product
+  '8703': 0.0     # Simple rate: applies to all countries
+  '27101916': 0.0
+  '27101924': 0.0
 
 product_country_rates:
   - hts_codes: ['87032201', '87032301']  # Specific vehicle types
