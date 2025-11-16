@@ -37,7 +37,8 @@ use_cache <- TRUE
 
 # Scenarios to run (add/remove as needed)
 scenarios <- c(
-  '10-30'
+  '10-30', 
+  '10-30-ex-ieepa'
 )
 
 

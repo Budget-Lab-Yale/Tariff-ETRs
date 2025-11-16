@@ -17,6 +17,89 @@
 # =============================================================================
 
 
+#' Deduplicate HTS codes across 232 tariff proclamations
+#'
+#' Applies two deduplication rules to prevent double-counting:
+#' 1. If a code appears at different HS levels across tariffs, keep only the higher-level (shorter) code
+#' 2. If a code appears at the same HS level in multiple tariffs, keep the one with highest average rate
+#'
+#' @param params_232 List of 232 tariff parameters (from YAML)
+#'
+#' @return Modified params_232 list with deduplicated codes
+deduplicate_232_codes <- function(params_232) {
+
+  # Extract all codes with their tariff names, lengths, and average rates
+  all_codes <- map_df(names(params_232), function(tariff_name) {
+    codes <- params_232[[tariff_name]]$base
+    rates <- params_232[[tariff_name]]$rate
+    avg_rate <- mean(unlist(rates))
+
+    tibble(
+      tariff = tariff_name,
+      code = as.character(codes),
+      code_length = nchar(code),
+      avg_rate = avg_rate
+    )
+  })
+
+  # Rule 1: Remove child codes when parent exists at different HS level
+  # For each code, check if any other code is a prefix (parent)
+  codes_to_remove <- character(0)
+
+  for (i in 1:nrow(all_codes)) {
+    for (j in 1:nrow(all_codes)) {
+      if (i == j) next
+      if (all_codes$tariff[i] == all_codes$tariff[j]) next  # Same tariff is OK
+
+      code_i <- all_codes$code[i]
+      code_j <- all_codes$code[j]
+
+      # If code_j is a parent of code_i (shorter and is prefix), mark code_i for removal
+      if (nchar(code_j) < nchar(code_i) && str_starts(code_i, code_j)) {
+        codes_to_remove <- c(codes_to_remove, paste(all_codes$tariff[i], code_i, sep = '::'))
+      }
+    }
+  }
+
+  # Rule 2: For same-length duplicates, keep highest average rate
+  # Group by code to find duplicates
+  duplicate_codes <- all_codes %>%
+    group_by(code) %>%
+    filter(n() > 1) %>%
+    arrange(code, desc(avg_rate)) %>%
+    group_by(code) %>%
+    slice(-1) %>%  # Remove all but the first (highest rate)
+    ungroup()
+
+  # Add these to removal list
+  codes_to_remove <- c(
+    codes_to_remove,
+    paste(duplicate_codes$tariff, duplicate_codes$code, sep = '::')
+  )
+
+  # Remove duplicates from list
+  codes_to_remove <- unique(codes_to_remove)
+
+  # Apply removals to params_232
+  if (length(codes_to_remove) > 0) {
+    message(sprintf('Deduplicating 232 codes: removing %d hierarchical/duplicate codes', length(codes_to_remove)))
+
+    for (removal in codes_to_remove) {
+      parts <- str_split(removal, '::', simplify = TRUE)
+      tariff_name <- parts[1]
+      code_to_remove <- parts[2]
+
+      # Remove this code from the base list
+      params_232[[tariff_name]]$base <- setdiff(params_232[[tariff_name]]$base, code_to_remove)
+    }
+  } else {
+    message('No hierarchical/duplicate 232 codes found')
+  }
+
+  return(params_232)
+}
+
+
 #' Load HS10 x country x year x month import data from Census IMP_DETL.TXT files
 #'
 #' Reads monthly import data from Census Merchandise Trade Imports files (IMDByymm.ZIP).
@@ -145,6 +228,9 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
 
   # Section 232 tariffs
   params_232 <- read_yaml(sprintf('config/%s/232.yaml', scenario))
+
+  # Deduplicate 232 codes to prevent double-counting
+  params_232 <- deduplicate_232_codes(params_232)
 
   # IEEPA rates
   params_ieepa <- read_csv(sprintf('config/%s/ieepa_rates.csv', scenario), show_col_types = FALSE)
