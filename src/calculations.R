@@ -131,7 +131,7 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
 
   message('Calculating tax bases and ETRs...')
 
-  # Calculate tax bases for 232 -- and IEEPA as residual
+  # Calculate tax bases for 232 at HS10 × partner level
   bases <- params_232 %>%
     names() %>%
 
@@ -142,18 +142,19 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
       # Structure is now just: base: [list of codes]
       hts_codes <- params_232[[.x]]$base
 
-      # Calculate share using variable-length code matching
-      share <- calc_import_shares(hts_codes, data = hs10_by_country) %>%
-        mutate(tariff = .x, .before = 1)
+      # Tag HS10 codes as covered (1) or not (0) using variable-length code matching
+      coverage <- calc_import_shares(hts_codes, data = hs10_by_country) %>%
+        mutate(tariff = .x, .before = 1) %>%
+        rename(share = covered)  # Rename for consistency with downstream code
 
-      return(share)
+      return(coverage)
     }) %>%
     bind_rows() %>%
 
-    # Add residual -- tax base uncovered by 232
+    # Add residual -- tax base uncovered by 232 (at HS10 × partner level)
     bind_rows(
       (.) %>%
-        group_by(partner, gtap_code) %>%
+        group_by(hs10, partner) %>%
         summarise(
           tariff = 'residual',
           share  = 1 - sum(share),
@@ -209,28 +210,30 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
 }
 
 
-#' Calculate import shares for a subset of HTS codes (arbitrary length: 4, 6, 8, or 10 digits)
+#' Tag HS10 codes as covered or not covered by a set of HTS codes
 #'
-#' Given a vector of HTS codes of any length, this function calculates:
-#' 1. Total imports for those codes (using prefix matching) by partner and GTAP sector
-#' 2. Total imports for ALL codes by partner and GTAP sector
-#' 3. The share (subset / total) by partner and GTAP sector
+#' Given a vector of HTS codes of any length (4, 6, 8, or 10 digits), this function
+#' determines which HS10 × partner combinations are covered using prefix matching.
 #'
 #' Prefix matching: A code like "8703" matches all HS10 codes starting with "8703".
 #' A code like "870322" matches all HS10 codes starting with "870322", and so on.
 #'
 #' @param hts_codes Character vector of HTS codes to analyze (4, 6, 8, or 10 digits)
-#' @param data Data frame with columns: hs10, partner, gtap_code, imports
+#' @param data Data frame with columns: hs10, partner (imports column optional but ignored)
 #'
-#' @return Data frame with columns: partner, gtap_code, share
+#' @return Data frame with columns: hs10, partner, covered (1 if covered, 0 if not)
 calc_import_shares <- function(hts_codes, data) {
+
+  # Get unique HS10 × partner combinations
+  hs10_partner <- data %>%
+    select(hs10, partner) %>%
+    distinct()
 
   # Handle empty code list
   if (length(hts_codes) == 0 || is.null(hts_codes)) {
     return(
-      data %>%
-        group_by(partner, gtap_code) %>%
-        summarise(share = 0, .groups = 'drop')
+      hs10_partner %>%
+        mutate(covered = 0)
     )
   }
 
@@ -241,22 +244,9 @@ calc_import_shares <- function(hts_codes, data) {
   # Each code becomes a prefix: "^8703" matches anything starting with 8703
   pattern <- paste0('^(', paste(hts_codes, collapse = '|'), ')')
 
-  # Calculate imports for codes matching the pattern by partner and GTAP
-  subset_imports <- data %>%
-    filter(str_detect(hs10, pattern)) %>%
-    group_by(partner, gtap_code) %>%
-    summarise(subset_imports = sum(imports), .groups = 'drop')
-
-  # Calculate total imports by partner and GTAP
-  total_imports <- data %>%
-    group_by(partner, gtap_code) %>%
-    summarise(total_imports = sum(imports), .groups = 'drop')
-
-  # Join and calculate shares
-  result <- total_imports %>%
-    left_join(subset_imports, by = c('partner', 'gtap_code')) %>%
-    mutate(share = replace_na(subset_imports / total_imports, 0)) %>%
-    select(partner, gtap_code, share)
+  # Tag each HS10 code as covered (1) or not (0)
+  result <- hs10_partner %>%
+    mutate(covered = if_else(str_detect(hs10, pattern), 1, 0))
 
   return(result)
 }

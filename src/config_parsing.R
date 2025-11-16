@@ -97,14 +97,14 @@ deduplicate_232_codes <- function(params_232) {
 #' Load IEEPA rates from YAML configuration with hierarchical rate structure
 #'
 #' Reads IEEPA rates from YAML file with three levels of specificity:
-#' 1. Headline rates: Default rate for each partner across all GTAP sectors
+#' 1. Headline rates: Default rate for each partner across all HS10 codes
 #' 2. Product rates: Override headline for specific HTS codes (variable length)
 #' 3. Product x country rates: Override everything for specific HTS x partner combinations
 #'
 #' @param yaml_file Path to IEEPA YAML configuration file
 #' @param crosswalk_file Path to HS10-GTAP crosswalk CSV file
 #'
-#' @return Tibble with columns: gtap_code, partner, rate (long format)
+#' @return Tibble with columns: hs10, partner, rate (long format)
 load_ieepa_rates_yaml <- function(yaml_file, crosswalk_file = 'resources/hs10_gtap_crosswalk.csv') {
 
   message('Loading IEEPA rates from YAML...')
@@ -112,15 +112,12 @@ load_ieepa_rates_yaml <- function(yaml_file, crosswalk_file = 'resources/hs10_gt
   # Read YAML configuration
   config <- read_yaml(yaml_file)
 
-  # Read HS10-GTAP crosswalk
+  # Read HS10-GTAP crosswalk (still needed for HS10 code list)
   crosswalk <- read_csv(crosswalk_file, show_col_types = FALSE) %>%
-    mutate(
-      hs10 = as.character(hs10),
-      gtap_code = str_to_lower(gtap_code)
-    )
+    mutate(hs10 = as.character(hs10))
 
-  # Get unique GTAP sectors
-  gtap_sectors <- unique(crosswalk$gtap_code)
+  # Get unique HS10 codes
+  hs10_codes <- unique(crosswalk$hs10)
 
   # Define partner list
   partners <- c('china', 'canada', 'mexico', 'uk', 'japan', 'eu', 'row', 'ftrow')
@@ -129,9 +126,9 @@ load_ieepa_rates_yaml <- function(yaml_file, crosswalk_file = 'resources/hs10_gt
   # Step 1: Initialize with headline rates
   # ===========================
 
-  # Create matrix with headline rates for all GTAP x partner combinations
+  # Create matrix with headline rates for all HS10 x partner combinations
   rate_matrix <- expand.grid(
-    gtap_code = gtap_sectors,
+    hs10 = hs10_codes,
     partner = partners,
     stringsAsFactors = FALSE
   ) %>%
@@ -163,19 +160,14 @@ load_ieepa_rates_yaml <- function(yaml_file, crosswalk_file = 'resources/hs10_gt
 
       rate <- config$product_rates[[hts_code]]
 
-      # Map this HTS code to GTAP sectors using prefix matching
+      # Match HS10 codes using prefix matching
       pattern <- paste0('^', hts_code)
 
-      affected_gtap_sectors <- crosswalk %>%
-        filter(str_detect(hs10, pattern)) %>%
-        pull(gtap_code) %>%
-        unique()
-
-      # Update rate matrix for these GTAP sectors (all partners)
+      # Update rate matrix for these HS10 codes (all partners)
       rate_matrix <- rate_matrix %>%
         mutate(
           rate = if_else(
-            gtap_code %in% affected_gtap_sectors,
+            str_detect(hs10, pattern),
             !!rate,
             rate
           )
@@ -195,19 +187,14 @@ load_ieepa_rates_yaml <- function(yaml_file, crosswalk_file = 'resources/hs10_gt
       target_partner <- prod_country_rate$partner
       rate <- prod_country_rate$rate
 
-      # Map HTS codes to GTAP sectors using prefix matching
+      # Match HS10 codes using prefix matching
       pattern <- paste0('^(', paste(hts_codes, collapse = '|'), ')')
 
-      affected_gtap_sectors <- crosswalk %>%
-        filter(str_detect(hs10, pattern)) %>%
-        pull(gtap_code) %>%
-        unique()
-
-      # Update rate matrix for these specific GTAP sectors and partner
+      # Update rate matrix for these specific HS10 codes and partner
       rate_matrix <- rate_matrix %>%
         mutate(
           rate = if_else(
-            gtap_code %in% affected_gtap_sectors & partner == !!target_partner,
+            str_detect(hs10, pattern) & partner == !!target_partner,
             !!rate,
             rate
           )
@@ -219,8 +206,8 @@ load_ieepa_rates_yaml <- function(yaml_file, crosswalk_file = 'resources/hs10_gt
   # Return long format
   # ===========================
 
-  message(sprintf('Loaded IEEPA rates for %d GTAP sectors x %d partners',
-                  length(gtap_sectors), length(partners)))
+  message(sprintf('Loaded IEEPA rates for %d HS10 codes x %d partners',
+                  length(hs10_codes), length(partners)))
 
   return(rate_matrix)
 }
