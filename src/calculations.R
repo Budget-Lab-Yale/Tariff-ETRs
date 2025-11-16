@@ -253,6 +253,59 @@ calc_import_shares <- function(hts_codes, data) {
 }
 
 
+#' Build a wide HS10 × country matrix of Section 232 tariff rates
+#'
+#' Uses the coverage logic from `calc_import_shares()` to determine which HS10 codes
+#' fall under each Section 232 tariff type, then populates the applicable country
+#' rates in a single wide data frame (one column per tariff type).
+#'
+#' @param params_232 List returned by `load_232_rates()`
+#' @param hs10_country_data Data frame with at least `hs10` and `cty_code` columns
+#'
+#' @return Tibble with columns `hs10`, `cty_code`, and `s232_<tariff>_rate` for each tariff type
+build_232_rate_matrix <- function(params_232, hs10_country_data) {
+
+  # Ensure unique HS10 × country combinations
+  hs10_country <- hs10_country_data %>%
+    select(hs10, cty_code) %>%
+    distinct()
+
+  result <- hs10_country
+
+  for (tariff_name in names(params_232)) {
+
+    coverage <- calc_import_shares(
+      hts_codes = params_232[[tariff_name]]$base,
+      data = hs10_country
+    )
+
+    rates <- tibble(
+      cty_code = names(params_232[[tariff_name]]$rate),
+      rate = unlist(params_232[[tariff_name]]$rate)
+    )
+
+    default_rate <- params_232[[tariff_name]]$default_rate
+    if (is.null(default_rate)) default_rate <- 0
+
+    col_name <- paste0('s232_', tariff_name, '_rate')
+
+    rate_column <- coverage %>%
+      left_join(rates, by = 'cty_code') %>%
+      mutate(
+        rate = coalesce(rate, default_rate),
+        rate = if_else(covered == 1, rate, 0)
+      ) %>%
+      select(-covered) %>%
+      rename(!!col_name := rate)
+
+    result <- result %>%
+      left_join(rate_column, by = c('hs10', 'cty_code'))
+  }
+
+  return(result)
+}
+
+
 #' Calculate weighted ETR changes at HS10 × country level
 #'
 #' Calculates change in effective tariff rates from early 2025 baseline.
