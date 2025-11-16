@@ -6,7 +6,8 @@ Calculate effective tariff rate (ETR) changes on U.S. imports by trading partner
 
 This project analyzes U.S. import trade data to compute effective tariff rate changes incorporating:
 - **Section 232 tariffs**: Steel, aluminum, softwood lumber, furniture, automobiles, and auto parts
-- **IEEPA tariffs**: Residual catch-all rates for imports not covered by Section 232
+- **IEEPA Reciprocal tariffs**: Broad-based tariffs (mutually exclusive with Section 232)
+- **IEEPA Fentanyl tariffs**: Targeted tariffs that stack on top of other authorities for China, mutually exclusive otherwise
 - **USMCA exemptions**: Trade agreement provisions with content requirements
 - **Country-specific adjustments**: Korea and Vietnam receive separate treatment within broader country groupings
 
@@ -24,7 +25,8 @@ Tariff-ETRs/
 ├── config/
 │   └── {scenario}/         # Scenario-specific configuration
 │       ├── 232.yaml        # Section 232 tariff parameters (country-level)
-│       ├── ieepa_rates.yaml # IEEPA tariff rates (country-level, hierarchical)
+│       ├── ieepa_reciprocal.yaml  # IEEPA reciprocal tariffs (country-level, hierarchical)
+│       ├── ieepa_fentanyl.yaml    # IEEPA fentanyl tariffs (country-level, hierarchical)
 │       └── other_params.yaml # Other scenario parameters
 ├── resources/
 │   ├── hs10_gtap_crosswalk.csv       # HS10 to GTAP sector mapping
@@ -88,7 +90,8 @@ We map HS10 codes to GTAP sectors using a crosswalk derived from the [6-digit cr
 
 2. **Ensure config files exist** in `config/{scenario}/`:
    - `232.yaml` - Section 232 tariff rates and HTS code definitions (variable length: 4, 6, 8, or 10 digits)
-   - `ieepa_rates.yaml` - IEEPA rates with hierarchical structure (headline, product, product×country)
+   - `ieepa_reciprocal.yaml` - IEEPA reciprocal tariffs with hierarchical structure
+   - `ieepa_fentanyl.yaml` - IEEPA fentanyl tariffs with hierarchical structure
 
 3. **Run the analysis**:
    ```r
@@ -134,9 +137,9 @@ steel:
 
 **Note**: Only the 51 countries in `resources/country_partner_mapping.csv` need explicit specification; all unmapped countries automatically receive the `default` rate.
 
-### IEEPA Rates (`ieepa_rates.yaml`)
+### IEEPA Rates (`ieepa_reciprocal.yaml` and `ieepa_fentanyl.yaml`)
 
-Specifies IEEPA tariff rates at the **country level** using Census Bureau country codes. Uses a hierarchical structure with three levels of specificity:
+Both IEEPA tariff types use identical YAML structure with hierarchical rates at the **country level**:
 
 1. **Headline rates**: Default rate for each country (applied to all HS10 codes)
 2. **Product rates**: Override headline rates for specific HTS codes
@@ -148,28 +151,25 @@ headline_rates:
   '5700': 0.2      # China (Census code 5700)
   '1220': 0.35     # Canada
   '2010': 0.25     # Mexico
-  '5880': 0.15     # Japan
-  '4120': 0.1      # UK
   # ... other country codes from country_partner_mapping.csv
 
 product_rates:
   '8703': 0.0     # Simple rate: applies to all countries
-  '27101916': 0.0
-  '27101924': 0.0
+  '2939': 0.15    # Fentanyl precursors
 
 product_country_rates:
-  - hts_codes: ['87032201', '87032301']  # Specific vehicle types
-    cty_code: '5700'                     # China only
+  - hts_codes: ['87032201', '87032301']
+    cty_code: '5700'
     rate: 0.50
-
-  - hts_codes: ['270900']                # Petroleum oils
-    cty_code: '1220'                     # Canada only
-    rate: 0.00
 ```
 
-**HTS Code Matching**: Uses prefix matching like Section 232 tariffs - `'8703'` matches all HS10 codes starting with 8703. Codes can be 4, 6, 8, or 10 digits.
+**Stacking Logic**:
+- **Reciprocal**: Mutually exclusive with Section 232 (applies only to uncovered base)
+- **Fentanyl**:
+  - China (5700): STACKS on top of 232 + reciprocal
+  - All others: Only applies to base not covered by 232 or reciprocal
 
-**Precedence**: Product × country rates override product rates, which override headline rates.
+**HTS Code Matching**: Uses prefix matching like Section 232 tariffs - `'8703'` matches all HS10 codes starting with 8703. Codes can be 4, 6, 8, or 10 digits.
 
 **Default Rates**: Unmapped countries (those not in `country_partner_mapping.csv`) automatically receive the `default` rate at each level of the hierarchy.
 

@@ -38,8 +38,17 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
   # Section 232 tariffs (returns list with rate_matrix and usmca_exempt)
   params_232 <- load_232_rates(sprintf('config/%s/232.yaml', scenario))
 
-  # IEEPA rates (returns tibble with hs10, cty_code, ieepa_rate)
-  rates_ieepa <- load_ieepa_rates_yaml(sprintf('config/%s/ieepa_rates.yaml', scenario))
+  # IEEPA Reciprocal rates (returns tibble with hs10, cty_code, ieepa_reciprocal_rate)
+  rates_ieepa_reciprocal <- load_ieepa_rates_yaml(
+    sprintf('config/%s/ieepa_reciprocal.yaml', scenario),
+    rate_col_name = 'ieepa_reciprocal_rate'
+  )
+
+  # IEEPA Fentanyl rates (returns tibble with hs10, cty_code, ieepa_fentanyl_rate)
+  rates_ieepa_fentanyl <- load_ieepa_rates_yaml(
+    sprintf('config/%s/ieepa_fentanyl.yaml', scenario),
+    rate_col_name = 'ieepa_fentanyl_rate'
+  )
 
   # Other scenario parameters
   other_params <- read_yaml(sprintf('config/%s/other_params.yaml', scenario))
@@ -123,15 +132,16 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
 
   # Calculate ETRs using tabular config data
   hs10_country_etrs <- calc_weighted_etr(
-    rates_232             = params_232$rate_matrix,
-    usmca_exempt_232      = params_232$usmca_exempt,
-    rates_ieepa           = rates_ieepa,
-    import_data           = hs10_by_country,
-    usmca_data            = usmca_shares,
-    us_auto_content_share = other_params$us_auto_content_share,
-    auto_rebate           = other_params$auto_rebate_rate,
-    us_assembly_share     = other_params$us_auto_assembly_share,
-    ieepa_usmca_exempt    = other_params$ieepa_usmca_exception
+    rates_232              = params_232$rate_matrix,
+    usmca_exempt_232       = params_232$usmca_exempt,
+    rates_ieepa_reciprocal = rates_ieepa_reciprocal,
+    rates_ieepa_fentanyl   = rates_ieepa_fentanyl,
+    import_data            = hs10_by_country,
+    usmca_data             = usmca_shares,
+    us_auto_content_share  = other_params$us_auto_content_share,
+    auto_rebate            = other_params$auto_rebate_rate,
+    us_assembly_share      = other_params$us_auto_assembly_share,
+    ieepa_usmca_exempt     = other_params$ieepa_usmca_exception
   )
 
   # Aggregate HS10×country ETRs to partner×GTAP level for GTAP output
@@ -225,7 +235,8 @@ calc_import_shares <- function(hts_codes, data) {
 #'
 #' @param rates_232 Tibble with columns: hs10, cty_code, s232_[tariff]_rate (one per tariff)
 #' @param usmca_exempt_232 Named vector of USMCA exempt flags by tariff name
-#' @param rates_ieepa Tibble with columns: hs10, cty_code, ieepa_rate
+#' @param rates_ieepa_reciprocal Tibble with columns: hs10, cty_code, ieepa_reciprocal_rate
+#' @param rates_ieepa_fentanyl Tibble with columns: hs10, cty_code, ieepa_fentanyl_rate
 #' @param import_data Data frame with hs10, cty_code, gtap_code, imports
 #' @param usmca_data Data frame with USMCA shares by partner and GTAP sector
 #' @param us_auto_content_share Share of US content in auto assembly
@@ -236,7 +247,8 @@ calc_import_shares <- function(hts_codes, data) {
 #' @return Data frame with columns: hs10, cty_code, gtap_code, imports, etr, base_232, base_ieepa, base_neither
 calc_weighted_etr <- function(rates_232,
                               usmca_exempt_232,
-                              rates_ieepa,
+                              rates_ieepa_reciprocal,
+                              rates_ieepa_fentanyl,
                               import_data,
                               usmca_data,
                               us_auto_content_share,
@@ -251,7 +263,8 @@ calc_weighted_etr <- function(rates_232,
   rate_matrix <- import_data %>%
     select(hs10, cty_code, gtap_code, imports) %>%
     left_join(rates_232, by = c('hs10', 'cty_code')) %>%
-    left_join(rates_ieepa, by = c('hs10', 'cty_code'))
+    left_join(rates_ieepa_reciprocal, by = c('hs10', 'cty_code')) %>%
+    left_join(rates_ieepa_fentanyl, by = c('hs10', 'cty_code'))
 
   # =============================================================================
   # Apply USMCA exemptions and auto rebates
@@ -321,14 +334,19 @@ calc_weighted_etr <- function(rates_232,
     }
   }
 
-  # Apply USMCA exemption to IEEPA if enabled
+  # Apply USMCA exemption to both IEEPA tariffs if enabled
   if (ieepa_usmca_exempt == 1) {
     rate_matrix <- rate_matrix %>%
       mutate(
-        ieepa_rate = if_else(
+        ieepa_reciprocal_rate = if_else(
           cty_code %in% c('1220', '2010'),
-          ieepa_rate * (1 - usmca_share),
-          ieepa_rate
+          ieepa_reciprocal_rate * (1 - usmca_share),
+          ieepa_reciprocal_rate
+        ),
+        ieepa_fentanyl_rate = if_else(
+          cty_code %in% c('1220', '2010'),
+          ieepa_fentanyl_rate * (1 - usmca_share),
+          ieepa_fentanyl_rate
         )
       )
   }
@@ -351,8 +369,26 @@ calc_weighted_etr <- function(rates_232,
       rate_232_max = pmax(!!!syms(rate_232_cols), na.rm = TRUE),
       rate_232_max = if_else(is.infinite(rate_232_max), 0, rate_232_max),
 
-      # Stacking rule: If any 232 applies, use that; otherwise use IEEPA
-      final_rate = if_else(rate_232_max > 0, rate_232_max, ieepa_rate)
+      # Stacking rules:
+      # 1. IEEPA Reciprocal: Mutually exclusive with 232 (applies only to uncovered base)
+      # 2. IEEPA Fentanyl:
+      #    - China (5700): STACKS on top of everything (232 + reciprocal + fentanyl)
+      #    - Others: Only applies to base not covered by 232 or reciprocal
+
+      final_rate = case_when(
+        # China: Stack everything
+        cty_code == '5700' ~ rate_232_max + ieepa_reciprocal_rate + ieepa_fentanyl_rate,
+
+        # Everyone else: 232 takes precedence, then reciprocal, then fentanyl
+        # If 232 applies, use 232
+        rate_232_max > 0 ~ rate_232_max,
+
+        # If no 232 but reciprocal applies, use reciprocal
+        ieepa_reciprocal_rate > 0 ~ ieepa_reciprocal_rate,
+
+        # Otherwise use fentanyl
+        TRUE ~ ieepa_fentanyl_rate
+      )
     )
 
   # =============================================================================
@@ -362,9 +398,12 @@ calc_weighted_etr <- function(rates_232,
   hs10_country_etrs <- rate_matrix %>%
     mutate(
       etr = final_rate,
+
+      # Coverage tracking (mutually exclusive categories for reporting)
+      # Note: For China, fentanyl stacks on top, but for coverage we track primary authority
       base_232     = if_else(rate_232_max > 0, imports, 0),
-      base_ieepa   = if_else(rate_232_max == 0 & ieepa_rate > 0, imports, 0),
-      base_neither = if_else(rate_232_max == 0 & ieepa_rate == 0, imports, 0)
+      base_ieepa   = if_else(rate_232_max == 0 & (ieepa_reciprocal_rate > 0 | ieepa_fentanyl_rate > 0), imports, 0),
+      base_neither = if_else(rate_232_max == 0 & ieepa_reciprocal_rate == 0 & ieepa_fentanyl_rate == 0, imports, 0)
     ) %>%
     select(hs10, cty_code, gtap_code, imports, etr, base_232, base_ieepa, base_neither)
 

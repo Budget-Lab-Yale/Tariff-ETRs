@@ -20,6 +20,12 @@ This is an R-based data analysis project for processing U.S. import trade data. 
   - `con_val_mo` (positions 74-88): Consumption imports value
   - `gen_val_mo` (positions 179-193): General imports value
 
+**IEEPA Tariff Types:**
+- **Reciprocal**: Mutually exclusive with 232 (applies only to uncovered base)
+- **Fentanyl**:
+  - China: STACKS on top of 232 + reciprocal
+  - Others: Only applies to base not covered by 232 or reciprocal
+
 **Country Code Mappings:**
 The project uses Census Bureau country codes (not ISO codes). Country-to-partner mapping used for final aggregation:
 - China: 5700 → `china`
@@ -73,7 +79,7 @@ Each scenario in `config/{scenario}/` requires:
      usmca_exempt: 0         # 1 = apply USMCA exemptions, 0 = no exemption
    ```
 
-2. **ieepa_rates.yaml** - IEEPA rates with country-level hierarchical structure:
+2. **ieepa_reciprocal.yaml** - IEEPA reciprocal tariffs (mutually exclusive with 232):
    ```yaml
    headline_rates:
      default: 0.1            # Default rate for unmapped countries
@@ -82,17 +88,21 @@ Each scenario in `config/{scenario}/` requires:
      # ... other country codes
 
    product_rates:            # Optional: HTS-specific overrides
-     '8703':                 # Can be simple rate (applies to all countries)
-       default: 0.15         # Or dict with country-specific rates
-       '5700': 0.25
-
-   product_country_rates:    # Optional: Most specific overrides
-     - hts_codes: ['870322', '870323']
-       cty_code: '5700'
-       rate: 0.30
+     '8703': 0.15            # Simple rate (applies to all countries)
    ```
 
-3. **other_params.yaml** - USMCA parameters, auto rebate rates, etc.
+3. **ieepa_fentanyl.yaml** - IEEPA fentanyl tariffs (STACKS for China, mutually exclusive otherwise):
+   ```yaml
+   headline_rates:
+     default: 0.1            # Default rate for unmapped countries
+     '5700': 0.1             # China - STACKS on top of 232 + reciprocal
+     # ... other country codes
+
+   product_rates:            # Optional: HTS-specific overrides
+     '2939': 0.2             # Fentanyl precursors
+   ```
+
+4. **other_params.yaml** - USMCA parameters, auto rebate rates, etc.
 
 ## Key Implementation Notes
 
@@ -102,21 +112,25 @@ The codebase uses a clean separation between config parsing and calculations:
 
 *Config Parsing → Tabular Data:*
 - `load_232_rates()`: Returns complete HS10×country tibble with one column per tariff (`s232_[tariff]_rate`)
-- `load_ieepa_rates_yaml()`: Returns complete HS10×country tibble with single column (`ieepa_rate`)
+- `load_ieepa_rates_yaml()`: Generic loader - returns complete HS10×country tibble with configurable column name
+  - Used for both reciprocal and fentanyl tariffs
+  - Handles hierarchical rate structure (headline → product → product×country)
 - Both functions handle the full universe of HS10 codes × 240 countries
 - No nested lists - just clean tibbles ready for joining
 
 *Calculations → Stacking Rules:*
 - `calc_weighted_etr()`: Joins config tibbles with import data, applies USMCA/rebates, then applies stacking rules
-- Stacking rules are centralized and easy to modify (calculations.R:345-360)
-- Current rule: `final_rate = max(all 232 rates) OR ieepa_rate` (mutually exclusive)
-- Future: Can easily add stacking (e.g., `final_rate = max(all 232 rates) + ieepa_fent_rate`)
+- Stacking rules are centralized in calculations.R:348-382
+- Current rules:
+  - **China (5700)**: `final_rate = max(232) + reciprocal + fentanyl` (all stack!)
+  - **Others**: Hierarchical precedence - 232 > reciprocal > fentanyl (mutually exclusive)
+- Easy to modify for new tariff types or stacking logic
 
 **Core Functions:**
 
 *src/config_parsing.R:*
 - `load_232_rates()`: Loads 232 YAML, expands to complete HS10×country tibble with coverage and country-specific rates
-- `load_ieepa_rates_yaml()`: Loads IEEPA YAML, applies hierarchical rate logic (headline → product → product×country), returns complete tibble
+- `load_ieepa_rates_yaml()`: Generic IEEPA loader with configurable column name - applies hierarchical rate logic (headline → product → product×country)
 
 *src/data_processing.R:*
 - `load_imports_hs10_country()`: Reads Census ZIP files, extracts IMP_DETL.TXT, returns HS10×country×month data

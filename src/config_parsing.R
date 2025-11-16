@@ -121,6 +121,7 @@ load_232_rates <- function(yaml_file,
 
 #' Load IEEPA rates as complete HS10 × country tibble
 #'
+#' Generic loader for any IEEPA-type tariff (reciprocal, fentanyl, etc.).
 #' Returns a simple tibble with one row per HS10 × country combination.
 #' Applies hierarchical rate structure from YAML:
 #' 1. Headline rates: Default rate for each country
@@ -128,11 +129,13 @@ load_232_rates <- function(yaml_file,
 #' 3. Product × country rates: Override everything for specific combinations
 #'
 #' @param yaml_file Path to IEEPA YAML configuration file
+#' @param rate_col_name Name for the rate column in output tibble (e.g., 'ieepa_reciprocal_rate')
 #' @param crosswalk_file Path to HS10-GTAP crosswalk CSV file
 #' @param census_codes_file Path to Census country codes CSV file
 #'
-#' @return Tibble with columns: hs10, cty_code, ieepa_rate
+#' @return Tibble with columns: hs10, cty_code, [rate_col_name]
 load_ieepa_rates_yaml <- function(yaml_file,
+                                  rate_col_name = 'ieepa_rate',
                                   crosswalk_file = 'resources/hs10_gtap_crosswalk.csv',
                                   census_codes_file = 'resources/census_codes.csv') {
 
@@ -167,7 +170,7 @@ load_ieepa_rates_yaml <- function(yaml_file,
   rate_matrix <- tibble(cty_code = all_country_codes) %>%
     mutate(
       # Apply country-specific headline rates or default
-      ieepa_rate = sapply(cty_code, function(code) {
+      rate = sapply(cty_code, function(code) {
         country_rate <- config$headline_rates[[code]]
         if (!is.null(country_rate)) {
           return(country_rate)
@@ -177,7 +180,7 @@ load_ieepa_rates_yaml <- function(yaml_file,
       })
     ) %>%
     expand_grid(hs10 = hs10_codes) %>%
-    select(hs10, cty_code, ieepa_rate)
+    select(hs10, cty_code, rate)
 
   # ===========================
   # Step 2: Apply product-level rates (apply to ALL countries)
@@ -198,7 +201,7 @@ load_ieepa_rates_yaml <- function(yaml_file,
     # Apply product rate overrides
     rate_matrix <- rate_matrix %>%
       left_join(product_rates_expanded, by = 'hs10') %>%
-      mutate(ieepa_rate = if_else(!is.na(product_rate), product_rate, ieepa_rate)) %>%
+      mutate(rate = if_else(!is.na(product_rate), product_rate, rate)) %>%
       select(-product_rate)
   }
 
@@ -212,8 +215,12 @@ load_ieepa_rates_yaml <- function(yaml_file,
   # Return complete rate matrix
   # ===========================
 
-  message(sprintf('Loaded IEEPA rates for %s HS10 × country combinations',
-                  format(nrow(rate_matrix), big.mark = ',')))
+  # Rename rate column to specified name
+  rate_matrix <- rate_matrix %>%
+    rename(!!rate_col_name := rate)
+
+  message(sprintf('Loaded %s for %s HS10 × country combinations',
+                  rate_col_name, format(nrow(rate_matrix), big.mark = ',')))
 
   return(rate_matrix)
 }
