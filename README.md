@@ -45,7 +45,7 @@ Tariff-ETRs/
 ## Data Sources
 
 **Import Data:**
-- Source: [U.S. Census Bureau - Merchandise Trade Imports](https://www.census.gov/foreign-trade/data/cd.html)
+- Source: [U.S. Census Bureau - Merchandise Trade Imports](https://www.census.gov/foreign-trade/data/IMDB.html)
 - Format: Monthly ZIP files (IMDByymm.ZIP) containing IMP_DETL.TXT fixed-width format files
 - Location: Download files and place in a local directory, then update the `import_data_path` parameter in `do_scenario()` calls (default: `C:/Users/{username}/Downloads/`)
 - Structure:
