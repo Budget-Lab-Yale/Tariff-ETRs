@@ -240,71 +240,28 @@ load_ieepa_rates_yaml <- function(yaml_file,
   # Step 2: Apply product-level rates
   # ===========================
 
-  if (!is.null(config$product_rates) && length(config$product_rates) > 0) { 
-    
-    # Put into tibble format
-    preferred_rates = tibble(
-      hs10 = names(config$product_rates), 
-      preferred_rate = sapply(config$product_rates, function(x) x)
-    )
-    
-    # Update rate matrix
-    rate_matrix = rate_matrix %>% 
-      left_join(preferred_rates, by = 'hs10') %>% 
-      mutate(
-        rate = if_else(!is.na(preferred_rate), preferred_rate, rate)
-      ) %>%
-      select(-preferred_rate)
-  }
-
-  
   if (!is.null(config$product_rates) && length(config$product_rates) > 0) {
 
-    # New format: HTS code -> {default: X, '5700': Y, ...}
-    # OR simple format: HTS code -> rate (applies to all countries)
+    # Build expanded lookup table for all product rate overrides
+    # Each product rate is a simple numeric value that applies to all countries
+    product_rates_expanded <- names(config$product_rates) %>%
+      map_df(function(hts_code) {
+        # Find all HS10 codes matching this prefix
+        matching_hs10 <- hs10_codes[str_starts(hs10_codes, hts_code)]
 
-    for (hts_code in names(config$product_rates)) {
+        tibble(
+          hs10 = matching_hs10,
+          rate_override = config$product_rates[[hts_code]]
+        )
+      })
 
-      product_rate_config <- config$product_rates[[hts_code]]
-
-      # Match HS10 codes using prefix matching
-      pattern <- paste0('^', hts_code)
-
-      # Check if this is a simple rate or a dict with default
-      if (is.numeric(product_rate_config) || is.list(product_rate_config) && is.null(product_rate_config$default)) {
-        # Simple rate: apply to ALL countries
-        rate_value <- if (is.numeric(product_rate_config)) product_rate_config else product_rate_config[[1]]
-
-        rate_matrix <- rate_matrix %>%
-          mutate(
-            rate = if_else(
-              str_detect(hs10, pattern),
-              !!rate_value,
-              rate
-            )
-          )
-      } else {
-        # Dict format with default: apply country-specific rates
-        product_default <- product_rate_config$default
-
-        rate_matrix <- rate_matrix %>%
-          mutate(
-            rate = if_else(
-              str_detect(hs10, pattern),
-              sapply(cty_code, function(code) {
-                country_rate <- product_rate_config[[code]]
-                if (!is.null(country_rate) && code != 'default') {
-                  return(country_rate)
-                } else {
-                  return(product_default)
-                }
-              }),
-              rate
-            )
-          )
-      }
-    }
+    # Single join operation to apply all product rate overrides
+    rate_matrix <- rate_matrix %>%
+      left_join(product_rates_expanded, by = 'hs10') %>%
+      mutate(rate = if_else(!is.na(rate_override), rate_override, rate)) %>%
+      select(-rate_override)
   }
+
 
   # ===========================
   # Step 3: Apply product x country rates
