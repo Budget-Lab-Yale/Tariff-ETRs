@@ -22,7 +22,9 @@ library(tidyverse)
 library(yaml)
 
 # Load helper functions
-source('src/functions.R')
+source('src/config_parsing.R')
+source('src/data_processing.R')
+source('src/calculations.R')
 
 
 #------------------
