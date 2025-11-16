@@ -7,13 +7,121 @@
 # values represent changes from an early 2025 baseline.
 #
 # Functions:
-#   - do_scenario():           Run complete ETR analysis for a scenario
-#   - calc_import_shares():    Calculate import shares for specific HS6 codes
-#   - calc_weighted_etr():     Calculate weighted ETR changes by partner and sector
-#   - write_shock_commands():  Write GTAP shock commands to output file
-#   - calc_overall_etrs():     Calculate and print overall ETR changes by country
+#   - load_imports_hs10_country():  Load HS10 x country x year x month import data
+#   - do_scenario():                Run complete ETR analysis for a scenario
+#   - calc_import_shares():         Calculate import shares for specific HS6 codes
+#   - calc_weighted_etr():          Calculate weighted ETR changes by partner and sector
+#   - write_shock_commands():       Write GTAP shock commands to output file
+#   - calc_overall_etrs():          Calculate and print overall ETR changes by country
 #
 # =============================================================================
+
+
+#' Load HS10 x country x year x month import data from Census IMP_DETL.TXT files
+#'
+#' Reads monthly import data from Census Merchandise Trade Imports files (IMDByymm.ZIP).
+#' Each ZIP contains IMP_DETL.TXT with fixed-width format data. The function aggregates
+#' imports over districts, returning HS10 x country x year x month totals.
+#'
+#' @param import_data_path Path to directory containing IMDByymm.ZIP files
+#' @param year Year to filter data (e.g., 2024)
+#' @param type Import value type: 'con' (consumption) or 'gen' (general imports)
+#'
+#' @return Tibble with columns: year, month, hs10, cty_code, value
+load_imports_hs10_country <- function(import_data_path, year, type = c('con', 'gen')) {
+
+  type <- match.arg(type)
+
+  # Extract last two digits of year for file pattern matching
+  yy <- substr(as.character(year), 3, 4)
+
+  # Find all IMDByymm.ZIP files for the specified year
+  # Pattern: IMDB + YY + MM + .ZIP (e.g., IMDB2401.ZIP for January 2024)
+  file_pattern <- sprintf('IMDB%s\\d{2}\\.ZIP', yy)
+  zip_files <- list.files(
+    path = import_data_path,
+    pattern = file_pattern,
+    full.names = TRUE,
+    ignore.case = TRUE
+  )
+
+  if (length(zip_files) == 0) {
+    stop(sprintf('No import files found at %s matching pattern %s', import_data_path, file_pattern))
+  }
+
+  message(sprintf('Found %d ZIP file(s) for year %d', length(zip_files), year))
+
+  # Column positions for IMP_DETL.TXT (1-based, inclusive)
+  col_positions <- fwf_positions(
+    start     = c(1,  11,  23,  27,  74,   179),
+    end       = c(10, 14,  26,  28,  88,   193),
+    col_names = c('hs10', 'cty_code', 'year', 'month', 'con_val_mo', 'gen_val_mo')
+  )
+
+  # Process each ZIP file
+  all_records <- map_df(zip_files, function(zip_path) {
+
+    message(sprintf('Processing: %s', basename(zip_path)))
+
+    # List contents of ZIP file
+    zip_contents <- unzip(zip_path, list = TRUE)
+
+    # Find IMP_DETL.TXT file (case-insensitive)
+    detl_file <- zip_contents$Name[grepl('IMP_DETL\\.TXT$', zip_contents$Name, ignore.case = TRUE)]
+
+    if (length(detl_file) == 0) {
+      warning(sprintf('No IMP_DETL.TXT found in %s, skipping', basename(zip_path)))
+      return(tibble())
+    }
+
+    if (length(detl_file) > 1) {
+      warning(sprintf('Multiple IMP_DETL.TXT files found in %s, using first', basename(zip_path)))
+      detl_file <- detl_file[1]
+    }
+
+    # Create temporary directory for extraction
+    temp_dir <- tempdir()
+
+    # Extract IMP_DETL.TXT to temp directory
+    extracted_path <- unzip(zip_path, files = detl_file, exdir = temp_dir, overwrite = TRUE)
+
+    # Read fixed-width file
+    records <- read_fwf(
+      file = extracted_path,
+      col_positions = col_positions,
+      col_types = cols(
+        hs10        = col_character(),
+        cty_code    = col_character(),
+        year        = col_integer(),
+        month       = col_integer(),
+        con_val_mo  = col_double(),
+        gen_val_mo  = col_double()
+      ),
+      progress = FALSE
+    )
+
+    # Clean up temp file
+    file.remove(extracted_path)
+
+    # Filter to specified year and select appropriate value column
+    records %>%
+      filter(year == !!year) %>%
+      mutate(
+        hs10 = str_pad(hs10, width = 10, side = 'left', pad = '0')
+      ) %>%
+      {if (type == 'con') mutate(., value = con_val_mo) else mutate(., value = gen_val_mo)} %>%
+      select(year, month, hs10, cty_code, value)
+  })
+
+  # Aggregate over districts (sum duplicates by year, month, hs10, cty_code)
+  result <- all_records %>%
+    group_by(year, month, hs10, cty_code) %>%
+    summarise(value = sum(value), .groups = 'drop')
+
+  message(sprintf('Loaded %s records for year %d', format(nrow(result), big.mark = ','), year))
+
+  return(result)
+}
 
 
 #' Run complete ETR analysis for a given scenario
@@ -69,40 +177,18 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
     show_col_types = FALSE
   )
 
-  # Read GTAP crosswalk
-  crosswalk <- read_csv('resources/hs6_gtap_crosswalk.csv', show_col_types = FALSE)
+  # Read GTAP crosswalk (now HS10 -> GTAP)
+  crosswalk <- read_csv('resources/hs10_gtap_crosswalk.csv', show_col_types = FALSE)
 
-  # Get list of all 2024 import files
-  file_pattern <- 'dporths6ir24'
-  files_2024   <- list.files(path = import_data_path, pattern = file_pattern, full.names = TRUE)
-
-  if (length(files_2024) == 0) {
-    stop(sprintf('No import files found at %s matching pattern %s', import_data_path, file_pattern))
-  }
-
-  # Define column positions based on the file specification
-  col_positions <- fwf_positions(
-    start     = c(1, 7, 11, 15, 19, 21),
-    end       = c(6, 10, 14, 18, 20, 35),
-    col_names = c('hs6_code', 'cty_code', 'port_code', 'year', 'month', 'value_mo')
+  # Load HS10-level import data using new function
+  hs10_raw <- load_imports_hs10_country(
+    import_data_path = import_data_path,
+    year = 2024,
+    type = 'con'
   )
 
-  # Build data
-  hs6_by_country <- files_2024 %>%
-
-    # Read and combine all files
-    map_df(~ read_fwf(
-      file = .x,
-      col_positions = col_positions,
-      col_types = cols(
-        hs6_code  = col_character(),
-        cty_code  = col_character(),
-        port_code = col_character(),
-        year      = col_integer(),
-        month     = col_integer(),
-        value_mo  = col_double()
-      )
-    )) %>%
+  # Build data: aggregate and map to partners and GTAP sectors
+  hs10_by_country <- hs10_raw %>%
 
     # Tag each row with a partner group using mapping
     left_join(
@@ -111,13 +197,13 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
     ) %>%
     mutate(partner = if_else(is.na(partner), 'row', partner)) %>%
 
-    # Get totals
-    group_by(hs6_code, partner) %>%
-    summarise(imports = sum(value_mo), .groups = 'drop') %>%
+    # Get totals by HS10 and partner
+    group_by(hs10, partner) %>%
+    summarise(imports = sum(value), .groups = 'drop') %>%
 
-    # Expand to include all HS6 x partner combinations (fill missing with 0)
+    # Expand to include all HS10 x partner combinations (fill missing with 0)
     complete(
-      hs6_code,
+      hs10,
       partner = c('china', 'canada', 'mexico', 'uk', 'japan', 'eu', 'row', 'ftrow'),
       fill = list(imports = 0)
     ) %>%
@@ -125,11 +211,11 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
     # Add GTAP code
     left_join(
       crosswalk %>%
-        select(hs6_code, gtap_code),
-      by = 'hs6_code'
+        select(hs10, gtap_code),
+      by = 'hs10'
     ) %>%
     mutate(gtap_code = str_to_lower(gtap_code)) %>%
-    relocate(gtap_code, .after = hs6_code)
+    relocate(gtap_code, .after = hs10)
 
   #------------------------------
   # Calculate tax bases and ETRs
@@ -144,16 +230,15 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
     # Get bases for each 232 tariff
     map(~ {
 
-      definite_codes <- params_232[[.x]]$base$definite
-      all_codes      <- c(params_232[[.x]]$base$definite, params_232[[.x]]$base$maybe)
+      # Get HTS codes from the simplified base structure
+      # Structure is now just: base: [list of codes]
+      hts_codes <- params_232[[.x]]$base
 
-      share       <- calc_import_shares(definite_codes, data = hs6_by_country)
-      share_upper <- calc_import_shares(all_codes, data = hs6_by_country) %>% rename(share_upper = share)
+      # Calculate share using variable-length code matching
+      share <- calc_import_shares(hts_codes, data = hs10_by_country) %>%
+        mutate(tariff = .x, .before = 1)
 
-      share %>%
-        left_join(share_upper, by = c('partner', 'gtap_code')) %>%
-        mutate(tariff = .x, .before = 1) %>%
-        return()
+      return(share)
     }) %>%
     bind_rows() %>%
 
@@ -162,9 +247,8 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
       (.) %>%
         group_by(partner, gtap_code) %>%
         summarise(
-          tariff      = 'residual',
-          share       = 1 - sum(share),
-          share_upper = 1 - sum(share_upper),
+          tariff = 'residual',
+          share  = 1 - sum(share),
           .groups = 'drop'
         )
     )
@@ -205,7 +289,7 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
   # Calculate and print overall ETRs with both GTAP and 2024 Census weights
   calc_overall_etrs(
     etr_data    = etrs,
-    import_data = hs6_by_country,
+    import_data = hs10_by_country,
     scenario    = scenario
   )
 
@@ -216,22 +300,41 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
 }
 
 
-#' Calculate import shares for a subset of HS6 codes
+#' Calculate import shares for a subset of HTS codes (arbitrary length: 4, 6, 8, or 10 digits)
 #'
-#' Given a vector of HS6 codes, this function calculates:
-#' 1. Total imports for those specific codes by partner and GTAP sector
+#' Given a vector of HTS codes of any length, this function calculates:
+#' 1. Total imports for those codes (using prefix matching) by partner and GTAP sector
 #' 2. Total imports for ALL codes by partner and GTAP sector
 #' 3. The share (subset / total) by partner and GTAP sector
 #'
-#' @param hs6_codes Character vector of HS6 codes to analyze
-#' @param data Data frame with columns: hs6_code, partner, gtap_code, imports
+#' Prefix matching: A code like "8703" matches all HS10 codes starting with "8703".
+#' A code like "870322" matches all HS10 codes starting with "870322", and so on.
 #'
-#' @return Data frame with columns: partner, gtap_code, subset_imports, total_imports, share
-calc_import_shares <- function(hs6_codes, data) {
+#' @param hts_codes Character vector of HTS codes to analyze (4, 6, 8, or 10 digits)
+#' @param data Data frame with columns: hs10, partner, gtap_code, imports
+#'
+#' @return Data frame with columns: partner, gtap_code, share
+calc_import_shares <- function(hts_codes, data) {
 
-  # Calculate imports for the specified HS6 codes by partner and GTAP
+  # Handle empty code list
+  if (length(hts_codes) == 0 || is.null(hts_codes)) {
+    return(
+      data %>%
+        group_by(partner, gtap_code) %>%
+        summarise(share = 0, .groups = 'drop')
+    )
+  }
+
+  # Convert codes to character and remove any whitespace
+  hts_codes <- as.character(hts_codes) %>% str_trim()
+
+  # Build regex pattern for prefix matching
+  # Each code becomes a prefix: "^8703" matches anything starting with 8703
+  pattern <- paste0('^(', paste(hts_codes, collapse = '|'), ')')
+
+  # Calculate imports for codes matching the pattern by partner and GTAP
   subset_imports <- data %>%
-    filter(hs6_code %in% hs6_codes) %>%
+    filter(str_detect(hs10, pattern)) %>%
     group_by(partner, gtap_code) %>%
     summarise(subset_imports = sum(imports), .groups = 'drop')
 
@@ -244,7 +347,7 @@ calc_import_shares <- function(hs6_codes, data) {
   result <- total_imports %>%
     left_join(subset_imports, by = c('partner', 'gtap_code')) %>%
     mutate(share = replace_na(subset_imports / total_imports, 0)) %>%
-    select(-subset_imports, -total_imports)
+    select(partner, gtap_code, share)
 
   return(result)
 }
@@ -344,7 +447,7 @@ calc_weighted_etr <- function(bases_data, params_data,
     group_by(partner, gtap_code) %>%
     summarise(
       etr       = sum(share * adjusted_rate),
-      etr_upper = sum(share_upper * adjusted_rate),
+      etr_upper = sum(share * adjusted_rate),  # No longer distinct from etr (no more "maybe" codes)
       .groups = 'drop'
     )
 }
