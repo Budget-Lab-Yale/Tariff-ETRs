@@ -190,7 +190,7 @@ load_ieepa_rates_yaml <- function(yaml_file,
   # Read YAML configuration
   config <- read_yaml(yaml_file)
 
-  # Read HS10-GTAP crosswalk (still needed for HS10 code list)
+  # Read HS10-GTAP crosswalk
   crosswalk <- read_csv(crosswalk_file, show_col_types = FALSE) %>%
     mutate(hs10 = as.character(hs10))
 
@@ -218,13 +218,9 @@ load_ieepa_rates_yaml <- function(yaml_file,
   # ===========================
 
   # Create matrix with headline rates for all HS10 x country combinations
-  rate_matrix <- expand.grid(
-    hs10 = hs10_codes,
-    cty_code = all_country_codes,
-    stringsAsFactors = FALSE
-  ) %>%
-    as_tibble() %>%
+  rate_matrix <- tibble(cty_code = all_country_codes) %>% 
     mutate(
+      
       # Apply country-specific headline rates or default
       rate = sapply(cty_code, function(code) {
         country_rate <- config$headline_rates[[code]]
@@ -234,12 +230,34 @@ load_ieepa_rates_yaml <- function(yaml_file,
           return(default_rate)
         }
       })
-    )
+    ) %>% 
+    expand_grid(hs10 = hs10_codes) %>% 
+    select(hs10, cty_code, rate) %>% 
+    arrange(hs10)
+    
 
   # ===========================
   # Step 2: Apply product-level rates
   # ===========================
 
+  if (!is.null(config$product_rates) && length(config$product_rates) > 0) { 
+    
+    # Put into tibble format
+    preferred_rates = tibble(
+      hs10 = names(config$product_rates), 
+      preferred_rate = sapply(config$product_rates, function(x) x)
+    )
+    
+    # Update rate matrix
+    rate_matrix = rate_matrix %>% 
+      left_join(preferred_rates, by = 'hs10') %>% 
+      mutate(
+        rate = if_else(!is.na(preferred_rate), preferred_rate, rate)
+      ) %>%
+      select(-preferred_rate)
+  }
+
+  
   if (!is.null(config$product_rates) && length(config$product_rates) > 0) {
 
     # New format: HTS code -> {default: X, '5700': Y, ...}
@@ -292,29 +310,8 @@ load_ieepa_rates_yaml <- function(yaml_file,
   # Step 3: Apply product x country rates
   # ===========================
 
-  if (!is.null(config$product_country_rates) && length(config$product_country_rates) > 0) {
-
-    for (prod_country_rate in config$product_country_rates) {
-
-      hts_codes <- prod_country_rate$hts_codes
-      target_cty_code <- as.character(prod_country_rate$cty_code)
-      rate <- prod_country_rate$rate
-
-      # Match HS10 codes using prefix matching
-      pattern <- paste0('^(', paste(hts_codes, collapse = '|'), ')')
-
-      # Update rate matrix for these specific HS10 codes and country
-      rate_matrix <- rate_matrix %>%
-        mutate(
-          rate = if_else(
-            str_detect(hs10, pattern) & cty_code == !!target_cty_code,
-            !!rate,
-            rate
-          )
-        )
-    }
-  }
-
+  # TODO
+  
   # ===========================
   # Return long format with default rate for unmapped countries
   # ===========================

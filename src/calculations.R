@@ -35,14 +35,14 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
 
   message('Loading scenario parameters...')
 
-  # Section 232 tariffs (now with country-level rates and defaults)
+  # Section 232 tariffs
   params_232_yaml <- sprintf('config/%s/232.yaml', scenario)
   params_232 <- load_232_rates(params_232_yaml)
 
   # Deduplicate 232 codes to prevent double-counting
   params_232 <- deduplicate_232_codes(params_232)
 
-  # IEEPA rates (now at country level with defaults)
+  # IEEPA rates
   params_ieepa <- load_ieepa_rates_yaml(sprintf('config/%s/ieepa_rates.yaml', scenario))
 
   # Other scenario parameters
@@ -67,7 +67,7 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
   # Read GTAP crosswalk (HS10 -> GTAP)
   crosswalk <- read_csv('resources/hs10_gtap_crosswalk.csv', show_col_types = FALSE)
 
-  # Define cache path for processed data (now country-level, not partner-level)
+  # Define cache path for processed data
   cache_dir <- 'cache'
   dir.create(cache_dir, showWarnings = FALSE, recursive = TRUE)
   cache_file <- file.path(cache_dir, 'hs10_by_country_gtap_2024_con.rds')
@@ -94,7 +94,7 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
     # Build data: aggregate by HS10 x country and add GTAP sectors
     hs10_by_country <- hs10_raw %>%
 
-      # Get totals by HS10 and country (no partner mapping yet!)
+      # Get totals by HS10 and country
       group_by(hs10, cty_code) %>%
       summarise(imports = sum(value), .groups = 'drop') %>%
 
@@ -126,8 +126,7 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
     # Get bases for each 232 tariff
     map(~ {
 
-      # Get HTS codes from the simplified base structure
-      # Structure is now just: base: [list of codes]
+      # Get HTS codes from base
       hts_codes <- params_232[[.x]]$base
 
       # Tag HS10 codes as covered (1) or not (0) using variable-length code matching
@@ -150,7 +149,7 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
         )
     )
 
-  # Calculate country-level ETRs
+  # Calculate ETRs
   country_etrs <- calc_weighted_etr(
     bases_data            = bases,
     params_data           = params_232,
@@ -164,7 +163,7 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
     ieepa_usmca_exempt    = other_params$ieepa_usmca_exception
   )
 
-  # Aggregate country-level ETRs to partner-level for GTAP output
+  # Aggregate country ETRs to partner level for GTAP output
   message('Aggregating country-level ETRs to partner-level...')
   partner_etrs <- aggregate_countries_to_partners(
     country_etrs    = country_etrs,
@@ -178,14 +177,14 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
 
   message('Writing outputs...')
 
-  # Write shock commands to file (partner-level for GTAP)
+  # Write shock commands to file
   write_shock_commands(
     etr_data    = partner_etrs,
     output_file = 'shocks.txt',
     scenario    = scenario
   )
 
-  # Write sector x country ETR CSV (partner-level for GTAP)
+  # Write sector x country ETR CSV
   write_sector_country_etrs(
     etr_data     = partner_etrs,
     output_file  = 'etrs_by_sector_country.csv',
@@ -204,7 +203,7 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
 
   message(sprintf('\nScenario %s complete!\n', scenario))
 
-  # Return partner-level ETR data invisibly (for GTAP compatibility)
+  # Return partner-level ETR data invisibly
   invisible(partner_etrs)
 }
 
@@ -277,7 +276,7 @@ calc_weighted_etr <- function(bases_data, params_data,
                               us_assembly_share,
                               ieepa_usmca_exempt) {
 
-  # Extract rates and usmca_exempt flags from params (now at country level)
+  # Extract rates and usmca_exempt flags from params
   rates_and_exemptions <- map(names(params_data), ~ {
     tibble(
       tariff       = .x,
