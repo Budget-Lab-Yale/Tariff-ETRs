@@ -96,21 +96,36 @@ Each scenario in `config/{scenario}/` requires:
 
 ## Key Implementation Notes
 
+**Architecture: Multi-Authority Rate Matrix**
+
+The codebase uses a clean separation between config parsing and calculations:
+
+*Config Parsing → Tabular Data:*
+- `load_232_rates()`: Returns complete HS10×country tibble with one column per tariff (`s232_[tariff]_rate`)
+- `load_ieepa_rates_yaml()`: Returns complete HS10×country tibble with single column (`ieepa_rate`)
+- Both functions handle the full universe of HS10 codes × 240 countries
+- No nested lists - just clean tibbles ready for joining
+
+*Calculations → Stacking Rules:*
+- `calc_weighted_etr()`: Joins config tibbles with import data, applies USMCA/rebates, then applies stacking rules
+- Stacking rules are centralized and easy to modify (calculations.R:345-360)
+- Current rule: `final_rate = max(all 232 rates) OR ieepa_rate` (mutually exclusive)
+- Future: Can easily add stacking (e.g., `final_rate = max(all 232 rates) + ieepa_fent_rate`)
+
 **Core Functions:**
 
 *src/config_parsing.R:*
-- `load_232_rates()`: Loads 232 YAML, expands country-level rates with defaults, stores default_rate for unmapped countries
-- `load_ieepa_rates_yaml()`: Loads IEEPA YAML, applies hierarchical rate logic (headline → product → product×country), returns list with rate_matrix and default_rate
-- `deduplicate_232_codes()`: Prevents double-counting when HTS codes overlap across 232 tariffs
+- `load_232_rates()`: Loads 232 YAML, expands to complete HS10×country tibble with coverage and country-specific rates
+- `load_ieepa_rates_yaml()`: Loads IEEPA YAML, applies hierarchical rate logic (headline → product → product×country), returns complete tibble
 
 *src/data_processing.R:*
 - `load_imports_hs10_country()`: Reads Census ZIP files, extracts IMP_DETL.TXT, returns HS10×country×month data
 
 *src/calculations.R:*
-- `calc_import_shares()`: Variable-length HTS code matching using regex prefix matching at HS10×country level
-- `calc_weighted_etr()`: Calculates ETR changes at country level with USMCA exemptions, auto rebates, and default rates for unmapped countries
+- `calc_import_shares()`: Variable-length HTS code matching using regex prefix matching (still used internally by config parsing)
+- `calc_weighted_etr()`: Joins tabular config data, applies USMCA exemptions/auto rebates, applies stacking rules, calculates final ETR
 - `aggregate_countries_to_partners()`: Aggregates country-level ETRs to 8 partner groups using import-weighted averaging
-- `do_scenario()`: Main orchestrator - loads config, processes data, calculates country-level ETRs, aggregates to partners, writes outputs
+- `do_scenario()`: Main orchestrator - loads tabular config data, calculates country-level ETRs, aggregates to partners, writes outputs
 
 **Variable-Length HTS Matching:**
 - Both 232 and IEEPA tariffs use prefix matching: '8703' matches all HS10 codes starting with 8703

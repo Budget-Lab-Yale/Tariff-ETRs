@@ -12,175 +12,126 @@
 # =============================================================================
 
 
-#' Deduplicate HTS codes across 232 tariff proclamations
+
+
+#' Load Section 232 tariff rates as complete HS10 × country tibble
 #'
-#' Applies two deduplication rules to prevent double-counting:
-#' 1. If a code appears at different HS levels across tariffs, keep only the higher-level (shorter) code
-#' 2. If a code appears at the same HS level in multiple tariffs, keep the one with highest average rate
+#' Returns a tibble with one row per HS10 × country combination and one column per tariff.
+#' This is the complete rate matrix ready for calculations - no further processing needed.
 #'
-#' @param params_232 List of 232 tariff parameters (from YAML)
-#'
-#' @return Modified params_232 list with deduplicated codes
-deduplicate_232_codes <- function(params_232) {
-
-  # Extract all codes with their tariff names, lengths, and average rates
-  all_codes <- map_df(names(params_232), function(tariff_name) {
-    codes <- params_232[[tariff_name]]$base
-    rates <- params_232[[tariff_name]]$rate
-    avg_rate <- mean(unlist(rates))
-
-    tibble(
-      tariff = tariff_name,
-      code = as.character(codes),
-      code_length = nchar(code),
-      avg_rate = avg_rate
-    )
-  })
-
-  # Rule 1: Remove child codes when parent exists at different HS level
-  # For each code, check if any other code is a prefix (parent)
-  codes_to_remove <- character(0)
-
-  for (i in 1:nrow(all_codes)) {
-    for (j in 1:nrow(all_codes)) {
-      if (i == j) next
-      if (all_codes$tariff[i] == all_codes$tariff[j]) next  # Same tariff is OK
-
-      code_i <- all_codes$code[i]
-      code_j <- all_codes$code[j]
-
-      # If code_j is a parent of code_i (shorter and is prefix), mark code_i for removal
-      if (nchar(code_j) < nchar(code_i) && str_starts(code_i, code_j)) {
-        codes_to_remove <- c(codes_to_remove, paste(all_codes$tariff[i], code_i, sep = '::'))
-      }
-    }
-  }
-
-  # Rule 2: For same-length duplicates, keep highest average rate
-  # Group by code to find duplicates
-  duplicate_codes <- all_codes %>%
-    group_by(code) %>%
-    filter(n() > 1) %>%
-    arrange(code, desc(avg_rate)) %>%
-    group_by(code) %>%
-    slice(-1) %>%  # Remove all but the first (highest rate)
-    ungroup()
-
-  # Add these to removal list
-  codes_to_remove <- c(
-    codes_to_remove,
-    paste(duplicate_codes$tariff, duplicate_codes$code, sep = '::')
-  )
-
-  # Remove duplicates from list
-  codes_to_remove <- unique(codes_to_remove)
-
-  # Apply removals to params_232
-  if (length(codes_to_remove) > 0) {
-    message(sprintf('Deduplicating 232 codes: removing %d hierarchical/duplicate codes', length(codes_to_remove)))
-
-    for (removal in codes_to_remove) {
-      parts <- str_split(removal, '::', simplify = TRUE)
-      tariff_name <- parts[1]
-      code_to_remove <- parts[2]
-
-      # Remove this code from the base list
-      params_232[[tariff_name]]$base <- setdiff(params_232[[tariff_name]]$base, code_to_remove)
-    }
-  } else {
-    message('No hierarchical/duplicate 232 codes found')
-  }
-
-  return(params_232)
-}
-
-
-#' Load Section 232 tariff rates with country-level rates and defaults
-#'
-#' Reads 232 tariff YAML configuration and expands rates to country level.
-#' For each tariff, applies rates by country code with default fallback.
-#'
-#' New YAML format:
+#' YAML format:
 #'   tariff_name:
 #'     base: [list of HTS codes]
 #'     rates:
 #'       default: 0.5
 #'       '5700': 0.25  # China
-#'       '1220': 0.10  # Canada
 #'     usmca_exempt: 0
 #'
 #' @param yaml_file Path to 232 YAML configuration file
-#' @param country_mapping_file Path to country-partner mapping CSV
+#' @param crosswalk_file Path to HS10-GTAP crosswalk CSV (for HS10 universe)
+#' @param census_codes_file Path to Census country codes CSV (for country universe)
 #'
-#' @return List with same structure as input, ready for downstream processing
-load_232_rates <- function(yaml_file, country_mapping_file = 'resources/country_partner_mapping.csv') {
+#' @return List with two elements:
+#'   - rate_matrix: Tibble with columns hs10, cty_code, s232_[tariff]_rate (one per tariff)
+#'   - usmca_exempt: Named vector of usmca_exempt flags by tariff name
+load_232_rates <- function(yaml_file,
+                           crosswalk_file = 'resources/hs10_gtap_crosswalk.csv',
+                           census_codes_file = 'resources/census_codes.csv') {
 
   message('Loading Section 232 rates from YAML...')
 
   # Read YAML configuration
   params_232 <- read_yaml(yaml_file)
 
-  # Read country mapping to get all possible country codes
-  country_mapping <- read_csv(
-    country_mapping_file,
-    col_types = cols(cty_code = col_character()),
+  # Read HS10 universe from crosswalk
+  crosswalk <- read_csv(crosswalk_file, show_col_types = FALSE) %>%
+    mutate(hs10 = as.character(hs10))
+  hs10_codes <- unique(crosswalk$hs10)
+
+  # Read country universe from Census codes
+  census_codes <- read_csv(
+    census_codes_file,
+    col_types = cols(Code = col_character()),
     show_col_types = FALSE
   )
+  all_country_codes <- as.character(census_codes$Code)
 
-  # Get all unique country codes (as strings to match YAML keys)
-  all_country_codes <- unique(country_mapping$cty_code)
+  # Initialize with complete HS10 × country combinations
+  rate_matrix <- expand_grid(
+    hs10 = hs10_codes,
+    cty_code = all_country_codes
+  )
 
-  # Expand rates for each tariff to country level
+  # Extract USMCA exempt flags
+  usmca_exempt_flags <- sapply(names(params_232), function(t) params_232[[t]]$usmca_exempt)
+
+  # For each tariff, add a rate column
   for (tariff_name in names(params_232)) {
 
-    rates_config <- params_232[[tariff_name]]$rates
+    # Get HTS codes that define coverage
+    hts_codes <- params_232[[tariff_name]]$base
 
-    # Get default rate
+    # Get rates config
+    rates_config <- params_232[[tariff_name]]$rates
     default_rate <- rates_config$default
     if (is.null(default_rate)) {
-      stop(sprintf('Tariff %s is missing required "default" rate in rates section', tariff_name))
+      stop(sprintf('Tariff %s is missing required "default" rate', tariff_name))
     }
 
-    # Build country-level rates
-    country_rates <- list()
-
-    for (cty_code in all_country_codes) {
-      # Check if country has specific rate, otherwise use default
-      if (!is.null(rates_config[[cty_code]])) {
-        country_rates[[cty_code]] <- rates_config[[cty_code]]
-      } else {
-        country_rates[[cty_code]] <- default_rate
-      }
+    # Build regex pattern for coverage matching
+    if (length(hts_codes) > 0) {
+      pattern <- paste0('^(', paste(hts_codes, collapse = '|'), ')')
+    } else {
+      pattern <- '^$'  # Matches nothing
     }
 
-    # Add unmapped countries (those not in country_partner_mapping.csv)
-    # They also get the default rate, and we need to handle them at runtime
-    # For now, just store the default for use during calculations
+    # Build country rates lookup
+    country_rates <- tibble(
+      cty_code = all_country_codes,
+      country_rate = sapply(all_country_codes, function(code) {
+        if (!is.null(rates_config[[code]])) {
+          rates_config[[code]]
+        } else {
+          default_rate
+        }
+      })
+    )
 
-    # Replace rates section with expanded country-level rates
-    params_232[[tariff_name]]$rate <- country_rates
-    params_232[[tariff_name]]$rates <- NULL  # Remove the config structure
-    params_232[[tariff_name]]$default_rate <- default_rate  # Store default for unmapped countries
+    # Add this tariff's rate column
+    rate_col_name <- paste0('s232_', tariff_name, '_rate')
+
+    rate_matrix <- rate_matrix %>%
+      mutate(covered = if_else(str_detect(hs10, pattern), 1, 0)) %>%
+      left_join(country_rates, by = 'cty_code') %>%
+      mutate(
+        !!rate_col_name := if_else(covered == 1, country_rate, 0)
+      ) %>%
+      select(-covered, -country_rate)
   }
 
-  message(sprintf('Loaded 232 rates for %d tariffs', length(params_232)))
+  message(sprintf('Loaded 232 rates for %d tariffs across %s HS10 × country combinations',
+                  length(params_232), format(nrow(rate_matrix), big.mark = ',')))
 
-  return(params_232)
+  return(list(
+    rate_matrix = rate_matrix,
+    usmca_exempt = usmca_exempt_flags
+  ))
 }
 
 
-#' Load IEEPA rates from YAML configuration with hierarchical rate structure
+#' Load IEEPA rates as complete HS10 × country tibble
 #'
-#' Reads IEEPA rates from YAML file with three levels of specificity:
-#' 1. Headline rates: Default rate for each country across all HS10 codes
-#' 2. Product rates: Override headline for specific HTS codes (variable length)
-#' 3. Product x country rates: Override everything for specific HTS x country combinations
+#' Returns a simple tibble with one row per HS10 × country combination.
+#' Applies hierarchical rate structure from YAML:
+#' 1. Headline rates: Default rate for each country
+#' 2. Product rates: Override headline for specific HTS codes
+#' 3. Product × country rates: Override everything for specific combinations
 #'
 #' @param yaml_file Path to IEEPA YAML configuration file
 #' @param crosswalk_file Path to HS10-GTAP crosswalk CSV file
 #' @param census_codes_file Path to Census country codes CSV file
 #'
-#' @return Tibble with columns: hs10, cty_code, rate (long format)
+#' @return Tibble with columns: hs10, cty_code, ieepa_rate
 load_ieepa_rates_yaml <- function(yaml_file,
                                   crosswalk_file = 'resources/hs10_gtap_crosswalk.csv',
                                   census_codes_file = 'resources/census_codes.csv') {
@@ -190,21 +141,17 @@ load_ieepa_rates_yaml <- function(yaml_file,
   # Read YAML configuration
   config <- read_yaml(yaml_file)
 
-  # Read HS10-GTAP crosswalk
+  # Read HS10 universe
   crosswalk <- read_csv(crosswalk_file, show_col_types = FALSE) %>%
     mutate(hs10 = as.character(hs10))
-
-  # Get unique HS10 codes
   hs10_codes <- unique(crosswalk$hs10)
 
-  # Read Census codes to get all possible country codes
+  # Read country universe
   census_codes <- read_csv(
     census_codes_file,
     col_types = cols(Code = col_character()),
     show_col_types = FALSE
   )
-
-  # Get all country codes (as character strings to match YAML keys)
   all_country_codes <- as.character(census_codes$Code)
 
   # Get default rate
@@ -217,12 +164,10 @@ load_ieepa_rates_yaml <- function(yaml_file,
   # Step 1: Initialize with headline rates
   # ===========================
 
-  # Create matrix with headline rates for all HS10 x country combinations
-  rate_matrix <- tibble(cty_code = all_country_codes) %>% 
+  rate_matrix <- tibble(cty_code = all_country_codes) %>%
     mutate(
-      
       # Apply country-specific headline rates or default
-      rate = sapply(cty_code, function(code) {
+      ieepa_rate = sapply(cty_code, function(code) {
         country_rate <- config$headline_rates[[code]]
         if (!is.null(country_rate)) {
           return(country_rate)
@@ -230,73 +175,45 @@ load_ieepa_rates_yaml <- function(yaml_file,
           return(default_rate)
         }
       })
-    ) %>% 
-    expand_grid(hs10 = hs10_codes) %>% 
-    select(hs10, cty_code, rate) %>% 
-    arrange(hs10)
-    
+    ) %>%
+    expand_grid(hs10 = hs10_codes) %>%
+    select(hs10, cty_code, ieepa_rate)
 
   # ===========================
-  # Step 2: Apply product-level rates
+  # Step 2: Apply product-level rates (apply to ALL countries)
   # ===========================
 
   if (!is.null(config$product_rates) && length(config$product_rates) > 0) {
 
-    # Build expanded lookup table for all product rate overrides
-    # Each product rate is a simple numeric value that applies to all countries
+    # Build product rate lookup
     product_rates_expanded <- names(config$product_rates) %>%
       map_df(function(hts_code) {
-        # Find all HS10 codes matching this prefix
         matching_hs10 <- hs10_codes[str_starts(hs10_codes, hts_code)]
-
         tibble(
           hs10 = matching_hs10,
-          rate_override = config$product_rates[[hts_code]]
+          product_rate = config$product_rates[[hts_code]]
         )
       })
 
-    # Single join operation to apply all product rate overrides
+    # Apply product rate overrides
     rate_matrix <- rate_matrix %>%
       left_join(product_rates_expanded, by = 'hs10') %>%
-      mutate(rate = if_else(!is.na(rate_override), rate_override, rate)) %>%
-      select(-rate_override)
+      mutate(ieepa_rate = if_else(!is.na(product_rate), product_rate, ieepa_rate)) %>%
+      select(-product_rate)
   }
 
-
   # ===========================
-  # Step 3: Apply product x country rates
-  # ===========================
-
-  # TODO
-  
-  # ===========================
-  # Return long format with default rate for unmapped countries
+  # Step 3: Apply product × country rates
   # ===========================
 
-  message(sprintf('Loaded IEEPA rates for %d HS10 codes x %d countries',
-                  length(hs10_codes), length(all_country_codes)))
+  # TODO: Implement when needed
 
-  # Extract product-level defaults that apply to ALL countries (including unmapped)
-  # These override the headline default_rate for specific HS10 codes
-  product_defaults <- NULL
-  if (!is.null(config$product_rates) && length(config$product_rates) > 0) {
-    product_defaults <- names(config$product_rates) %>%
-      map_df(function(hts_code) {
-        matching_hs10 <- hs10_codes[str_starts(hs10_codes, hts_code)]
-        tibble(
-          hs10 = matching_hs10,
-          product_default = config$product_rates[[hts_code]]
-        )
-      })
-  }
+  # ===========================
+  # Return complete rate matrix
+  # ===========================
 
-  # Return list with rate_matrix, default_rate, and product_defaults
-  # - rate_matrix: rates for mapped countries (in country_partner_mapping.csv)
-  # - default_rate: headline default for unmapped countries with no product override
-  # - product_defaults: product-level defaults that override headline default for specific HS10 codes
-  return(list(
-    rate_matrix = rate_matrix,
-    default_rate = default_rate,
-    product_defaults = product_defaults
-  ))
+  message(sprintf('Loaded IEEPA rates for %s HS10 × country combinations',
+                  format(nrow(rate_matrix), big.mark = ',')))
+
+  return(rate_matrix)
 }

@@ -219,18 +219,36 @@ This output is both displayed in the console and saved to `output/{scenario}/ove
 
 ## How It Works
 
-1. **Load Configuration**: Read scenario-specific tariff parameters from `config/{scenario}/` and expand country-level rates with defaults
-2. **Process Import Data**: Read Census Bureau IMP_DETL.TXT files from monthly ZIP archives and aggregate by HS10 × country (234 total countries)
-3. **Map to GTAP**: Convert HS10 codes to GTAP sectors using crosswalk
-4. **Calculate Tax Bases**: Determine import shares subject to each tariff at HS10 × country level using prefix matching on variable-length HTS codes
-5. **Compute ETR Changes**: Apply country-specific tariff rates (with defaults for 183 unmapped countries) plus USMCA exemptions and auto rebates (relative to early 2025 baseline)
-6. **Aggregate to Partners**: Convert country-level ETRs to 8 partner groups using import-weighted averaging for GTAP compatibility
-7. **Generate Output**: Write GTAP shock commands and calculate overall ETR changes
+The calculation pipeline uses a **multi-authority rate matrix** approach for flexibility and extensibility:
+
+1. **Load Configuration**: Config parsers return clean tabular data:
+   - Section 232: Complete HS10×country tibble with one column per tariff (`s232_steel_rate`, `s232_aluminum_rate`, etc.)
+   - IEEPA: Complete HS10×country tibble with single column (`ieepa_rate`)
+   - All rates fully expanded for complete universe of HS10 codes × 240 countries
+
+2. **Process Import Data**: Read Census Bureau IMP_DETL.TXT files from monthly ZIP archives and aggregate by HS10 × country
+
+3. **Build Rate Matrix**: Join config tables with import data to create master rate matrix with all tariff authority columns
+
+4. **Apply Adjustments**: Apply USMCA exemptions and auto rebates to each rate column independently
+
+5. **Apply Stacking Rules**: Calculate final rate using authority-specific logic:
+   - Current rule: `final_rate = max(all 232 rates) OR ieepa_rate` (mutually exclusive)
+   - Future: Easy to modify for stacking tariffs (e.g., "IEEPA fentanyl stacks on 232")
+
+6. **Calculate ETRs**: ETR = final_rate at HS10×country level (relative to early 2025 baseline)
+
+7. **Aggregate to Partners**: Convert country-level ETRs to 8 partner groups using import-weighted averaging
+
+8. **Generate Output**: Write GTAP shock commands and calculate overall ETR changes
 
 ## Key Features
 
+- **Multi-Authority Rate Matrix**: Clean separation between config parsing (returns tabular data) and calculations (applies stacking rules)
+- **Flexible Tariff Stacking**: Easy to modify stacking rules to support multiple IEEPA types or tariffs that stack on top of each other
 - **Country-Level Architecture**: Tariff rates specified at country level (Census codes) with default rates for efficiency
 - **Automatic Default Handling**: 183 unmapped countries automatically receive default rates from config files
+- **Tabular Config Interface**: Config parsers return complete HS10×country tibbles, not nested lists - calculations consume clean tables
 - **Scenario-based**: Easy comparison of different tariff policy configurations
 - **Hierarchical IEEPA Configuration**: Flexible rate specification with headline, product, and product×country levels
 - **Variable-Length HTS Matching**: Supports 4-, 6-, 8-, and 10-digit HTS codes with prefix matching for both 232 and IEEPA tariffs

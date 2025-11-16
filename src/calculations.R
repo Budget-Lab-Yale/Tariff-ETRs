@@ -35,15 +35,11 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
 
   message('Loading scenario parameters...')
 
-  # Section 232 tariffs
-  params_232_yaml <- sprintf('config/%s/232.yaml', scenario)
-  params_232 <- load_232_rates(params_232_yaml)
+  # Section 232 tariffs (returns list with rate_matrix and usmca_exempt)
+  params_232 <- load_232_rates(sprintf('config/%s/232.yaml', scenario))
 
-  # Deduplicate 232 codes to prevent double-counting
-  params_232 <- deduplicate_232_codes(params_232)
-
-  # IEEPA rates
-  params_ieepa <- load_ieepa_rates_yaml(sprintf('config/%s/ieepa_rates.yaml', scenario))
+  # IEEPA rates (returns tibble with hs10, cty_code, ieepa_rate)
+  rates_ieepa <- load_ieepa_rates_yaml(sprintf('config/%s/ieepa_rates.yaml', scenario))
 
   # Other scenario parameters
   other_params <- read_yaml(sprintf('config/%s/other_params.yaml', scenario))
@@ -125,13 +121,13 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
 
   message('Calculating ETRs at HS10 × country level...')
 
-  # Calculate ETRs using new multi-authority rate matrix approach
+  # Calculate ETRs using tabular config data
   hs10_country_etrs <- calc_weighted_etr(
-    params_232            = params_232,
-    ieepa_data            = params_ieepa,
+    rates_232             = params_232$rate_matrix,
+    usmca_exempt_232      = params_232$usmca_exempt,
+    rates_ieepa           = rates_ieepa,
     import_data           = hs10_by_country,
     usmca_data            = usmca_shares,
-    country_mapping       = country_mapping,
     us_auto_content_share = other_params$us_auto_content_share,
     auto_rebate           = other_params$auto_rebate_rate,
     us_assembly_share     = other_params$us_auto_assembly_share,
@@ -222,118 +218,43 @@ calc_import_shares <- function(hts_codes, data) {
 }
 
 
-#' Calculate weighted ETR changes at HS10 × country level using multi-authority rate matrix
+#' Calculate weighted ETR changes at HS10 × country level using tabular config data
 #'
-#' NEW APPROACH: Builds a rate matrix with one column per tariff authority, then applies
-#' stacking rules to determine final rate. This allows for flexible tariff stacking logic.
+#' Takes clean tabular rate data from config parsing and applies USMCA exemptions,
+#' auto rebates, and stacking rules to produce final ETRs.
 #'
-#' @param params_232 Section 232 tariff parameters list
-#' @param ieepa_data IEEPA rates with rate_matrix and default_rate
+#' @param rates_232 Tibble with columns: hs10, cty_code, s232_[tariff]_rate (one per tariff)
+#' @param usmca_exempt_232 Named vector of USMCA exempt flags by tariff name
+#' @param rates_ieepa Tibble with columns: hs10, cty_code, ieepa_rate
 #' @param import_data Data frame with hs10, cty_code, gtap_code, imports
 #' @param usmca_data Data frame with USMCA shares by partner and GTAP sector
-#' @param country_mapping Data frame mapping cty_code to partner
 #' @param us_auto_content_share Share of US content in auto assembly
 #' @param auto_rebate Auto rebate rate
 #' @param us_assembly_share Share of US assembly in autos
 #' @param ieepa_usmca_exempt Apply USMCA exemption to IEEPA tariffs (1 = yes, 0 = no)
 #'
 #' @return Data frame with columns: hs10, cty_code, gtap_code, imports, etr, base_232, base_ieepa, base_neither
-calc_weighted_etr <- function(params_232,
-                              ieepa_data, import_data,
+calc_weighted_etr <- function(rates_232,
+                              usmca_exempt_232,
+                              rates_ieepa,
+                              import_data,
                               usmca_data,
-                              country_mapping,
                               us_auto_content_share,
                               auto_rebate,
                               us_assembly_share,
                               ieepa_usmca_exempt) {
 
   # =============================================================================
-  # PHASE 1: Build master HS10 × country rate matrix
+  # Build complete rate matrix by joining config tables with import data
   # =============================================================================
 
-  # Start with HS10 × country combinations from import data
   rate_matrix <- import_data %>%
-    select(hs10, cty_code, gtap_code, imports)
+    select(hs10, cty_code, gtap_code, imports) %>%
+    left_join(rates_232, by = c('hs10', 'cty_code')) %>%
+    left_join(rates_ieepa, by = c('hs10', 'cty_code'))
 
   # =============================================================================
-  # PHASE 2: Populate 232 rate columns (one column per tariff)
-  # =============================================================================
-
-  # For each 232 tariff, create a rate column
-  for (tariff_name in names(params_232)) {
-
-    # Get HTS codes that define this tariff's coverage
-    hts_codes <- params_232[[tariff_name]]$base
-
-    # Tag which HS10 × country combinations are covered (1 = covered, 0 = not)
-    coverage <- calc_import_shares(hts_codes, data = import_data) %>%
-      select(hs10, cty_code, covered)
-
-    # Get country-level rates for this tariff
-    country_rates <- tibble(
-      cty_code = names(params_232[[tariff_name]]$rate),
-      rate = unlist(params_232[[tariff_name]]$rate)
-    )
-
-    # Get default rate for unmapped countries
-    default_rate <- params_232[[tariff_name]]$default_rate
-
-    # Build rate column: coverage × country_rate
-    tariff_rates <- coverage %>%
-      left_join(country_rates, by = 'cty_code') %>%
-      mutate(
-        # Use default for unmapped countries, 0 for uncovered HS10 codes
-        rate = case_when(
-          covered == 0 ~ 0,                           # Not covered by this tariff
-          !is.na(rate) ~ rate,                        # Mapped country with explicit rate
-          !is.na(default_rate) ~ default_rate,        # Unmapped country, use default
-          TRUE ~ 0                                     # Fallback
-        )
-      ) %>%
-      select(hs10, cty_code, rate)
-
-    # Add this rate column to the matrix
-    rate_matrix <- rate_matrix %>%
-      left_join(
-        tariff_rates %>% rename(!!paste0('rate_232_', tariff_name) := rate),
-        by = c('hs10', 'cty_code')
-      )
-  }
-
-  # =============================================================================
-  # PHASE 3: Populate IEEPA rate column
-  # =============================================================================
-
-  # Rename IEEPA 'rate' column to 'rate_ieepa' for consistency
-  ieepa_rates <- ieepa_data$rate_matrix %>%
-    rename(rate_ieepa = rate)
-
-  # Join IEEPA rates to rate matrix
-  rate_matrix <- rate_matrix %>%
-    left_join(ieepa_rates, by = c('hs10', 'cty_code'))
-
-  # For unmapped countries (rate_ieepa is NA), use product defaults or headline default
-  ieepa_product_defaults <- ieepa_data$product_defaults
-  if (!is.null(ieepa_product_defaults)) {
-    rate_matrix <- rate_matrix %>%
-      left_join(ieepa_product_defaults, by = 'hs10') %>%
-      mutate(
-        rate_ieepa = case_when(
-          !is.na(rate_ieepa) ~ rate_ieepa,              # Mapped country with explicit rate
-          !is.na(product_default) ~ product_default,    # Unmapped country, use product default
-          TRUE ~ ieepa_data$default_rate                # Unmapped country, use headline default
-        )
-      ) %>%
-      select(-product_default)
-  } else {
-    rate_matrix <- rate_matrix %>%
-      mutate(
-        rate_ieepa = if_else(is.na(rate_ieepa), ieepa_data$default_rate, rate_ieepa)
-      )
-  }
-
-  # =============================================================================
-  # PHASE 4: Apply USMCA exemptions and auto rebates to rate columns
+  # Apply USMCA exemptions and auto rebates
   # =============================================================================
 
   # Reshape USMCA shares to long format for joining
@@ -354,11 +275,15 @@ calc_weighted_etr <- function(params_232,
     left_join(usmca_long, by = c('cty_code', 'gtap_code')) %>%
     mutate(usmca_share = replace_na(usmca_share, 0))
 
-  # Apply auto rebate to 232 auto tariff columns
+  # Auto tariff list
   auto_tariffs <- c('automobiles_passenger_and_light_trucks', 'automobile_parts', 'vehicles_completed_mhd')
 
-  for (tariff_name in names(params_232)) {
-    rate_col <- paste0('rate_232_', tariff_name)
+  # Get tariff names from usmca_exempt_232 vector
+  tariff_names <- names(usmca_exempt_232)
+
+  # Apply auto rebate and USMCA exemptions to each 232 tariff
+  for (tariff_name in tariff_names) {
+    rate_col <- paste0('s232_', tariff_name, '_rate')
 
     # Apply auto rebate if this is an auto tariff
     if (tariff_name %in% auto_tariffs) {
@@ -369,9 +294,9 @@ calc_weighted_etr <- function(params_232,
     }
 
     # Apply USMCA exemption if enabled for this tariff
-    if (params_232[[tariff_name]]$usmca_exempt == 1) {
-      # Determine which USMCA share to use based on whether this is an auto tariff
+    if (usmca_exempt_232[[tariff_name]] == 1) {
       if (tariff_name %in% auto_tariffs) {
+        # Auto tariffs use adjusted USMCA share
         rate_matrix <- rate_matrix %>%
           mutate(
             adjusted_usmca_share = usmca_share * us_auto_content_share,
@@ -383,6 +308,7 @@ calc_weighted_etr <- function(params_232,
           ) %>%
           select(-adjusted_usmca_share)
       } else {
+        # Non-auto tariffs use standard USMCA share
         rate_matrix <- rate_matrix %>%
           mutate(
             !!rate_col := if_else(
@@ -396,14 +322,13 @@ calc_weighted_etr <- function(params_232,
   }
 
   # Apply USMCA exemption to IEEPA if enabled
-  # Note: IEEPA uses usmca_share directly (no auto content adjustment)
   if (ieepa_usmca_exempt == 1) {
     rate_matrix <- rate_matrix %>%
       mutate(
-        rate_ieepa = if_else(
+        ieepa_rate = if_else(
           cty_code %in% c('1220', '2010'),
-          rate_ieepa * (1 - usmca_share),
-          rate_ieepa
+          ieepa_rate * (1 - usmca_share),
+          ieepa_rate
         )
       )
   }
@@ -413,42 +338,33 @@ calc_weighted_etr <- function(params_232,
     select(-usmca_share)
 
   # =============================================================================
-  # PHASE 5: Apply stacking rules to calculate final_rate
+  # Apply stacking rules to calculate final_rate
   # =============================================================================
 
   # Get all 232 rate column names
-  rate_232_cols <- paste0('rate_232_', names(params_232))
+  rate_232_cols <- paste0('s232_', tariff_names, '_rate')
 
-  # Calculate max of all 232 rates using pmax
-  # pmax returns the max across columns for each row
+  # Calculate max of all 232 rates
   rate_matrix <- rate_matrix %>%
     mutate(
-      # Get max 232 rate across all 232 tariffs
+      # Max 232 rate across all tariffs
       rate_232_max = pmax(!!!syms(rate_232_cols), na.rm = TRUE),
       rate_232_max = if_else(is.infinite(rate_232_max), 0, rate_232_max),
 
-      # Stacking rule: If any 232 applies (rate_232_max > 0), use that
-      # Otherwise, use IEEPA rate
-      final_rate = if_else(rate_232_max > 0, rate_232_max, rate_ieepa)
+      # Stacking rule: If any 232 applies, use that; otherwise use IEEPA
+      final_rate = if_else(rate_232_max > 0, rate_232_max, ieepa_rate)
     )
 
   # =============================================================================
-  # PHASE 6: Calculate HS10 × country ETR directly from final_rate
+  # Calculate ETR and coverage tracking
   # =============================================================================
 
   hs10_country_etrs <- rate_matrix %>%
-    mutate(etr = final_rate) %>%
-    select(hs10, cty_code, gtap_code, imports, etr, rate_232_max, rate_ieepa)
-
-  # =============================================================================
-  # PHASE 7: Update coverage tracking for reporting
-  # =============================================================================
-
-  hs10_country_etrs <- hs10_country_etrs %>%
     mutate(
+      etr = final_rate,
       base_232     = if_else(rate_232_max > 0, imports, 0),
-      base_ieepa   = if_else(rate_232_max == 0 & rate_ieepa > 0, imports, 0),
-      base_neither = if_else(rate_232_max == 0 & rate_ieepa == 0, imports, 0)
+      base_ieepa   = if_else(rate_232_max == 0 & ieepa_rate > 0, imports, 0),
+      base_neither = if_else(rate_232_max == 0 & ieepa_rate == 0, imports, 0)
     ) %>%
     select(hs10, cty_code, gtap_code, imports, etr, base_232, base_ieepa, base_neither)
 
