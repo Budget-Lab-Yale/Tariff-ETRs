@@ -1,0 +1,11 @@
+headline_rates:
+  china: 0.2
+  canada: 0.35
+  mexico: 0.25
+  japan: 0.15
+  uk: 0.1
+  eu: 0.15
+  row: 0.1
+  ftrow: 0.1
+
+product_country_rates: []

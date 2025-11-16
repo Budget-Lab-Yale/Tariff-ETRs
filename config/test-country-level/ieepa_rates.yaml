@@ -1,0 +1,150 @@
+# IEEPA rates configuration - TEST VERSION with country-level headline rates
+# Based on Reed Smith tariff tracker (Nov 14, 2025)
+# Country shorthand names created for multi-word countries
+
+headline_rates:
+  # A
+  afghanistan: 0.15
+  algeria: 0.30
+  angola: 0.15
+  austria: 0.15  # EU member - using EU formula result approximation
+
+  # B
+  bangladesh: 0.20
+  bolivia: 0.15
+  bosnia: 0.30  # Bosnia and Herzegovina
+  botswana: 0.15
+  brazil: 0.10
+  brunei: 0.25
+
+  # C
+  cambodia: 0.19
+  cameroon: 0.15
+  canada: 0.35  # "all other products" rate (USMCA goods: 0%, energy: 0.10)
+  chad: 0.15
+  china: 0.20  # 10% baseline + 10% fentanyl (34% reciprocal delayed to 2026)
+  costarica: 0.15
+  cotedivoire: 0.15  # Côte d'Ivoire
+  drc: 0.15  # Democratic Republic of Congo
+  domrep: 0.25  # Dominican Republic
+
+  # E
+  ecuador: 0.10
+  elsalvador: 0.10
+  eqguinea: 0.15  # Equatorial Guinea
+
+  # EU Members (individual countries)
+  # Using 0.15 as approximation of "15% minus Column 1 Duty Rate" formula
+  belgium: 0.15
+  bulgaria: 0.15
+  croatia: 0.15
+  cyprus: 0.15
+  czechia: 0.15
+  denmark: 0.15
+  estonia: 0.15
+  finland: 0.15
+  france: 0.15
+  germany: 0.15
+  greece: 0.15
+  hungary: 0.15
+  ireland: 0.15
+  italy: 0.15
+  latvia: 0.15
+  lithuania: 0.15
+  luxembourg: 0.15
+  malta: 0.15
+  netherlands: 0.15
+  poland: 0.15
+  portugal: 0.15
+  romania: 0.15
+  slovakia: 0.15
+  slovenia: 0.15
+  spain: 0.15
+  sweden: 0.15
+
+  # F-G
+  falklands: 0.10
+  fiji: 0.10
+  ghana: 0.15
+  guatemala: 0.10
+  guyana: 0.15
+
+  # I
+  iceland: 0.15
+  india: 0.25
+  indonesia: 0.19
+  iraq: 0.35
+  israel: 0.15
+
+  # J
+  japan: 0.15  # Approximation of "15% minus Column 1 Duty Rate" formula
+  jordan: 0.15
+
+  # K-L
+  kazakhstan: 0.25
+  laos: 0.40
+  lesotho: 0.15
+  libya: 0.30
+  liechtenstein: 0.15
+
+  # M
+  madagascar: 0.15
+  malawi: 0.15
+  malaysia: 0.19
+  mauritius: 0.15
+  mexico: 0.25  # "all other products" rate (USMCA goods: 0%, potash: 0.10)
+  moldova: 0.25
+  mozambique: 0.15
+  myanmar: 0.40  # Burma
+
+  # N
+  namibia: 0.15
+  nauru: 0.15
+  nicaragua: 0.18
+  nigeria: 0.15
+  nmacedonia: 0.15  # North Macedonia
+  norway: 0.15
+
+  # P
+  pakistan: 0.19
+  philippines: 0.19
+
+  # S
+  serbia: 0.35
+  singapore: 0.10  # Baseline (has threatened secondary tariffs)
+  southafrica: 0.30
+  southkorea: 0.15
+  srilanka: 0.20
+  switzerland: 0.39
+  syria: 0.41
+
+  # T
+  taiwan: 0.20
+  thailand: 0.19
+  trinidad: 0.15  # Trinidad and Tobago
+  tunisia: 0.25
+  turkey: 0.15
+
+  # U-V
+  uganda: 0.15
+  uk: 0.10  # United Kingdom
+  vanuatu: 0.15
+  venezuela: 0.15
+  vietnam: 0.20
+
+  # Z
+  zambia: 0.15
+  zimbabwe: 0.15
+
+  # Rest of World (for unmapped countries)
+  row: 0.10  # Using 10% baseline reciprocal tariff
+
+# Note: Countries excluded from this list:
+# - Belarus, Cuba, North Korea, Russia: Exempt from reciprocal tariffs
+# - Some rates are simplified (e.g., Canada/Mexico have product-specific rates)
+# - EU member states use approximation of complex formula
+# - This is for TESTING ONLY - country codes still need to be mapped
+
+product_rates: []
+
+product_country_rates: []

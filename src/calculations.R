@@ -1,210 +1,18 @@
 # =============================================================================
-# functions.R
+# calculations.R
 # =============================================================================
 #
-# This file contains helper functions for calculating effective tariff rate
-# (ETR) changes on U.S. imports by trading partner and GTAP sector. All ETR
-# values represent changes from an early 2025 baseline.
+# Functions for calculating effective tariff rates and generating outputs.
 #
 # Functions:
-#   - load_imports_hs10_country():  Load HS10 x country x year x month import data
 #   - do_scenario():                Run complete ETR analysis for a scenario
-#   - calc_import_shares():         Calculate import shares for specific HS6 codes
+#   - calc_import_shares():         Calculate import shares for specific HTS codes
 #   - calc_weighted_etr():          Calculate weighted ETR changes by partner and sector
 #   - write_shock_commands():       Write GTAP shock commands to output file
+#   - write_sector_country_etrs():  Write ETRs to CSV in sector x country format
 #   - calc_overall_etrs():          Calculate and print overall ETR changes by country
 #
 # =============================================================================
-
-
-#' Deduplicate HTS codes across 232 tariff proclamations
-#'
-#' Applies two deduplication rules to prevent double-counting:
-#' 1. If a code appears at different HS levels across tariffs, keep only the higher-level (shorter) code
-#' 2. If a code appears at the same HS level in multiple tariffs, keep the one with highest average rate
-#'
-#' @param params_232 List of 232 tariff parameters (from YAML)
-#'
-#' @return Modified params_232 list with deduplicated codes
-deduplicate_232_codes <- function(params_232) {
-
-  # Extract all codes with their tariff names, lengths, and average rates
-  all_codes <- map_df(names(params_232), function(tariff_name) {
-    codes <- params_232[[tariff_name]]$base
-    rates <- params_232[[tariff_name]]$rate
-    avg_rate <- mean(unlist(rates))
-
-    tibble(
-      tariff = tariff_name,
-      code = as.character(codes),
-      code_length = nchar(code),
-      avg_rate = avg_rate
-    )
-  })
-
-  # Rule 1: Remove child codes when parent exists at different HS level
-  # For each code, check if any other code is a prefix (parent)
-  codes_to_remove <- character(0)
-
-  for (i in 1:nrow(all_codes)) {
-    for (j in 1:nrow(all_codes)) {
-      if (i == j) next
-      if (all_codes$tariff[i] == all_codes$tariff[j]) next  # Same tariff is OK
-
-      code_i <- all_codes$code[i]
-      code_j <- all_codes$code[j]
-
-      # If code_j is a parent of code_i (shorter and is prefix), mark code_i for removal
-      if (nchar(code_j) < nchar(code_i) && str_starts(code_i, code_j)) {
-        codes_to_remove <- c(codes_to_remove, paste(all_codes$tariff[i], code_i, sep = '::'))
-      }
-    }
-  }
-
-  # Rule 2: For same-length duplicates, keep highest average rate
-  # Group by code to find duplicates
-  duplicate_codes <- all_codes %>%
-    group_by(code) %>%
-    filter(n() > 1) %>%
-    arrange(code, desc(avg_rate)) %>%
-    group_by(code) %>%
-    slice(-1) %>%  # Remove all but the first (highest rate)
-    ungroup()
-
-  # Add these to removal list
-  codes_to_remove <- c(
-    codes_to_remove,
-    paste(duplicate_codes$tariff, duplicate_codes$code, sep = '::')
-  )
-
-  # Remove duplicates from list
-  codes_to_remove <- unique(codes_to_remove)
-
-  # Apply removals to params_232
-  if (length(codes_to_remove) > 0) {
-    message(sprintf('Deduplicating 232 codes: removing %d hierarchical/duplicate codes', length(codes_to_remove)))
-
-    for (removal in codes_to_remove) {
-      parts <- str_split(removal, '::', simplify = TRUE)
-      tariff_name <- parts[1]
-      code_to_remove <- parts[2]
-
-      # Remove this code from the base list
-      params_232[[tariff_name]]$base <- setdiff(params_232[[tariff_name]]$base, code_to_remove)
-    }
-  } else {
-    message('No hierarchical/duplicate 232 codes found')
-  }
-
-  return(params_232)
-}
-
-
-#' Load HS10 x country x year x month import data from Census IMP_DETL.TXT files
-#'
-#' Reads monthly import data from Census Merchandise Trade Imports files (IMDByymm.ZIP).
-#' Each ZIP contains IMP_DETL.TXT with fixed-width format data. The function aggregates
-#' imports over districts, returning HS10 x country x year x month totals.
-#'
-#' @param import_data_path Path to directory containing IMDByymm.ZIP files
-#' @param year Year to filter data (e.g., 2024)
-#' @param type Import value type: 'con' (consumption) or 'gen' (general imports)
-#'
-#' @return Tibble with columns: year, month, hs10, cty_code, value
-load_imports_hs10_country <- function(import_data_path, year, type = c('con', 'gen')) {
-
-  type <- match.arg(type)
-
-  # Extract last two digits of year for file pattern matching
-  yy <- substr(as.character(year), 3, 4)
-
-  # Find all IMDByymm.ZIP files for the specified year
-  # Pattern: IMDB + YY + MM + .ZIP (e.g., IMDB2401.ZIP for January 2024)
-  file_pattern <- sprintf('IMDB%s\\d{2}\\.ZIP', yy)
-  zip_files <- list.files(
-    path = import_data_path,
-    pattern = file_pattern,
-    full.names = TRUE,
-    ignore.case = TRUE
-  )
-
-  if (length(zip_files) == 0) {
-    stop(sprintf('No import files found at %s matching pattern %s', import_data_path, file_pattern))
-  }
-
-  message(sprintf('Found %d ZIP file(s) for year %d', length(zip_files), year))
-
-  # Column positions for IMP_DETL.TXT (1-based, inclusive)
-  col_positions <- fwf_positions(
-    start     = c(1,  11,  23,  27,  74,   179),
-    end       = c(10, 14,  26,  28,  88,   193),
-    col_names = c('hs10', 'cty_code', 'year', 'month', 'con_val_mo', 'gen_val_mo')
-  )
-
-  # Process each ZIP file
-  all_records <- map_df(zip_files, function(zip_path) {
-
-    message(sprintf('Processing: %s', basename(zip_path)))
-
-    # List contents of ZIP file
-    zip_contents <- unzip(zip_path, list = TRUE)
-
-    # Find IMP_DETL.TXT file (case-insensitive)
-    detl_file <- zip_contents$Name[grepl('IMP_DETL\\.TXT$', zip_contents$Name, ignore.case = TRUE)]
-
-    if (length(detl_file) == 0) {
-      warning(sprintf('No IMP_DETL.TXT found in %s, skipping', basename(zip_path)))
-      return(tibble())
-    }
-
-    if (length(detl_file) > 1) {
-      warning(sprintf('Multiple IMP_DETL.TXT files found in %s, using first', basename(zip_path)))
-      detl_file <- detl_file[1]
-    }
-
-    # Create temporary directory for extraction
-    temp_dir <- tempdir()
-
-    # Extract IMP_DETL.TXT to temp directory
-    extracted_path <- unzip(zip_path, files = detl_file, exdir = temp_dir, overwrite = TRUE)
-
-    # Read fixed-width file
-    records <- read_fwf(
-      file = extracted_path,
-      col_positions = col_positions,
-      col_types = cols(
-        hs10        = col_character(),
-        cty_code    = col_character(),
-        year        = col_integer(),
-        month       = col_integer(),
-        con_val_mo  = col_double(),
-        gen_val_mo  = col_double()
-      ),
-      progress = FALSE
-    )
-
-    # Clean up temp file
-    file.remove(extracted_path)
-
-    # Filter to specified year and select appropriate value column
-    records %>%
-      filter(year == !!year) %>%
-      mutate(
-        hs10 = str_pad(hs10, width = 10, side = 'left', pad = '0')
-      ) %>%
-      {if (type == 'con') mutate(., value = con_val_mo) else mutate(., value = gen_val_mo)} %>%
-      select(year, month, hs10, cty_code, value)
-  })
-
-  # Aggregate over districts (sum duplicates by year, month, hs10, cty_code)
-  result <- all_records %>%
-    group_by(year, month, hs10, cty_code) %>%
-    summarise(value = sum(value), .groups = 'drop')
-
-  message(sprintf('Loaded %s records for year %d', format(nrow(result), big.mark = ','), year))
-
-  return(result)
-}
 
 
 #' Run complete ETR analysis for a given scenario
@@ -232,24 +40,14 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
   # Deduplicate 232 codes to prevent double-counting
   params_232 <- deduplicate_232_codes(params_232)
 
-  # IEEPA rates
-  params_ieepa <- read_csv(sprintf('config/%s/ieepa_rates.csv', scenario), show_col_types = FALSE)
+  # IEEPA rates (from new YAML format)
+  params_ieepa <- load_ieepa_rates_yaml(sprintf('config/%s/ieepa_rates.yaml', scenario))
 
   # Other scenario parameters
   other_params <- read_yaml(sprintf('config/%s/other_params.yaml', scenario))
 
   # USMCA share of trade by sector
   usmca_shares <- read_csv('./resources/usmca_shares.csv', show_col_types = FALSE)
-
-  # Adjust IEEPA rates: fold Korea into ftrow and Vietnam into row
-  # Note: Korea and FTROW countries are directly classified via ftrow_codes in import data,
-  # but IEEPA config has separate kr column that needs to be merged into ftrow rates
-  params_ieepa <- params_ieepa %>%
-    mutate(
-      ftrow = ftrow * (1 - other_params$kr_share_ftrow) + kr * other_params$kr_share_ftrow,
-      row   = row   * (1 - other_params$vn_share_row)   + vn * other_params$vn_share_row
-    ) %>%
-    select(-kr, -vn)
 
   #------------------
   # Read import data
@@ -333,7 +131,7 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
 
   message('Calculating tax bases and ETRs...')
 
-  # Calculate tax bases for 232 -- and IEEPA as residual
+  # Calculate tax bases for 232 at HS10 × partner level
   bases <- params_232 %>%
     names() %>%
 
@@ -344,18 +142,19 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
       # Structure is now just: base: [list of codes]
       hts_codes <- params_232[[.x]]$base
 
-      # Calculate share using variable-length code matching
-      share <- calc_import_shares(hts_codes, data = hs10_by_country) %>%
-        mutate(tariff = .x, .before = 1)
+      # Tag HS10 codes as covered (1) or not (0) using variable-length code matching
+      coverage <- calc_import_shares(hts_codes, data = hs10_by_country) %>%
+        mutate(tariff = .x, .before = 1) %>%
+        rename(share = covered)  # Rename for consistency with downstream code
 
-      return(share)
+      return(coverage)
     }) %>%
     bind_rows() %>%
 
-    # Add residual -- tax base uncovered by 232
+    # Add residual -- tax base uncovered by 232 (at HS10 × partner level)
     bind_rows(
       (.) %>%
-        group_by(partner, gtap_code) %>%
+        group_by(hs10, partner) %>%
         summarise(
           tariff = 'residual',
           share  = 1 - sum(share),
@@ -368,6 +167,7 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
     bases_data            = bases,
     params_data           = params_232,
     ieepa_data            = params_ieepa,
+    import_data           = hs10_by_country,
     usmca_data            = usmca_shares,
     us_auto_content_share = other_params$us_auto_content_share,
     auto_rebate           = other_params$auto_rebate_rate,
@@ -399,6 +199,8 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
   calc_overall_etrs(
     etr_data    = etrs,
     import_data = hs10_by_country,
+    bases_data  = bases,
+    ieepa_data  = params_ieepa,
     scenario    = scenario
   )
 
@@ -409,28 +211,30 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
 }
 
 
-#' Calculate import shares for a subset of HTS codes (arbitrary length: 4, 6, 8, or 10 digits)
+#' Tag HS10 codes as covered or not covered by a set of HTS codes
 #'
-#' Given a vector of HTS codes of any length, this function calculates:
-#' 1. Total imports for those codes (using prefix matching) by partner and GTAP sector
-#' 2. Total imports for ALL codes by partner and GTAP sector
-#' 3. The share (subset / total) by partner and GTAP sector
+#' Given a vector of HTS codes of any length (4, 6, 8, or 10 digits), this function
+#' determines which HS10 × partner combinations are covered using prefix matching.
 #'
 #' Prefix matching: A code like "8703" matches all HS10 codes starting with "8703".
 #' A code like "870322" matches all HS10 codes starting with "870322", and so on.
 #'
 #' @param hts_codes Character vector of HTS codes to analyze (4, 6, 8, or 10 digits)
-#' @param data Data frame with columns: hs10, partner, gtap_code, imports
+#' @param data Data frame with columns: hs10, partner (imports column optional but ignored)
 #'
-#' @return Data frame with columns: partner, gtap_code, share
+#' @return Data frame with columns: hs10, partner, covered (1 if covered, 0 if not)
 calc_import_shares <- function(hts_codes, data) {
+
+  # Get unique HS10 × partner combinations
+  hs10_partner <- data %>%
+    select(hs10, partner) %>%
+    distinct()
 
   # Handle empty code list
   if (length(hts_codes) == 0 || is.null(hts_codes)) {
     return(
-      data %>%
-        group_by(partner, gtap_code) %>%
-        summarise(share = 0, .groups = 'drop')
+      hs10_partner %>%
+        mutate(covered = 0)
     )
   }
 
@@ -441,22 +245,9 @@ calc_import_shares <- function(hts_codes, data) {
   # Each code becomes a prefix: "^8703" matches anything starting with 8703
   pattern <- paste0('^(', paste(hts_codes, collapse = '|'), ')')
 
-  # Calculate imports for codes matching the pattern by partner and GTAP
-  subset_imports <- data %>%
-    filter(str_detect(hs10, pattern)) %>%
-    group_by(partner, gtap_code) %>%
-    summarise(subset_imports = sum(imports), .groups = 'drop')
-
-  # Calculate total imports by partner and GTAP
-  total_imports <- data %>%
-    group_by(partner, gtap_code) %>%
-    summarise(total_imports = sum(imports), .groups = 'drop')
-
-  # Join and calculate shares
-  result <- total_imports %>%
-    left_join(subset_imports, by = c('partner', 'gtap_code')) %>%
-    mutate(share = replace_na(subset_imports / total_imports, 0)) %>%
-    select(partner, gtap_code, share)
+  # Tag each HS10 code as covered (1) or not (0)
+  result <- hs10_partner %>%
+    mutate(covered = if_else(str_detect(hs10, pattern), 1, 0))
 
   return(result)
 }
@@ -465,10 +256,12 @@ calc_import_shares <- function(hts_codes, data) {
 #' Calculate weighted ETR changes by partner and GTAP sector
 #'
 #' Calculates change in effective tariff rates from early 2025 baseline.
+#' Now works at HS10 × partner level, then aggregates to GTAP using import weights.
 #'
-#' @param bases_data Data frame with tariff bases
+#' @param bases_data Data frame with tariff bases (hs10, partner, tariff, share)
 #' @param params_data Tariff parameters list
-#' @param ieepa_data Data frame with IEEPA rates by partner and GTAP sector
+#' @param ieepa_data Data frame with IEEPA rates by hs10 and partner
+#' @param import_data Data frame with hs10, partner, gtap_code, imports
 #' @param usmca_data Data frame with USMCA shares by partner and GTAP sector
 #' @param us_auto_content_share Share of US content in auto assembly
 #' @param auto_rebate Auto rebate rate
@@ -477,7 +270,7 @@ calc_import_shares <- function(hts_codes, data) {
 #'
 #' @return Data frame with columns: partner, gtap_code, etr (change from baseline)
 calc_weighted_etr <- function(bases_data, params_data,
-                              ieepa_data,
+                              ieepa_data, import_data,
                               usmca_data,
                               us_auto_content_share,
                               auto_rebate,
@@ -500,21 +293,30 @@ calc_weighted_etr <- function(bases_data, params_data,
     pivot_longer(cols = -gtap_code, names_to = 'partner', values_to = 'usmca_share') %>%
     mutate(usmca_share = replace_na(usmca_share, 0))
 
-  # Reshape IEEPA rates long by country
+  # IEEPA rates are already in long format (hs10, partner, rate)
+  # Just rename 'rate' column to 'ieepa_rate' for consistency
   ieepa_long <- ieepa_data %>%
-    pivot_longer(cols = -gtap_code, names_to = 'partner', values_to = 'ieepa_rate') %>%
+    rename(ieepa_rate = rate) %>%
     mutate(ieepa_rate = replace_na(ieepa_rate, 0))
 
+  # Add gtap_code and imports to bases for aggregation
+  bases_with_context <- bases_data %>%
+    left_join(
+      import_data %>% select(hs10, partner, gtap_code, imports),
+      by = c('hs10', 'partner')
+    )
+
   # Join rates, exemptions, and USMCA shares to bases
-  bases_data %>%
+  hs10_level_data <- bases_with_context %>%
     left_join(rates_and_exemptions, by = c('tariff', 'partner')) %>%
     left_join(usmca_long, by = c('partner', 'gtap_code')) %>%
-    left_join(ieepa_long, by = c('partner', 'gtap_code')) %>%
+    left_join(ieepa_long, by = c('hs10', 'partner')) %>%
     mutate(
       rate = replace_na(rate, 0),
       usmca_exempt = replace_na(usmca_exempt, 0),
       usmca_share = replace_na(usmca_share, 0),
-      ieepa_rate = replace_na(ieepa_rate, 0)
+      ieepa_rate = replace_na(ieepa_rate, 0),
+      imports = replace_na(imports, 0)
     ) %>%
 
     # Apply auto rebate adjustment for all countries
@@ -551,13 +353,31 @@ calc_weighted_etr <- function(bases_data, params_data,
         ),
         adjusted_rate
       )
-    ) %>%
+    )
 
-    group_by(partner, gtap_code) %>%
+  # Calculate HS10-level ETRs (sum across tariff categories)
+  hs10_etrs <- hs10_level_data %>%
+    group_by(hs10, partner, gtap_code) %>%
     summarise(
-      etr = sum(share * adjusted_rate),
+      etr_hs10 = sum(share * adjusted_rate),
+      imports = first(imports),  # Same for all tariff rows in group
       .groups = 'drop'
     )
+
+  # Aggregate to GTAP level using import-weighted average
+  gtap_etrs <- hs10_etrs %>%
+    group_by(partner, gtap_code) %>%
+    summarise(
+      total_imports = sum(imports),
+      etr = sum(etr_hs10 * imports),
+      .groups = 'drop'
+    ) %>%
+    mutate(
+      etr = if_else(total_imports > 0, etr / total_imports, 0)
+    ) %>%
+    select(partner, gtap_code, etr)
+
+  return(gtap_etrs)
 }
 
 
@@ -686,12 +506,15 @@ write_sector_country_etrs <- function(etr_data,
 #'
 #' @param etr_data Data frame with columns: partner, gtap_code, etr (change from baseline)
 #' @param import_data Data frame with columns: partner, gtap_code, imports (2024 import values)
+#' @param bases_data Data frame with columns: tariff, partner, gtap_code, share (optional, for coverage calculation)
+#' @param ieepa_data Data frame with columns: gtap_code, partner, rate (optional, for coverage calculation)
 #' @param weights_file Path to GTAP import weights CSV file
 #' @param output_file Path to output text file (default: 'overall_etrs.txt')
 #' @param scenario Scenario name for output directory
 #'
 #' @return Prints overall ETR changes and returns them invisibly
 calc_overall_etrs <- function(etr_data, import_data = NULL,
+                              bases_data = NULL, ieepa_data = NULL,
                               weights_file = 'resources/gtap_import_weights.csv',
                               output_file = 'overall_etrs.txt',
                               scenario = NULL) {
@@ -813,6 +636,101 @@ calc_overall_etrs <- function(etr_data, import_data = NULL,
   cat('\n')
 
   # ===========================
+  # Calculate and print tariff coverage
+  # ===========================
+
+  coverage_stats <- NULL
+
+  if (!is.null(bases_data) && !is.null(ieepa_data) && !is.null(import_data)) {
+
+    # Join bases with imports and IEEPA rates at HS10 × partner level
+    coverage_data <- bases_data %>%
+      left_join(
+        import_data %>% select(hs10, partner, imports),
+        by = c('hs10', 'partner')
+      ) %>%
+      left_join(
+        ieepa_data %>% select(hs10, partner, rate),
+        by = c('hs10', 'partner')
+      ) %>%
+      mutate(
+        imports = replace_na(imports, 0),
+        rate = replace_na(rate, 0)
+      )
+
+    # Calculate coverage by partner
+    coverage_by_partner <- coverage_data %>%
+      mutate(
+        # Calculate import value covered by each tariff category
+        import_value = imports * share,
+        is_232 = tariff != 'residual',
+        is_ieepa = tariff == 'residual' & rate > 0,
+        is_neither = tariff == 'residual' & rate == 0
+      ) %>%
+      group_by(partner) %>%
+      summarise(
+        total_imports = sum(import_value),
+        imports_232 = sum(import_value * is_232),
+        imports_ieepa = sum(import_value * is_ieepa),
+        imports_neither = sum(import_value * is_neither),
+        .groups = 'drop'
+      ) %>%
+      mutate(
+        share_232 = imports_232 / total_imports,
+        share_ieepa = imports_ieepa / total_imports,
+        share_neither = imports_neither / total_imports
+      )
+
+    # Calculate total coverage across all partners
+    coverage_total <- coverage_data %>%
+      mutate(
+        import_value = imports * share,
+        is_232 = tariff != 'residual',
+        is_ieepa = tariff == 'residual' & rate > 0,
+        is_neither = tariff == 'residual' & rate == 0
+      ) %>%
+      summarise(
+        total_imports = sum(import_value),
+        imports_232 = sum(import_value * is_232),
+        imports_ieepa = sum(import_value * is_ieepa),
+        imports_neither = sum(import_value * is_neither)
+      ) %>%
+      mutate(
+        share_232 = imports_232 / total_imports,
+        share_ieepa = imports_ieepa / total_imports,
+        share_neither = imports_neither / total_imports
+      )
+
+    coverage_stats <- list(
+      by_partner = coverage_by_partner,
+      total = coverage_total
+    )
+
+    # Print coverage table
+    cat('\n')
+    cat('Tariff Coverage by Country (fraction of 2024 import value):\n')
+    cat('==========================================================\n')
+    cat(sprintf('%-10s  %12s  %12s  %12s\n', 'Country', 'Under 232', 'Under IEEPA', 'Neither'))
+    cat(sprintf('%-10s  %12s  %12s  %12s\n', '-------', '---------', '-----------', '-------'))
+
+    for (i in 1:nrow(coverage_by_partner)) {
+      cat(sprintf('%-10s  %11.1f%%  %11.1f%%  %11.1f%%\n',
+                  toupper(coverage_by_partner$partner[i]),
+                  coverage_by_partner$share_232[i] * 100,
+                  coverage_by_partner$share_ieepa[i] * 100,
+                  coverage_by_partner$share_neither[i] * 100))
+    }
+
+    cat('\n')
+    cat(sprintf('%-10s  %11.1f%%  %11.1f%%  %11.1f%%\n',
+                'TOTAL',
+                coverage_total$share_232 * 100,
+                coverage_total$share_ieepa * 100,
+                coverage_total$share_neither * 100))
+    cat('\n')
+  }
+
+  # ===========================
   # Write results to file
   # ===========================
 
@@ -863,6 +781,33 @@ calc_overall_etrs <- function(etr_data, import_data = NULL,
     writeLines(sprintf('%-10s  %14.2f%%',
                        'TOTAL',
                        gtap_total_etr_value * 100), con)
+  }
+
+  # Write coverage table if available
+  if (!is.null(coverage_stats)) {
+    writeLines('', con)
+    writeLines('', con)
+    writeLines('Tariff Coverage by Country (fraction of 2024 import value):', con)
+    writeLines('==========================================================', con)
+    writeLines(sprintf('%-10s  %12s  %12s  %12s', 'Country', 'Under 232', 'Under IEEPA', 'Neither'), con)
+    writeLines(sprintf('%-10s  %12s  %12s  %12s', '-------', '---------', '-----------', '-------'), con)
+
+    coverage_by_partner <- coverage_stats$by_partner
+    for (i in 1:nrow(coverage_by_partner)) {
+      writeLines(sprintf('%-10s  %11.1f%%  %11.1f%%  %11.1f%%',
+                         toupper(coverage_by_partner$partner[i]),
+                         coverage_by_partner$share_232[i] * 100,
+                         coverage_by_partner$share_ieepa[i] * 100,
+                         coverage_by_partner$share_neither[i] * 100), con)
+    }
+
+    writeLines('', con)
+    coverage_total <- coverage_stats$total
+    writeLines(sprintf('%-10s  %11.1f%%  %11.1f%%  %11.1f%%',
+                       'TOTAL',
+                       coverage_total$share_232 * 100,
+                       coverage_total$share_ieepa * 100,
+                       coverage_total$share_neither * 100), con)
   }
 
   close(con)

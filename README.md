@@ -22,7 +22,8 @@ Tariff-ETRs/
 ├── config/
 │   └── {scenario}/         # Scenario-specific configuration
 │       ├── 232.yaml        # Section 232 tariff parameters
-│       └── ieepa_rates.csv # IEEPA tariff rates by sector
+│       ├── ieepa_rates.yaml # IEEPA tariff rates (hierarchical)
+│       └── other_params.yaml # Other scenario parameters
 ├── resources/
 │   ├── hs10_gtap_crosswalk.csv     # HS10 to GTAP sector mapping
 │   ├── usmca_shares.csv            # USMCA-qualifying trade shares
@@ -77,7 +78,7 @@ We map HS10 codes to GTAP sectors using a crosswalk derived from the [6-digit cr
 
 2. **Ensure config files exist** in `config/{scenario}/`:
    - `232.yaml` - Section 232 tariff rates and HTS code definitions (variable length: 4, 6, 8, or 10 digits)
-   - `ieepa_rates.csv` - IEEPA rates by GTAP sector and trading partner
+   - `ieepa_rates.yaml` - IEEPA rates with hierarchical structure (headline, product, product×country)
 
 3. **Run the analysis**:
    ```r
@@ -126,17 +127,47 @@ steel:
   usmca_exempt: 0  # 1 = USMCA exemption applies, 0 = no exemption
 ```
 
-### IEEPA Rates (`ieepa_rates.csv`)
+### IEEPA Rates (`ieepa_rates.yaml`)
 
-Specifies IEEPA tariff rates by GTAP sector and trading partner:
+Specifies IEEPA tariff rates using a hierarchical structure with three levels of specificity:
 
-```csv
-gtap_code,china,canada,mexico,japan,uk,eu,row,ftrow,kr,vn
-b_t,0.3,0.35,0.25,0.15,0.1,0.15,0.1,0.1,0.151,0.273
-...
+1. **Headline rates**: Default rate for each trading partner (applied to all GTAP sectors)
+2. **Product rates**: Override headline rates for specific HTS codes
+3. **Product × country rates**: Most specific override for HTS code and partner combinations
+
+```yaml
+headline_rates:
+  china: 0.2
+  canada: 0.35
+  mexico: 0.25
+  japan: 0.15
+  uk: 0.1
+  eu: 0.15
+  row: 0.1
+  ftrow: 0.1
+
+product_rates:
+  - hts_codes: ['8703', '8704']  # Vehicles - variable length like 232 tariffs
+    rate: 0.30
+    partners: all  # Can be 'all' or list like [china, eu, row]
+
+  - hts_codes: ['7601']  # Aluminum
+    rate: 0.15
+    partners: [canada, mexico]
+
+product_country_rates:
+  - hts_codes: ['8703']  # Passenger vehicles
+    partner: china
+    rate: 0.50
+
+  - hts_codes: ['270900']  # Petroleum oils
+    partner: canada
+    rate: 0.00
 ```
 
-**Note**: Korea (`kr`) and Vietnam (`vn`) rates are folded into `ftrow` and `row` respectively using trade share parameters.
+**HTS Code Matching**: Uses prefix matching like Section 232 tariffs - `'8703'` matches all HS10 codes starting with 8703. Codes can be 4, 6, 8, or 10 digits.
+
+**Precedence**: Product × country rates override product rates, which override headline rates.
 
 
 ## Output
@@ -194,10 +225,11 @@ This output is both displayed in the console and saved to `output/{scenario}/ove
 ## Key Features
 
 - **Scenario-based**: Easy comparison of different tariff policy configurations
+- **Hierarchical IEEPA Configuration**: Flexible rate specification with headline, product, and product×country levels
+- **Variable-Length HTS Matching**: Supports 4-, 6-, 8-, and 10-digit HTS codes with prefix matching for both 232 and IEEPA tariffs
 - **Modular Code**: Separate functions file for maintainability
 - **USMCA Compliance**: Automatically adjusts rates based on qualifying trade shares
 - **Auto Sector Logic**: Special handling for automobile and auto parts tariffs
-- **Country Folding**: Korea and Vietnam rates incorporated into broader groupings
 - **Dual Weighting**: Overall ETRs calculated using both GTAP weights and 2024 Census import totals for comparison
 
 ## Contact
