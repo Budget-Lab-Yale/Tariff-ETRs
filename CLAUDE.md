@@ -21,7 +21,7 @@ This is an R-based data analysis project for processing U.S. import trade data. 
   - `gen_val_mo` (positions 179-193): General imports value
 
 **Country Code Mappings:**
-The project uses specific Census Bureau country codes (not ISO codes) mapped to 8 partner groups:
+The project uses Census Bureau country codes (not ISO codes). Country-to-partner mapping used for final aggregation:
 - China: 5700 → `china`
 - Canada: 1220 → `canada`
 - Mexico: 2010 → `mexico`
@@ -29,14 +29,16 @@ The project uses specific Census Bureau country codes (not ISO codes) mapped to 
 - Japan: 5880 → `japan`
 - EU-27: 27 individual country codes → `eu` (see country_partner_mapping.csv)
 - Free Trade ROW: Australia, Korea, Singapore, Chile, etc. → `ftrow`
-- All others → `row` (Rest of World, including Vietnam)
+- All others → `row` (Rest of World - 183 unmapped countries)
+
+**IMPORTANT**: Tariff rates are specified at the COUNTRY level in config files, calculations happen at country level throughout, and only aggregate to partners at the final output stage for GTAP compatibility.
 
 **GTAP Mapping:**
 - HS10 codes are mapped to GTAP sectors using resources/hs10_gtap_crosswalk.csv
 - This allows aggregation to GTAP sector level for economic modeling
 
 **Caching:**
-- Processed HS10×partner×GTAP data is cached in cache/hs10_by_partner_gtap_2024_con.rds (567KB)
+- Processed HS10×country×GTAP data is cached in cache/hs10_by_country_gtap_2024_con.rds
 - Cache is used by default to avoid re-processing large import files
 - Set `use_cache = FALSE` in main.R to force re-processing
 
@@ -60,32 +62,68 @@ source("src/main.R")
 
 Each scenario in `config/{scenario}/` requires:
 
-1. **232.yaml** - Section 232 tariffs with variable-length HTS codes (4, 6, 8, or 10 digits)
-2. **ieepa_rates.yaml** - IEEPA rates with hierarchical structure:
-   - `headline_rates`: Default rate for each partner (applied to all GTAP sectors)
-   - `product_rates`: HTS-based overrides with partner lists (optional)
-   - `product_country_rates`: Most specific HTS×partner overrides (optional)
+1. **232.yaml** - Section 232 tariffs with country-level rates and defaults:
+   ```yaml
+   tariff_name:
+     base: [list of variable-length HTS codes: 4, 6, 8, or 10 digits]
+     rates:
+       default: 0.5          # Default rate for all countries
+       '4120': 0.25          # UK-specific override (Census code)
+       '5700': 0.3           # China-specific override
+     usmca_exempt: 0         # 1 = apply USMCA exemptions, 0 = no exemption
+   ```
+
+2. **ieepa_rates.yaml** - IEEPA rates with country-level hierarchical structure:
+   ```yaml
+   headline_rates:
+     default: 0.1            # Default rate for unmapped countries
+     '5700': 0.2             # China (Census code 5700)
+     '1220': 0.35            # Canada
+     # ... other country codes
+
+   product_rates:            # Optional: HTS-specific overrides
+     '8703':                 # Can be simple rate (applies to all countries)
+       default: 0.15         # Or dict with country-specific rates
+       '5700': 0.25
+
+   product_country_rates:    # Optional: Most specific overrides
+     - hts_codes: ['870322', '870323']
+       cty_code: '5700'
+       rate: 0.30
+   ```
+
 3. **other_params.yaml** - USMCA parameters, auto rebate rates, etc.
 
 ## Key Implementation Notes
 
-**Core Functions (src/functions.R):**
-- `load_imports_hs10_country()`: Reads Census ZIP files, extracts IMP_DETL.TXT, returns HS10×country×month data
-- `load_ieepa_rates_yaml()`: Loads IEEPA YAML config and applies hierarchical rate logic (headline → product → product×country)
+**Core Functions:**
+
+*src/config_parsing.R:*
+- `load_232_rates()`: Loads 232 YAML, expands country-level rates with defaults, stores default_rate for unmapped countries
+- `load_ieepa_rates_yaml()`: Loads IEEPA YAML, applies hierarchical rate logic (headline → product → product×country), returns list with rate_matrix and default_rate
 - `deduplicate_232_codes()`: Prevents double-counting when HTS codes overlap across 232 tariffs
-- `calc_import_shares()`: Variable-length HTS code matching using regex prefix matching
-- `calc_weighted_etr()`: Calculates ETR changes with USMCA exemptions and auto rebates
-- `do_scenario()`: Main orchestrator - loads config, processes data, calculates ETRs, writes outputs
+
+*src/data_processing.R:*
+- `load_imports_hs10_country()`: Reads Census ZIP files, extracts IMP_DETL.TXT, returns HS10×country×month data
+
+*src/calculations.R:*
+- `calc_import_shares()`: Variable-length HTS code matching using regex prefix matching at HS10×country level
+- `calc_weighted_etr()`: Calculates ETR changes at country level with USMCA exemptions, auto rebates, and default rates for unmapped countries
+- `aggregate_countries_to_partners()`: Aggregates country-level ETRs to 8 partner groups using import-weighted averaging
+- `do_scenario()`: Main orchestrator - loads config, processes data, calculates country-level ETRs, aggregates to partners, writes outputs
 
 **Variable-Length HTS Matching:**
 - Both 232 and IEEPA tariffs use prefix matching: '8703' matches all HS10 codes starting with 8703
 - Supports 4-digit (chapter), 6-digit (subheading), 8-digit, and 10-digit (full HTS) codes
 - Implemented via regex: `^(code1|code2|...)` pattern
 
-**Country Partner Mapping:**
-- Country codes are mapped to partners using resources/country_partner_mapping.csv
-- 8 partner groups: china, canada, mexico, uk, japan, eu, row, ftrow
-- Unmapped countries default to 'row'
+**Country-Level Architecture:**
+- Tariff rates are specified at country level (Census codes) in YAML configs with `default` rates
+- ALL calculations (import shares, coverage, ETRs) happen at HS10×country level
+- Country codes are mapped to 8 partner groups using resources/country_partner_mapping.csv (51 countries mapped)
+- Unmapped countries (183 total) use default rates from config files and aggregate to 'row' partner
+- Only the final aggregation step converts country-level ETRs → partner-level ETRs for GTAP output
+- This ensures accurate country-specific tariff modeling while maintaining GTAP compatibility
 
 **File Paths:**
 - Import data path is hardcoded to `C:/Users/jar335/Downloads` in main.R

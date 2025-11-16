@@ -6,7 +6,8 @@
 #
 # Functions:
 #   - deduplicate_232_codes():    Deduplicate HTS codes across Section 232 tariffs
-#   - load_ieepa_rates_yaml():    Load IEEPA rates from hierarchical YAML config
+#   - load_232_rates():           Load Section 232 rates at country level with defaults
+#   - load_ieepa_rates_yaml():    Load IEEPA rates at country level with hierarchical config
 #
 # =============================================================================
 
@@ -94,18 +95,95 @@ deduplicate_232_codes <- function(params_232) {
 }
 
 
+#' Load Section 232 tariff rates with country-level rates and defaults
+#'
+#' Reads 232 tariff YAML configuration and expands rates to country level.
+#' For each tariff, applies rates by country code with default fallback.
+#'
+#' New YAML format:
+#'   tariff_name:
+#'     base: [list of HTS codes]
+#'     rates:
+#'       default: 0.5
+#'       '5700': 0.25  # China
+#'       '1220': 0.10  # Canada
+#'     usmca_exempt: 0
+#'
+#' @param yaml_file Path to 232 YAML configuration file
+#' @param country_mapping_file Path to country-partner mapping CSV
+#'
+#' @return List with same structure as input, ready for downstream processing
+load_232_rates <- function(yaml_file, country_mapping_file = 'resources/country_partner_mapping.csv') {
+
+  message('Loading Section 232 rates from YAML...')
+
+  # Read YAML configuration
+  params_232 <- read_yaml(yaml_file)
+
+  # Read country mapping to get all possible country codes
+  country_mapping <- read_csv(
+    country_mapping_file,
+    col_types = cols(cty_code = col_character()),
+    show_col_types = FALSE
+  )
+
+  # Get all unique country codes (as strings to match YAML keys)
+  all_country_codes <- unique(country_mapping$cty_code)
+
+  # Expand rates for each tariff to country level
+  for (tariff_name in names(params_232)) {
+
+    rates_config <- params_232[[tariff_name]]$rates
+
+    # Get default rate
+    default_rate <- rates_config$default
+    if (is.null(default_rate)) {
+      stop(sprintf('Tariff %s is missing required "default" rate in rates section', tariff_name))
+    }
+
+    # Build country-level rates
+    country_rates <- list()
+
+    for (cty_code in all_country_codes) {
+      # Check if country has specific rate, otherwise use default
+      if (!is.null(rates_config[[cty_code]])) {
+        country_rates[[cty_code]] <- rates_config[[cty_code]]
+      } else {
+        country_rates[[cty_code]] <- default_rate
+      }
+    }
+
+    # Add unmapped countries (those not in country_partner_mapping.csv)
+    # They also get the default rate, and we need to handle them at runtime
+    # For now, just store the default for use during calculations
+
+    # Replace rates section with expanded country-level rates
+    params_232[[tariff_name]]$rate <- country_rates
+    params_232[[tariff_name]]$rates <- NULL  # Remove the config structure
+    params_232[[tariff_name]]$default_rate <- default_rate  # Store default for unmapped countries
+  }
+
+  message(sprintf('Loaded 232 rates for %d tariffs', length(params_232)))
+
+  return(params_232)
+}
+
+
 #' Load IEEPA rates from YAML configuration with hierarchical rate structure
 #'
 #' Reads IEEPA rates from YAML file with three levels of specificity:
-#' 1. Headline rates: Default rate for each partner across all HS10 codes
+#' 1. Headline rates: Default rate for each country across all HS10 codes
 #' 2. Product rates: Override headline for specific HTS codes (variable length)
-#' 3. Product x country rates: Override everything for specific HTS x partner combinations
+#' 3. Product x country rates: Override everything for specific HTS x country combinations
 #'
 #' @param yaml_file Path to IEEPA YAML configuration file
 #' @param crosswalk_file Path to HS10-GTAP crosswalk CSV file
+#' @param country_mapping_file Path to country-partner mapping CSV
 #'
-#' @return Tibble with columns: hs10, partner, rate (long format)
-load_ieepa_rates_yaml <- function(yaml_file, crosswalk_file = 'resources/hs10_gtap_crosswalk.csv') {
+#' @return Tibble with columns: hs10, cty_code, rate (long format)
+load_ieepa_rates_yaml <- function(yaml_file,
+                                  crosswalk_file = 'resources/hs10_gtap_crosswalk.csv',
+                                  country_mapping_file = 'resources/country_partner_mapping.csv') {
 
   message('Loading IEEPA rates from YAML...')
 
@@ -119,32 +197,43 @@ load_ieepa_rates_yaml <- function(yaml_file, crosswalk_file = 'resources/hs10_gt
   # Get unique HS10 codes
   hs10_codes <- unique(crosswalk$hs10)
 
-  # Define partner list
-  partners <- c('china', 'canada', 'mexico', 'uk', 'japan', 'eu', 'row', 'ftrow')
+  # Read country mapping to get all possible country codes
+  country_mapping <- read_csv(
+    country_mapping_file,
+    col_types = cols(cty_code = col_character()),
+    show_col_types = FALSE
+  )
+
+  # Get all unique country codes
+  all_country_codes <- unique(country_mapping$cty_code)
+
+  # Get default rate
+  default_rate <- config$headline_rates$default
+  if (is.null(default_rate)) {
+    stop('IEEPA headline_rates is missing required "default" rate')
+  }
 
   # ===========================
   # Step 1: Initialize with headline rates
   # ===========================
 
-  # Create matrix with headline rates for all HS10 x partner combinations
+  # Create matrix with headline rates for all HS10 x country combinations
   rate_matrix <- expand.grid(
     hs10 = hs10_codes,
-    partner = partners,
+    cty_code = all_country_codes,
     stringsAsFactors = FALSE
   ) %>%
     as_tibble() %>%
     mutate(
-      rate = case_when(
-        partner == 'china'  ~ config$headline_rates$china,
-        partner == 'canada' ~ config$headline_rates$canada,
-        partner == 'mexico' ~ config$headline_rates$mexico,
-        partner == 'uk'     ~ config$headline_rates$uk,
-        partner == 'japan'  ~ config$headline_rates$japan,
-        partner == 'eu'     ~ config$headline_rates$eu,
-        partner == 'row'    ~ config$headline_rates$row,
-        partner == 'ftrow'  ~ config$headline_rates$ftrow,
-        TRUE ~ 0
-      )
+      # Apply country-specific headline rates or default
+      rate = sapply(cty_code, function(code) {
+        country_rate <- config$headline_rates[[code]]
+        if (!is.null(country_rate)) {
+          return(country_rate)
+        } else {
+          return(default_rate)
+        }
+      })
     )
 
   # ===========================
@@ -153,25 +242,49 @@ load_ieepa_rates_yaml <- function(yaml_file, crosswalk_file = 'resources/hs10_gt
 
   if (!is.null(config$product_rates) && length(config$product_rates) > 0) {
 
-    # config$product_rates is a simple dict: HTS code (key) -> rate (value)
-    # Apply each rate to ALL partners
+    # New format: HTS code -> {default: X, '5700': Y, ...}
+    # OR simple format: HTS code -> rate (applies to all countries)
 
     for (hts_code in names(config$product_rates)) {
 
-      rate <- config$product_rates[[hts_code]]
+      product_rate_config <- config$product_rates[[hts_code]]
 
       # Match HS10 codes using prefix matching
       pattern <- paste0('^', hts_code)
 
-      # Update rate matrix for these HS10 codes (all partners)
-      rate_matrix <- rate_matrix %>%
-        mutate(
-          rate = if_else(
-            str_detect(hs10, pattern),
-            !!rate,
-            rate
+      # Check if this is a simple rate or a dict with default
+      if (is.numeric(product_rate_config) || is.list(product_rate_config) && is.null(product_rate_config$default)) {
+        # Simple rate: apply to ALL countries
+        rate_value <- if (is.numeric(product_rate_config)) product_rate_config else product_rate_config[[1]]
+
+        rate_matrix <- rate_matrix %>%
+          mutate(
+            rate = if_else(
+              str_detect(hs10, pattern),
+              !!rate_value,
+              rate
+            )
           )
-        )
+      } else {
+        # Dict format with default: apply country-specific rates
+        product_default <- product_rate_config$default
+
+        rate_matrix <- rate_matrix %>%
+          mutate(
+            rate = if_else(
+              str_detect(hs10, pattern),
+              sapply(cty_code, function(code) {
+                country_rate <- product_rate_config[[code]]
+                if (!is.null(country_rate) && code != 'default') {
+                  return(country_rate)
+                } else {
+                  return(product_default)
+                }
+              }),
+              rate
+            )
+          )
+      }
     }
   }
 
@@ -184,17 +297,17 @@ load_ieepa_rates_yaml <- function(yaml_file, crosswalk_file = 'resources/hs10_gt
     for (prod_country_rate in config$product_country_rates) {
 
       hts_codes <- prod_country_rate$hts_codes
-      target_partner <- prod_country_rate$partner
+      target_cty_code <- as.character(prod_country_rate$cty_code)
       rate <- prod_country_rate$rate
 
       # Match HS10 codes using prefix matching
       pattern <- paste0('^(', paste(hts_codes, collapse = '|'), ')')
 
-      # Update rate matrix for these specific HS10 codes and partner
+      # Update rate matrix for these specific HS10 codes and country
       rate_matrix <- rate_matrix %>%
         mutate(
           rate = if_else(
-            str_detect(hs10, pattern) & partner == !!target_partner,
+            str_detect(hs10, pattern) & cty_code == !!target_cty_code,
             !!rate,
             rate
           )
@@ -203,11 +316,16 @@ load_ieepa_rates_yaml <- function(yaml_file, crosswalk_file = 'resources/hs10_gt
   }
 
   # ===========================
-  # Return long format
+  # Return long format with default rate for unmapped countries
   # ===========================
 
-  message(sprintf('Loaded IEEPA rates for %d HS10 codes x %d partners',
-                  length(hs10_codes), length(partners)))
+  message(sprintf('Loaded IEEPA rates for %d HS10 codes x %d countries',
+                  length(hs10_codes), length(all_country_codes)))
 
-  return(rate_matrix)
+  # Return list with rate_matrix and default_rate
+  # The default_rate will be used for countries not in country_partner_mapping.csv
+  return(list(
+    rate_matrix = rate_matrix,
+    default_rate = default_rate
+  ))
 }

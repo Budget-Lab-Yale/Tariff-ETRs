@@ -18,19 +18,25 @@ The analysis produces sector-level ETR changes by trading partner and aggregated
 Tariff-ETRs/
 ├── src/
 │   ├── main.R              # Main execution script
-│   └── functions.R         # Helper functions
+│   ├── config_parsing.R    # Config loading and rate expansion
+│   ├── data_processing.R   # Census data processing
+│   └── calculations.R      # ETR calculations and aggregation
 ├── config/
 │   └── {scenario}/         # Scenario-specific configuration
-│       ├── 232.yaml        # Section 232 tariff parameters
-│       ├── ieepa_rates.yaml # IEEPA tariff rates (hierarchical)
+│       ├── 232.yaml        # Section 232 tariff parameters (country-level)
+│       ├── ieepa_rates.yaml # IEEPA tariff rates (country-level, hierarchical)
 │       └── other_params.yaml # Other scenario parameters
 ├── resources/
-│   ├── hs10_gtap_crosswalk.csv     # HS10 to GTAP sector mapping
-│   ├── usmca_shares.csv            # USMCA-qualifying trade shares
-│   └── gtap_import_weights.csv    # Import weights for aggregation
+│   ├── hs10_gtap_crosswalk.csv       # HS10 to GTAP sector mapping
+│   ├── country_partner_mapping.csv   # Country → partner group mapping (51 countries)
+│   ├── usmca_shares.csv              # USMCA-qualifying trade shares
+│   └── gtap_import_weights.csv       # Import weights for aggregation
+├── cache/
+│   └── hs10_by_country_gtap_2024_con.rds  # Cached country-level import data
 ├── output/
 │   └── {scenario}/         # Scenario-specific output
 │       ├── shocks.txt      # GTAP shock commands
+│       ├── etrs_by_sector_country.csv  # ETR matrix (sector × partner)
 │       └── overall_etrs.txt # Overall ETRs by country (both weighting methods)
 └── README.md
 ```
@@ -53,15 +59,19 @@ Tariff-ETRs/
   - Columns: HS10 code (10-digit), country code, year, month, import value (consumption and general)
   - Aggregated by HS10 commodity and trading partner
 
-**Country Codes:**
-The project uses Census Bureau country codes (not ISO codes):
-- China: `5700`
-- Canada: `1220`
-- Mexico: `2010`
-- Japan: `5880`
-- UK: `4120`
-- EU-27: 27 individual country codes (see `main.R` for complete list)
-- All others: Classified as "ROW" (Rest of World)
+**Country Codes and Architecture:**
+The project uses Census Bureau country codes (not ISO codes). **Tariff rates are specified at the country level**, and all calculations happen at the HS10×country level before aggregating to 8 partner groups for GTAP output:
+
+- China: `5700` → `china`
+- Canada: `1220` → `canada`
+- Mexico: `2010` → `mexico`
+- Japan: `5880` → `japan`
+- UK: `4120` → `uk`
+- EU-27: 27 individual country codes → `eu` (see `resources/country_partner_mapping.csv`)
+- Free Trade ROW: Australia, Korea, Singapore, Chile, etc. → `ftrow`
+- All unmapped countries (183 total, including Vietnam, India, Brazil): → `row` (Rest of World)
+
+**Important**: Config files specify rates at the country level with `default` rates for efficiency. Unmapped countries automatically receive the default rate specified in each config file.
 
 **GTAP-HS Crosswalk**
 We map HS10 codes to GTAP sectors using a crosswalk derived from the [6-digit crosswalk developed by Angel Aguiar](https://www.gtap.agecon.purdue.edu/resources/res_display.asp?RecordID=5111). Each HS10 code inherits its GTAP sector from its 6-digit prefix. 
@@ -105,7 +115,7 @@ We map HS10 codes to GTAP sectors using a crosswalk derived from the [6-digit cr
 
 ### Section 232 Tariffs (`232.yaml`)
 
-Defines tariff rates and product coverage for each Section 232 tariff. Codes can be specified at any level of granularity (4, 6, 8, or 10 digits) and use prefix matching - e.g., `'8703'` matches all HS10 codes starting with 8703.
+Defines tariff rates and product coverage for each Section 232 tariff at the **country level** using Census Bureau country codes. Codes can be specified at any level of granularity (4, 6, 8, or 10 digits) and use prefix matching - e.g., `'8703'` matches all HS10 codes starting with 8703.
 
 ```yaml
 steel:
@@ -115,59 +125,55 @@ steel:
     - '73023000'
     - '7307'      # 4-digit code: matches all HS10 codes starting with 7307
     # ... additional codes
-  rate:
-    china: 0.50
-    canada: 0.50
-    mexico: 0.50
-    japan: 0.50
-    uk: 0.25
-    eu: 0.50
-    row: 0.50
-    ftrow: 0.50
-  usmca_exempt: 0  # 1 = USMCA exemption applies, 0 = no exemption
+  rates:
+    default: 0.50    # Default rate for all countries (including 183 unmapped countries)
+    '4120': 0.25     # UK-specific override (Census country code 4120)
+    # Only specify countries that differ from default
+  usmca_exempt: 0    # 1 = USMCA exemption applies, 0 = no exemption
 ```
+
+**Note**: Only the 51 countries in `resources/country_partner_mapping.csv` need explicit specification; all unmapped countries automatically receive the `default` rate.
 
 ### IEEPA Rates (`ieepa_rates.yaml`)
 
-Specifies IEEPA tariff rates using a hierarchical structure with three levels of specificity:
+Specifies IEEPA tariff rates at the **country level** using Census Bureau country codes. Uses a hierarchical structure with three levels of specificity:
 
-1. **Headline rates**: Default rate for each trading partner (applied to all GTAP sectors)
+1. **Headline rates**: Default rate for each country (applied to all HS10 codes)
 2. **Product rates**: Override headline rates for specific HTS codes
-3. **Product × country rates**: Most specific override for HTS code and partner combinations
+3. **Product × country rates**: Most specific override for HTS code and country combinations
 
 ```yaml
 headline_rates:
-  china: 0.2
-  canada: 0.35
-  mexico: 0.25
-  japan: 0.15
-  uk: 0.1
-  eu: 0.15
-  row: 0.1
-  ftrow: 0.1
+  default: 0.1     # Default for unmapped countries (183 countries)
+  '5700': 0.2      # China (Census code 5700)
+  '1220': 0.35     # Canada
+  '2010': 0.25     # Mexico
+  '5880': 0.15     # Japan
+  '4120': 0.1      # UK
+  # ... other country codes from country_partner_mapping.csv
 
 product_rates:
-  - hts_codes: ['8703', '8704']  # Vehicles - variable length like 232 tariffs
-    rate: 0.30
-    partners: all  # Can be 'all' or list like [china, eu, row]
+  '8703': 0.30     # Simple rate: applies to all countries
 
-  - hts_codes: ['7601']  # Aluminum
-    rate: 0.15
-    partners: [canada, mexico]
+  '8704':          # Dict format: country-specific rates for this HTS code
+    default: 0.25
+    '5700': 0.40   # China gets higher rate for this product
 
 product_country_rates:
-  - hts_codes: ['8703']  # Passenger vehicles
-    partner: china
+  - hts_codes: ['87032201', '87032301']  # Specific vehicle types
+    cty_code: '5700'                     # China only
     rate: 0.50
 
-  - hts_codes: ['270900']  # Petroleum oils
-    partner: canada
+  - hts_codes: ['270900']                # Petroleum oils
+    cty_code: '1220'                     # Canada only
     rate: 0.00
 ```
 
 **HTS Code Matching**: Uses prefix matching like Section 232 tariffs - `'8703'` matches all HS10 codes starting with 8703. Codes can be 4, 6, 8, or 10 digits.
 
 **Precedence**: Product × country rates override product rates, which override headline rates.
+
+**Default Rates**: Unmapped countries (those not in `country_partner_mapping.csv`) automatically receive the `default` rate at each level of the hierarchy.
 
 
 ## Output
@@ -215,22 +221,26 @@ This output is both displayed in the console and saved to `output/{scenario}/ove
 
 ## How It Works
 
-1. **Load Configuration**: Read scenario-specific tariff parameters from `config/{scenario}/`
-2. **Process Import Data**: Read Census Bureau IMP_DETL.TXT files from monthly ZIP archives and aggregate by HS10 and trading partner
+1. **Load Configuration**: Read scenario-specific tariff parameters from `config/{scenario}/` and expand country-level rates with defaults
+2. **Process Import Data**: Read Census Bureau IMP_DETL.TXT files from monthly ZIP archives and aggregate by HS10 × country (234 total countries)
 3. **Map to GTAP**: Convert HS10 codes to GTAP sectors using crosswalk
-4. **Calculate Tax Bases**: Determine import shares subject to each tariff by partner and sector using prefix matching on variable-length HTS codes
-5. **Compute ETR Changes**: Apply tariff rates with USMCA exemptions, auto rebates, and country-specific adjustments (relative to early 2025 baseline)
-6. **Generate Output**: Write GTAP shock commands and calculate overall ETR changes
+4. **Calculate Tax Bases**: Determine import shares subject to each tariff at HS10 × country level using prefix matching on variable-length HTS codes
+5. **Compute ETR Changes**: Apply country-specific tariff rates (with defaults for 183 unmapped countries) plus USMCA exemptions and auto rebates (relative to early 2025 baseline)
+6. **Aggregate to Partners**: Convert country-level ETRs to 8 partner groups using import-weighted averaging for GTAP compatibility
+7. **Generate Output**: Write GTAP shock commands and calculate overall ETR changes
 
 ## Key Features
 
+- **Country-Level Architecture**: Tariff rates specified at country level (Census codes) with default rates for efficiency
+- **Automatic Default Handling**: 183 unmapped countries automatically receive default rates from config files
 - **Scenario-based**: Easy comparison of different tariff policy configurations
 - **Hierarchical IEEPA Configuration**: Flexible rate specification with headline, product, and product×country levels
 - **Variable-Length HTS Matching**: Supports 4-, 6-, 8-, and 10-digit HTS codes with prefix matching for both 232 and IEEPA tariffs
-- **Modular Code**: Separate functions file for maintainability
+- **Modular Code**: Separate files for config parsing, data processing, and calculations
 - **USMCA Compliance**: Automatically adjusts rates based on qualifying trade shares
-- **Auto Sector Logic**: Special handling for automobile and auto parts tariffs
+- **Auto Sector Logic**: Special handling for automobile and auto parts tariffs (including rebates)
 - **Dual Weighting**: Overall ETRs calculated using both GTAP weights and 2024 Census import totals for comparison
+- **GTAP Compatible**: Country-level calculations aggregate to 8 partner groups for economic modeling
 
 ## Contact
 
