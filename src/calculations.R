@@ -200,8 +200,6 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
   calc_overall_etrs(
     etr_data          = partner_etrs,
     hs10_country_etrs = hs10_country_etrs,
-    bases_data        = bases,
-    ieepa_data        = params_ieepa,
     country_mapping   = country_mapping,
     scenario          = scenario
   )
@@ -271,7 +269,7 @@ calc_import_shares <- function(hts_codes, data) {
 #' @param us_assembly_share Share of US assembly in autos
 #' @param ieepa_usmca_exempt Apply USMCA exemption to IEEPA tariffs (1 = yes, 0 = no)
 #'
-#' @return Data frame with columns: hs10, cty_code, gtap_code, imports, etr
+#' @return Data frame with columns: hs10, cty_code, gtap_code, imports, etr, base_232, base_ieepa, base_neither
 calc_weighted_etr <- function(bases_data, params_data,
                               ieepa_data, import_data,
                               usmca_data,
@@ -385,12 +383,16 @@ calc_weighted_etr <- function(bases_data, params_data,
       )
     )
 
-  # Calculate HS10-level ETRs (sum across tariff categories)
+  # Calculate HS10-level ETRs and coverage bases (sum across tariff categories)
   hs10_etrs <- hs10_level_data %>%
     group_by(hs10, cty_code, gtap_code) %>%
     summarise(
       imports = sum(base),
       etr = if_else(imports > 0, weighted.mean(adjusted_rate, base), 0),
+      # Track coverage bases for downstream aggregation
+      base_232 = sum(if_else(tariff != 'residual', base, 0)),
+      base_ieepa = sum(if_else(tariff == 'residual' & rate_ieepa > 0, base, 0)),
+      base_neither = sum(if_else(tariff == 'residual' & rate_ieepa == 0, base, 0)),
       .groups = 'drop'
     )
 
@@ -401,12 +403,13 @@ calc_weighted_etr <- function(bases_data, params_data,
 #' Aggregate HS10×country ETRs to partner×GTAP level for GTAP output
 #'
 #' Takes HS10-level ETR data and aggregates to 8 partner groups × GTAP sectors
-#' using import-weighted averaging.
+#' using import-weighted averaging. Also aggregates coverage bases for tariff
+#' coverage reporting.
 #'
-#' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr
+#' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr, base_232, base_ieepa, base_neither
 #' @param country_mapping Data frame with columns: cty_code, partner
 #'
-#' @return Data frame with columns: partner, gtap_code, etr
+#' @return Data frame with columns: partner, gtap_code, etr, base_232, base_ieepa, base_neither
 aggregate_countries_to_partners <- function(hs10_country_etrs, country_mapping) {
 
   # Map countries to partners
@@ -424,12 +427,15 @@ aggregate_countries_to_partners <- function(hs10_country_etrs, country_mapping) 
     summarise(
       total_imports = sum(imports),
       weighted_etr = sum(etr * imports),
+      base_232 = sum(base_232),
+      base_ieepa = sum(base_ieepa),
+      base_neither = sum(base_neither),
       .groups = 'drop'
     ) %>%
     mutate(
       etr = if_else(total_imports > 0, weighted_etr / total_imports, 0)
     ) %>%
-    select(partner, gtap_code, etr)
+    select(partner, gtap_code, etr, base_232, base_ieepa, base_neither)
 
   return(partner_etrs)
 }
@@ -558,10 +564,8 @@ write_sector_country_etrs <- function(etr_data,
 #'
 #' Calculates and prints change in effective tariff rates from early 2025 baseline.
 #'
-#' @param etr_data Data frame with columns: partner, gtap_code, etr (change from baseline)
+#' @param etr_data Data frame with columns: partner, gtap_code, etr, base_232, base_ieepa, base_neither
 #' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr (for Census weights)
-#' @param bases_data Data frame with columns: tariff, cty_code, gtap_code, share (optional, for coverage calculation)
-#' @param ieepa_data Data frame with columns: gtap_code, cty_code, rate (optional, for coverage calculation)
 #' @param country_mapping Data frame with columns: cty_code, partner (for aggregating country data to partners)
 #' @param weights_file Path to GTAP import weights CSV file
 #' @param output_file Path to output text file (default: 'overall_etrs.txt')
@@ -569,7 +573,6 @@ write_sector_country_etrs <- function(etr_data,
 #'
 #' @return Prints overall ETR changes and returns them invisibly
 calc_overall_etrs <- function(etr_data, hs10_country_etrs = NULL,
-                              bases_data = NULL, ieepa_data = NULL,
                               country_mapping = NULL,
                               weights_file = 'resources/gtap_import_weights.csv',
                               output_file = 'overall_etrs.txt',
@@ -702,68 +705,34 @@ calc_overall_etrs <- function(etr_data, hs10_country_etrs = NULL,
 
   coverage_stats <- NULL
 
-  if (!is.null(bases_data) && !is.null(ieepa_data) && !is.null(hs10_country_etrs) && !is.null(country_mapping)) {
+  # Check if etr_data has coverage bases (should be present from calc_weighted_etr)
+  if ('base_232' %in% names(etr_data)) {
 
-    # Join bases with imports and IEEPA rates at HS10 × country level
-    coverage_data <- bases_data %>%
-      left_join(
-        hs10_country_etrs %>% select(hs10, cty_code, gtap_code, imports),
-        by = c('hs10', 'cty_code')
-      ) %>%
-      left_join(
-        # Extract rate_matrix from ieepa_data list
-        ieepa_data$rate_matrix %>% select(hs10, cty_code, rate),
-        by = c('hs10', 'cty_code')
-      ) %>%
-      left_join(
-        country_mapping %>% select(cty_code, partner) %>% distinct(),
-        by = 'cty_code'
-      ) %>%
-      mutate(
-        partner = if_else(is.na(partner), 'row', partner),
-        imports = replace_na(imports, 0),
-        # Use IEEPA default rate for unmapped countries (same as in ETR calculation)
-        rate = replace_na(rate, ieepa_data$default_rate)
-      )
-
-    # Calculate coverage by partner (aggregate from country level)
-    coverage_by_partner <- coverage_data %>%
-      mutate(
-        # Calculate import value covered by each tariff category
-        import_value = imports * share,
-        is_232 = tariff != 'residual',
-        is_ieepa = tariff == 'residual' & rate > 0,
-        is_neither = tariff == 'residual' & rate == 0
-      ) %>%
+    # Calculate coverage by partner using pre-computed bases
+    coverage_by_partner <- etr_data %>%
       group_by(partner) %>%
       summarise(
-        total_imports = sum(import_value),
-        imports_232 = sum(import_value * is_232),
-        imports_ieepa = sum(import_value * is_ieepa),
-        imports_neither = sum(import_value * is_neither),
+        imports_232 = sum(base_232),
+        imports_ieepa = sum(base_ieepa),
+        imports_neither = sum(base_neither),
         .groups = 'drop'
       ) %>%
       mutate(
+        total_imports = imports_232 + imports_ieepa + imports_neither,
         share_232 = imports_232 / total_imports,
         share_ieepa = imports_ieepa / total_imports,
         share_neither = imports_neither / total_imports
       )
 
     # Calculate total coverage across all partners
-    coverage_total <- coverage_data %>%
-      mutate(
-        import_value = imports * share,
-        is_232 = tariff != 'residual',
-        is_ieepa = tariff == 'residual' & rate > 0,
-        is_neither = tariff == 'residual' & rate == 0
-      ) %>%
+    coverage_total <- etr_data %>%
       summarise(
-        total_imports = sum(import_value),
-        imports_232 = sum(import_value * is_232),
-        imports_ieepa = sum(import_value * is_ieepa),
-        imports_neither = sum(import_value * is_neither)
+        imports_232 = sum(base_232),
+        imports_ieepa = sum(base_ieepa),
+        imports_neither = sum(base_neither)
       ) %>%
       mutate(
+        total_imports = imports_232 + imports_ieepa + imports_neither,
         share_232 = imports_232 / total_imports,
         share_ieepa = imports_ieepa / total_imports,
         share_neither = imports_neither / total_imports
