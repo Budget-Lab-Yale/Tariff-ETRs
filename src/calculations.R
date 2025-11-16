@@ -167,6 +167,7 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
     bases_data            = bases,
     params_data           = params_232,
     ieepa_data            = params_ieepa,
+    import_data           = hs10_by_country,
     usmca_data            = usmca_shares,
     us_auto_content_share = other_params$us_auto_content_share,
     auto_rebate           = other_params$auto_rebate_rate,
@@ -255,10 +256,12 @@ calc_import_shares <- function(hts_codes, data) {
 #' Calculate weighted ETR changes by partner and GTAP sector
 #'
 #' Calculates change in effective tariff rates from early 2025 baseline.
+#' Now works at HS10 × partner level, then aggregates to GTAP using import weights.
 #'
-#' @param bases_data Data frame with tariff bases
+#' @param bases_data Data frame with tariff bases (hs10, partner, tariff, share)
 #' @param params_data Tariff parameters list
-#' @param ieepa_data Data frame with IEEPA rates by partner and GTAP sector
+#' @param ieepa_data Data frame with IEEPA rates by hs10 and partner
+#' @param import_data Data frame with hs10, partner, gtap_code, imports
 #' @param usmca_data Data frame with USMCA shares by partner and GTAP sector
 #' @param us_auto_content_share Share of US content in auto assembly
 #' @param auto_rebate Auto rebate rate
@@ -267,7 +270,7 @@ calc_import_shares <- function(hts_codes, data) {
 #'
 #' @return Data frame with columns: partner, gtap_code, etr (change from baseline)
 calc_weighted_etr <- function(bases_data, params_data,
-                              ieepa_data,
+                              ieepa_data, import_data,
                               usmca_data,
                               us_auto_content_share,
                               auto_rebate,
@@ -290,22 +293,30 @@ calc_weighted_etr <- function(bases_data, params_data,
     pivot_longer(cols = -gtap_code, names_to = 'partner', values_to = 'usmca_share') %>%
     mutate(usmca_share = replace_na(usmca_share, 0))
 
-  # IEEPA rates are already in long format (gtap_code, partner, rate)
+  # IEEPA rates are already in long format (hs10, partner, rate)
   # Just rename 'rate' column to 'ieepa_rate' for consistency
   ieepa_long <- ieepa_data %>%
     rename(ieepa_rate = rate) %>%
     mutate(ieepa_rate = replace_na(ieepa_rate, 0))
 
+  # Add gtap_code and imports to bases for aggregation
+  bases_with_context <- bases_data %>%
+    left_join(
+      import_data %>% select(hs10, partner, gtap_code, imports),
+      by = c('hs10', 'partner')
+    )
+
   # Join rates, exemptions, and USMCA shares to bases
-  bases_data %>%
+  hs10_level_data <- bases_with_context %>%
     left_join(rates_and_exemptions, by = c('tariff', 'partner')) %>%
     left_join(usmca_long, by = c('partner', 'gtap_code')) %>%
-    left_join(ieepa_long, by = c('partner', 'gtap_code')) %>%
+    left_join(ieepa_long, by = c('hs10', 'partner')) %>%
     mutate(
       rate = replace_na(rate, 0),
       usmca_exempt = replace_na(usmca_exempt, 0),
       usmca_share = replace_na(usmca_share, 0),
-      ieepa_rate = replace_na(ieepa_rate, 0)
+      ieepa_rate = replace_na(ieepa_rate, 0),
+      imports = replace_na(imports, 0)
     ) %>%
 
     # Apply auto rebate adjustment for all countries
@@ -342,13 +353,26 @@ calc_weighted_etr <- function(bases_data, params_data,
         ),
         adjusted_rate
       )
-    ) %>%
+    )
 
-    group_by(partner, gtap_code) %>%
+  # Calculate HS10-level ETRs (sum across tariff categories)
+  hs10_etrs <- hs10_level_data %>%
+    group_by(hs10, partner, gtap_code) %>%
     summarise(
-      etr = sum(share * adjusted_rate),
+      etr_hs10 = sum(share * adjusted_rate),
+      imports = first(imports),  # Same for all tariff rows in group
       .groups = 'drop'
     )
+
+  # Aggregate to GTAP level using import-weighted average
+  gtap_etrs <- hs10_etrs %>%
+    group_by(partner, gtap_code) %>%
+    summarise(
+      etr = sum(etr_hs10 * imports) / sum(imports),
+      .groups = 'drop'
+    )
+
+  return(gtap_etrs)
 }
 
 
@@ -614,20 +638,15 @@ calc_overall_etrs <- function(etr_data, import_data = NULL,
 
   if (!is.null(bases_data) && !is.null(ieepa_data) && !is.null(import_data)) {
 
-    # Aggregate import data by partner and GTAP code
-    import_by_partner_gtap <- import_data %>%
-      group_by(partner, gtap_code) %>%
-      summarise(imports = sum(imports), .groups = 'drop')
-
-    # Join bases with imports and IEEPA rates
+    # Join bases with imports and IEEPA rates at HS10 × partner level
     coverage_data <- bases_data %>%
       left_join(
-        import_by_partner_gtap,
-        by = c('partner', 'gtap_code')
+        import_data %>% select(hs10, partner, imports),
+        by = c('hs10', 'partner')
       ) %>%
       left_join(
-        ieepa_data %>% select(partner, gtap_code, rate),
-        by = c('partner', 'gtap_code')
+        ieepa_data %>% select(hs10, partner, rate),
+        by = c('hs10', 'partner')
       ) %>%
       mutate(
         imports = replace_na(imports, 0),
