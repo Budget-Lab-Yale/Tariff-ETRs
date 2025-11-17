@@ -166,8 +166,10 @@ product_country_rates:
 **Stacking Logic**:
 - **Reciprocal**: Mutually exclusive with Section 232 (applies only to uncovered base)
 - **Fentanyl**:
-  - China (5700): STACKS on top of 232 + reciprocal
-  - All others: Only applies to base not covered by 232 or reciprocal
+  - China (5700): STACKS on top of whichever is higher (232 OR reciprocal) + fentanyl
+    - Formula: `max(232, reciprocal) + fentanyl`
+    - Example: If 232=50%, reciprocal=10%, fentanyl=10% → Final rate = 50% + 10% = 60%
+  - All others: Only applies to base not covered by 232 or reciprocal (mutually exclusive)
 
 **HTS Code Matching**: Uses prefix matching like Section 232 tariffs - `'8703'` matches all HS10 codes starting with 8703. Codes can be 4, 6, 8, or 10 digits.
 
