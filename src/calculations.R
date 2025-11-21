@@ -11,6 +11,7 @@
 #   - aggregate_countries_to_partners():  Aggregate HS10×country ETRs to partner×GTAP level
 #   - write_shock_commands():             Write GTAP shock commands to output file
 #   - write_sector_country_etrs():        Write ETRs to CSV in sector x country format
+#   - write_country_level_etrs():         Write country-level ETRs to CSV in sector x census country format
 #   - calc_overall_etrs():                Calculate and print overall ETR changes by country
 #
 # =============================================================================
@@ -175,6 +176,13 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
     etr_data     = partner_etrs,
     output_file  = 'etrs_by_sector_country.csv',
     scenario     = scenario
+  )
+
+  # Write country-level ETR CSV (census country codes)
+  write_country_level_etrs(
+    hs10_country_etrs = hs10_country_etrs,
+    output_file       = 'etrs_by_sector_census_country.csv',
+    scenario          = scenario
   )
 
   # Calculate and print overall ETRs with both GTAP and 2024 Census weights
@@ -598,6 +606,74 @@ write_sector_country_etrs <- function(etr_data,
   write_csv(etrs_wide, output_path)
 
   message(sprintf('Wrote ETRs by sector and country to %s (in pp units)', output_path))
+
+  invisible(etrs_wide)
+}
+
+
+#' Write country-level ETRs to CSV in sector (rows) x census country code (columns) format
+#'
+#' Aggregates HS10-level data to GTAP sector × census country code level and writes
+#' as a wide-format CSV. Values are in percentage points (multiplied by 100).
+#'
+#' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr
+#' @param output_file Path to output file (default: 'etrs_by_sector_census_country.csv')
+#' @param scenario Scenario name for output directory
+#'
+#' @return Writes CSV file (in pp units) and returns invisibly
+write_country_level_etrs <- function(hs10_country_etrs,
+                                      output_file = 'etrs_by_sector_census_country.csv',
+                                      scenario = NULL) {
+
+  # Create output directory if needed
+  if (!is.null(scenario)) {
+    output_dir <- sprintf('output/%s', scenario)
+    dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+    output_path <- file.path(output_dir, output_file)
+  } else {
+    output_path <- output_file
+  }
+
+  # Aggregate HS10-level data to GTAP sector × census country code level
+  # using import-weighted average of ETRs
+  country_etrs <- hs10_country_etrs %>%
+    group_by(gtap_code, cty_code) %>%
+    summarise(
+      total_imports = sum(imports),
+      weighted_etr = sum(etr * imports),
+      .groups = 'drop'
+    ) %>%
+    mutate(
+      etr = if_else(total_imports > 0, weighted_etr / total_imports, 0)
+    ) %>%
+    select(gtap_code, cty_code, etr)
+
+  # Pivot ETRs to wide format (sectors as rows, country codes as columns)
+  # and convert to percentage points
+  etrs_wide <- country_etrs %>%
+    pivot_wider(names_from = cty_code, values_from = etr, values_fill = 0) %>%
+    mutate(across(-gtap_code, ~ .x * 100))
+
+  # Define sector order
+  sector_order <- c(
+    'pdr', 'wht', 'gro', 'v_f', 'osd', 'c_b', 'pfb', 'ocr', 'ctl', 'oap',
+    'rmk', 'wol', 'frs', 'fsh', 'coa', 'oil', 'gas', 'oxt', 'cmt', 'omt',
+    'vol', 'mil', 'pcr', 'sgr', 'ofd', 'b_t', 'tex', 'wap', 'lea', 'lum',
+    'ppp', 'p_c', 'chm', 'bph', 'rpp', 'nmm', 'i_s', 'nfm', 'fmp', 'ele',
+    'eeq', 'ome', 'mvh', 'otn', 'omf', 'ely', 'gdt', 'wtr', 'cns'
+  )
+
+  # Apply sector ordering
+  existing_sectors <- intersect(sector_order, etrs_wide$gtap_code)
+
+  etrs_wide <- etrs_wide %>%
+    filter(gtap_code %in% existing_sectors) %>%
+    arrange(match(gtap_code, sector_order))
+
+  # Write CSV file
+  write_csv(etrs_wide, output_path)
+
+  message(sprintf('Wrote country-level ETRs to %s (in pp units)', output_path))
 
   invisible(etrs_wide)
 }

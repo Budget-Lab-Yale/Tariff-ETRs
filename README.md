@@ -39,6 +39,7 @@ Tariff-ETRs/
 │   └── {scenario}/         # Scenario-specific output
 │       ├── shocks.txt      # GTAP shock commands
 │       ├── etrs_by_sector_country.csv  # ETR matrix (sector × partner)
+│       ├── etrs_by_sector_census_country.csv  # ETR matrix (sector × census country code)
 │       └── overall_etrs.txt # Overall ETRs by country (both weighting methods)
 └── README.md
 ```
@@ -187,6 +188,14 @@ Shock tms("steel","China","USA") = 50.0;
 Shock tms("steel","Canada","USA") = 45.2;
 ...
 ```
+
+### ETR Matrix by Sector and Partner (`output/{scenario}/etrs_by_sector_country.csv`)
+
+Wide-format CSV with ETRs (in percentage points) for each GTAP sector (rows) and partner group (columns). Partner groups are the 8 aggregated regions: china, canada, mexico, japan, uk, eu, row, ftrow.
+
+### ETR Matrix by Sector and Census Country (`output/{scenario}/etrs_by_sector_census_country.csv`)
+
+Wide-format CSV with ETRs (in percentage points) for each GTAP sector (rows) and Census Bureau country code (columns). This provides country-level detail before aggregation to partner groups, showing rates for all ~240 individual countries.
 
 ### Overall ETRs (`output/{scenario}/overall_etrs.txt`)
 
