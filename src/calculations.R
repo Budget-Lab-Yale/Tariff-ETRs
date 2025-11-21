@@ -614,7 +614,7 @@ write_sector_country_etrs <- function(etr_data,
 #' Write country-level ETRs to CSV (census country codes with overall ETRs)
 #'
 #' Calculates overall ETR for each census country code using 2024 census import weights.
-#' Outputs a simple two-column CSV: cty_code, etr (in percentage points).
+#' Outputs a three-column CSV: cty_code, country_name, etr (in percentage points).
 #'
 #' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr
 #' @param output_file Path to output file (default: 'etrs_by_census_country.csv')
@@ -634,6 +634,11 @@ write_country_level_etrs <- function(hs10_country_etrs,
     output_path <- output_file
   }
 
+  # Load census country codes for country names
+  census_codes <- read_csv('resources/census_codes.csv', show_col_types = FALSE) %>%
+    rename(cty_code = Code, country_name = Name) %>%
+    mutate(cty_code = as.character(cty_code))
+
   # Calculate overall ETR by country using census import weights
   # (aggregates across all sectors and HS10 codes)
   country_etrs <- hs10_country_etrs %>%
@@ -646,7 +651,8 @@ write_country_level_etrs <- function(hs10_country_etrs,
     mutate(
       etr = if_else(total_imports > 0, weighted_etr / total_imports, 0) * 100
     ) %>%
-    select(cty_code, etr) %>%
+    left_join(census_codes, by = 'cty_code') %>%
+    select(cty_code, country_name, etr) %>%
     arrange(desc(etr))
 
   # Write CSV file
