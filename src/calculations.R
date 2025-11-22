@@ -12,6 +12,7 @@
 #   - write_shock_commands():             Write GTAP shock commands to output file
 #   - write_sector_country_etrs():        Write ETRs to CSV in sector x country format
 #   - write_country_level_etrs():         Write overall country-level ETRs to CSV (census country codes)
+#   - write_country_hts2_etrs():          Write country × HTS2 ETRs to CSV (countries × 2-digit HTS chapters)
 #   - calc_overall_etrs():                Calculate and print overall ETR changes by country
 #
 # =============================================================================
@@ -182,6 +183,13 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
   write_country_level_etrs(
     hs10_country_etrs = hs10_country_etrs,
     output_file       = 'etrs_by_census_country.csv',
+    scenario          = scenario
+  )
+
+  # Write country × HTS2 ETR CSV (census countries × 2-digit HTS chapters)
+  write_country_hts2_etrs(
+    hs10_country_etrs = hs10_country_etrs,
+    output_file       = 'etrs_by_census_country_hts2.csv',
     scenario          = scenario
   )
 
@@ -661,6 +669,70 @@ write_country_level_etrs <- function(hs10_country_etrs,
   message(sprintf('Wrote country-level ETRs to %s (in pp units)', output_path))
 
   invisible(country_etrs)
+}
+
+
+#' Write country-level ETRs by 2-digit HTS code to CSV
+#'
+#' Calculates ETR for each country × 2-digit HTS code combination using 2024 census import weights.
+#' Outputs a CSV with countries as rows and HTS chapters (2-digit codes) as columns.
+#' Values are in percentage points.
+#'
+#' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr
+#' @param output_file Path to output file (default: 'etrs_by_census_country_hts2.csv')
+#' @param scenario Scenario name for output directory
+#'
+#' @return Writes CSV file (in pp units) and returns invisibly
+write_country_hts2_etrs <- function(hs10_country_etrs,
+                                     output_file = 'etrs_by_census_country_hts2.csv',
+                                     scenario = NULL) {
+
+  # Create output directory if needed
+  if (!is.null(scenario)) {
+    output_dir <- sprintf('output/%s', scenario)
+    dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+    output_path <- file.path(output_dir, output_file)
+  } else {
+    output_path <- output_file
+  }
+
+  # Load census country codes for country names
+  census_codes <- read_csv('resources/census_codes.csv', show_col_types = FALSE) %>%
+    rename(cty_code = Code, country_name = Name) %>%
+    mutate(cty_code = as.character(cty_code))
+
+  # Extract 2-digit HTS code and calculate import-weighted ETR by country × hts2
+  country_hts2_etrs <- hs10_country_etrs %>%
+    mutate(hts2 = str_sub(hs10, 1, 2)) %>%
+    group_by(cty_code, hts2) %>%
+    summarise(
+      total_imports = sum(imports),
+      weighted_etr = sum(etr * imports),
+      .groups = 'drop'
+    ) %>%
+    mutate(
+      etr = if_else(total_imports > 0, weighted_etr / total_imports, 0) * 100
+    ) %>%
+    select(cty_code, hts2, etr)
+
+  # Pivot to wide format (countries × hts2 chapters)
+  country_hts2_wide <- country_hts2_etrs %>%
+    pivot_wider(names_from = hts2, values_from = etr, values_fill = 0) %>%
+    left_join(census_codes, by = 'cty_code') %>%
+    relocate(cty_code, country_name)
+
+  # Sort columns: cty_code, country_name, then HTS chapters in numeric order
+  hts2_cols <- setdiff(names(country_hts2_wide), c('cty_code', 'country_name'))
+  hts2_cols_sorted <- hts2_cols[order(as.numeric(hts2_cols))]
+  country_hts2_wide <- country_hts2_wide %>%
+    select(cty_code, country_name, all_of(hts2_cols_sorted))
+
+  # Write CSV file
+  write_csv(country_hts2_wide, output_path)
+
+  message(sprintf('Wrote country × HTS2 ETRs to %s (in pp units)', output_path))
+
+  invisible(country_hts2_wide)
 }
 
 
