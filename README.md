@@ -9,7 +9,6 @@ This project analyzes U.S. import trade data to compute effective tariff rate ch
 - **IEEPA Reciprocal tariffs**: Broad-based tariffs (mutually exclusive with Section 232)
 - **IEEPA Fentanyl tariffs**: Targeted tariffs that stack on top of other authorities for China, mutually exclusive otherwise
 - **USMCA exemptions**: Trade agreement provisions with content requirements
-- **Country-specific adjustments**: Korea and Vietnam receive separate treatment within broader country groupings
 
 The analysis produces sector-level ETR changes by trading partner and aggregated overall ETR changes. Overall ETRs are calculated using two weighting methods: (1) GTAP import weights and (2) 2024 Census import totals.
 
@@ -136,8 +135,6 @@ steel:
   usmca_exempt: 0    # 1 = USMCA exemption applies, 0 = no exemption
 ```
 
-**Note**: Only the 51 countries in `resources/country_partner_mapping.csv` need explicit specification; all unmapped countries automatically receive the `default` rate.
-
 ### IEEPA Rates (`ieepa_reciprocal.yaml` and `ieepa_fentanyl.yaml`)
 
 Both IEEPA tariff types use identical YAML structure with hierarchical rates at the **country level**:
@@ -238,8 +235,9 @@ This output is both displayed in the console and saved to `output/{scenario}/ove
 - **Japan**: Japan
 - **UK**: United Kingdom
 - **EU**: European Union (27 member states, excluding UK)
-- **ROW**: Rest of World (all other countries, including Vietnam)
-- **FTROW**: Free Trade Rest of World (subset of ROW, including Korea)
+- **FTROW**: Free Trade Rest of World (countries with whom US has a FTA)
+- **ROW**: Rest of World (all other countries)
+
 
 ## How It Works
 
