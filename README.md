@@ -1,4 +1,4 @@
-# Tariff ETR Calculator
+f# Tariff ETR Calculator
 
 Calculate effective tariff rate (ETR) changes on U.S. imports by trading partner and GTAP sector under various tariff policy scenarios. **All ETR values represent changes from an early 2025 baseline.**
 
@@ -171,7 +171,7 @@ product_country_rates:
 
 **HTS Code Matching**: Uses prefix matching like Section 232 tariffs - `'8703'` matches all HST10 codes starting with 8703. Codes can be 4, 6, 8, or 10 digits.
 
-**Default Rates**: Unmapped countries (those not in `country_partner_mapping.csv`) automatically receive the `default` rate at each level of the hierarchy.
+**Default Rates**: Unmapped countries automatically receive the `default` rate at each level of the hierarchy.
 
 
 ## Output
