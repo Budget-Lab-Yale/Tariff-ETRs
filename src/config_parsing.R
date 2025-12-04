@@ -49,12 +49,7 @@ load_232_rates <- function(yaml_file,
   hs10_codes <- unique(crosswalk$hs10)
 
   # Read country universe from Census codes
-  census_codes <- read_csv(
-    census_codes_file,
-    col_types = cols(Code = col_character()),
-    show_col_types = FALSE
-  )
-  all_country_codes <- as.character(census_codes$Code)
+  all_country_codes <- load_census_codes(census_codes_file)$cty_code
 
   # Initialize with complete HS10 × country combinations
   rate_matrix <- expand_grid(
@@ -178,12 +173,7 @@ load_ieepa_rates_yaml <- function(yaml_file,
   hs10_codes <- unique(crosswalk$hs10)
 
   # Read country universe
-  census_codes <- read_csv(
-    census_codes_file,
-    col_types = cols(Code = col_character()),
-    show_col_types = FALSE
-  )
-  all_country_codes <- as.character(census_codes$Code)
+  all_country_codes <- load_census_codes(census_codes_file)$cty_code
 
   # Get default rate
   default_rate <- config$headline_rates$default

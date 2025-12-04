@@ -5,9 +5,21 @@
 # Functions for loading and processing raw import data.
 #
 # Functions:
+#   - load_census_codes():          Load Census country codes with names
 #   - load_imports_hs10_country():  Load HS10 x country x year x month import data
 #
 # =============================================================================
+
+
+#' Load Census country codes with names
+#'
+#' @param file Path to census_codes.csv file
+#'
+#' @return Tibble with columns: cty_code, country_name
+load_census_codes <- function(file = 'resources/census_codes.csv') {
+  read_csv(file, col_types = cols(Code = col_character()), show_col_types = FALSE) %>%
+    rename(cty_code = Code, country_name = Name)
+}
 
 
 #' Load HS10 x country x year x month import data from Census IMP_DETL.TXT files
