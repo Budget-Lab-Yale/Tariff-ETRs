@@ -6,7 +6,6 @@
 #
 # Functions:
 #   - do_scenario():                      Run complete ETR analysis for a scenario
-#   - calc_import_shares():               Calculate import shares for specific HTS codes
 #   - calc_weighted_etr():                Calculate weighted ETR changes at HS10 × country level
 #   - aggregate_countries_to_partners():  Aggregate HS10×country ETRs to partner×GTAP level
 #   - write_shock_commands():             Write GTAP shock commands to output file
@@ -14,8 +13,104 @@
 #   - write_country_level_etrs():         Write overall country-level ETRs to CSV (census country codes)
 #   - write_country_hts2_etrs():          Write country × HTS2 ETRs to CSV (countries × 2-digit HTS chapters)
 #   - calc_overall_etrs():                Calculate and print overall ETR changes by country
+#   - get_output_path():                  Helper to build output file paths
 #
 # =============================================================================
+
+
+#' Build output file path, creating directory if needed
+#'
+#' @param output_file Base filename
+#' @param scenario Scenario name (optional)
+#'
+#' @return Full path to output file
+get_output_path <- function(output_file, scenario = NULL) {
+  if (is.null(scenario)) return(output_file)
+  output_dir <- sprintf('output/%s', scenario)
+  dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+  file.path(output_dir, output_file)
+}
+
+
+#' Format ETR table as vector of lines
+#'
+#' @param country_etrs Data frame with partner, gtap_etr, and optionally census_etr
+#' @param gtap_total Total GTAP-weighted ETR
+#' @param census_total Total Census-weighted ETR (optional)
+#'
+#' @return Character vector of formatted lines
+format_etr_table <- function(country_etrs, gtap_total, census_total = NULL) {
+  has_census <- !is.null(census_total) && !is.na(census_total)
+
+  lines <- c(
+    'Overall ETRs by Country (change from early 2025 baseline):',
+    '==========================================================',
+    ''
+  )
+
+  if (has_census) {
+    lines <- c(lines,
+      sprintf('%-10s  %15s  %18s', '', 'GTAP Weights', '2024 Census Weights'),
+      sprintf('%-10s  %15s  %18s', 'Country', '', ''),
+      sprintf('%-10s  %15s  %18s', '-------', '------------', '-----------------')
+    )
+    for (i in 1:nrow(country_etrs)) {
+      lines <- c(lines, sprintf('%-10s  %14.2f%%  %17.2f%%',
+        toupper(country_etrs$partner[i]),
+        country_etrs$gtap_etr[i] * 100,
+        country_etrs$census_etr[i] * 100))
+    }
+    lines <- c(lines, '', sprintf('%-10s  %14.2f%%  %17.2f%%',
+      'TOTAL', gtap_total * 100, census_total * 100))
+  } else {
+    lines <- c(lines,
+      sprintf('%-10s  %15s', '', 'GTAP Weights'),
+      sprintf('%-10s  %15s', 'Country', ''),
+      sprintf('%-10s  %15s', '-------', '------------')
+    )
+    for (i in 1:nrow(country_etrs)) {
+      lines <- c(lines, sprintf('%-10s  %14.2f%%',
+        toupper(country_etrs$partner[i]),
+        country_etrs$gtap_etr[i] * 100))
+    }
+    lines <- c(lines, '', sprintf('%-10s  %14.2f%%', 'TOTAL', gtap_total * 100))
+  }
+
+  lines
+}
+
+
+#' Format coverage table as vector of lines
+#'
+#' @param coverage_by_partner Data frame with partner and share columns
+#' @param coverage_total Data frame with total shares
+#'
+#' @return Character vector of formatted lines
+format_coverage_table <- function(coverage_by_partner, coverage_total) {
+  lines <- c(
+    '',
+    'Tariff Coverage by Country (fraction of 2024 import value):',
+    '==========================================================',
+    sprintf('%-10s  %12s  %12s  %12s', 'Country', 'Under 232', 'Under IEEPA', 'Neither'),
+    sprintf('%-10s  %12s  %12s  %12s', '-------', '---------', '-----------', '-------')
+  )
+
+  for (i in 1:nrow(coverage_by_partner)) {
+    lines <- c(lines, sprintf('%-10s  %11.1f%%  %11.1f%%  %11.1f%%',
+      toupper(coverage_by_partner$partner[i]),
+      coverage_by_partner$share_232[i] * 100,
+      coverage_by_partner$share_ieepa[i] * 100,
+      coverage_by_partner$share_neither[i] * 100))
+  }
+
+  lines <- c(lines, '', sprintf('%-10s  %11.1f%%  %11.1f%%  %11.1f%%',
+    'TOTAL',
+    coverage_total$share_232 * 100,
+    coverage_total$share_ieepa * 100,
+    coverage_total$share_neither * 100))
+
+  lines
+}
 
 
 #' Run complete ETR analysis for a given scenario
@@ -205,48 +300,6 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
 
   # Return partner-level ETR data invisibly
   invisible(partner_etrs)
-}
-
-
-#' Tag HS10 codes as covered or not covered by a set of HTS codes
-#'
-#' Given a vector of HTS codes of any length (4, 6, 8, or 10 digits), this function
-#' determines which HS10 × country combinations are covered using prefix matching.
-#'
-#' Prefix matching: A code like "8703" matches all HS10 codes starting with "8703".
-#' A code like "870322" matches all HS10 codes starting with "870322", and so on.
-#'
-#' @param hts_codes Character vector of HTS codes to analyze (4, 6, 8, or 10 digits)
-#' @param data Data frame with columns: hs10, cty_code (imports column optional but ignored)
-#'
-#' @return Data frame with columns: hs10, cty_code, covered (1 if covered, 0 if not)
-calc_import_shares <- function(hts_codes, data) {
-
-  # Get unique HS10 × country combinations
-  hs10_country <- data %>%
-    select(hs10, cty_code) %>%
-    distinct()
-
-  # Handle empty code list
-  if (length(hts_codes) == 0 || is.null(hts_codes)) {
-    return(
-      hs10_country %>%
-        mutate(covered = 0)
-    )
-  }
-
-  # Convert codes to character and remove any whitespace
-  hts_codes <- as.character(hts_codes) %>% str_trim()
-
-  # Build regex pattern for prefix matching
-  # Each code becomes a prefix: "^8703" matches anything starting with 8703
-  pattern <- paste0('^(', paste(hts_codes, collapse = '|'), ')')
-
-  # Tag each HS10 code as covered (1) or not (0)
-  result <- hs10_country %>%
-    mutate(covered = if_else(str_detect(hs10, pattern), 1, 0))
-
-  return(result)
 }
 
 
@@ -509,12 +562,7 @@ aggregate_countries_to_partners <- function(hs10_country_etrs, country_mapping) 
 #' @return Writes file and returns invisibly
 write_shock_commands <- function(etr_data, output_file = 'shocks.txt', scenario) {
 
-  # Create output directory if it doesn't exist
-  output_dir <- sprintf('output/%s', scenario)
-  dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
-
-  # Build full output path
-  output_path <- file.path(output_dir, output_file)
+  output_path <- get_output_path(output_file, scenario)
 
   # Map partner names to proper format
   partner_map <- c(
@@ -575,14 +623,7 @@ write_sector_country_etrs <- function(etr_data,
                                        output_file = 'etrs_by_sector_country.csv',
                                        scenario = NULL) {
 
-  # Create output directory if needed
-  if (!is.null(scenario)) {
-    output_dir <- sprintf('output/%s', scenario)
-    dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
-    output_path <- file.path(output_dir, output_file)
-  } else {
-    output_path <- output_file
-  }
+  output_path <- get_output_path(output_file, scenario)
 
   # Define sector order
   sector_order <- c(
@@ -633,19 +674,8 @@ write_country_level_etrs <- function(hs10_country_etrs,
                                       output_file = 'etrs_by_census_country.csv',
                                       scenario = NULL) {
 
-  # Create output directory if needed
-  if (!is.null(scenario)) {
-    output_dir <- sprintf('output/%s', scenario)
-    dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
-    output_path <- file.path(output_dir, output_file)
-  } else {
-    output_path <- output_file
-  }
-
-  # Load census country codes for country names
-  census_codes <- read_csv('resources/census_codes.csv', show_col_types = FALSE) %>%
-    rename(cty_code = Code, country_name = Name) %>%
-    mutate(cty_code = as.character(cty_code))
+  output_path <- get_output_path(output_file, scenario)
+  census_codes <- load_census_codes()
 
   # Calculate overall ETR by country using census import weights
   # (aggregates across all sectors and HS10 codes)
@@ -687,19 +717,8 @@ write_country_hts2_etrs <- function(hs10_country_etrs,
                                      output_file = 'etrs_by_census_country_hts2.csv',
                                      scenario = NULL) {
 
-  # Create output directory if needed
-  if (!is.null(scenario)) {
-    output_dir <- sprintf('output/%s', scenario)
-    dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
-    output_path <- file.path(output_dir, output_file)
-  } else {
-    output_path <- output_file
-  }
-
-  # Load census country codes for country names
-  census_codes <- read_csv('resources/census_codes.csv', show_col_types = FALSE) %>%
-    rename(cty_code = Code, country_name = Name) %>%
-    mutate(cty_code = as.character(cty_code))
+  output_path <- get_output_path(output_file, scenario)
+  census_codes <- load_census_codes()
 
   # Extract 2-digit HTS code and calculate import-weighted ETR by country × hts2
   country_hts2_etrs <- hs10_country_etrs %>%
@@ -834,57 +853,12 @@ calc_overall_etrs <- function(etr_data, hs10_country_etrs = NULL,
   }
 
   # ===========================
-  # Print results
-  # ===========================
-
-  cat('\n')
-  cat('Overall ETRs by Country (change from early 2025 baseline):\n')
-  cat('==========================================================\n')
-  if (!is.null(hs10_country_etrs)) {
-    cat(sprintf('%-10s  %15s  %18s\n', '', 'GTAP Weights', '2024 Census Weights'))
-    cat(sprintf('%-10s  %15s  %18s\n', 'Country', '', ''))
-    cat(sprintf('%-10s  %15s  %18s\n', '-------', '------------', '-----------------'))
-  } else {
-    cat(sprintf('%-10s  %15s\n', '', 'GTAP Weights'))
-    cat(sprintf('%-10s  %15s\n', 'Country', ''))
-    cat(sprintf('%-10s  %15s\n', '-------', '------------'))
-  }
-
-  for (i in 1:nrow(country_etrs)) {
-    if (!is.null(hs10_country_etrs)) {
-      cat(sprintf('%-10s  %14.2f%%  %17.2f%%\n',
-                  toupper(country_etrs$partner[i]),
-                  country_etrs$gtap_etr[i] * 100,
-                  country_etrs$census_etr[i] * 100))
-    } else {
-      cat(sprintf('%-10s  %14.2f%%\n',
-                  toupper(country_etrs$partner[i]),
-                  country_etrs$gtap_etr[i] * 100))
-    }
-  }
-  cat('\n')
-  if (!is.null(hs10_country_etrs)) {
-    cat(sprintf('%-10s  %14.2f%%  %17.2f%%\n',
-                'TOTAL',
-                gtap_total_etr_value * 100,
-                census_total_etr_value * 100))
-  } else {
-    cat(sprintf('%-10s  %14.2f%%\n',
-                'TOTAL',
-                gtap_total_etr_value * 100))
-  }
-  cat('\n')
-
-  # ===========================
-  # Calculate and print tariff coverage
+  # Calculate tariff coverage
   # ===========================
 
   coverage_stats <- NULL
 
-  # Check if etr_data has coverage bases (should be present from calc_weighted_etr)
   if ('base_232' %in% names(etr_data)) {
-
-    # Calculate coverage by partner using pre-computed bases
     coverage_by_partner <- etr_data %>%
       group_by(partner) %>%
       summarise(
@@ -900,7 +874,6 @@ calc_overall_etrs <- function(etr_data, hs10_country_etrs = NULL,
         share_neither = imports_neither / total_imports
       )
 
-    # Calculate total coverage across all partners
     coverage_total <- etr_data %>%
       summarise(
         imports_232 = sum(base_232),
@@ -914,116 +887,33 @@ calc_overall_etrs <- function(etr_data, hs10_country_etrs = NULL,
         share_neither = imports_neither / total_imports
       )
 
-    coverage_stats <- list(
-      by_partner = coverage_by_partner,
-      total = coverage_total
-    )
-
-    # Print coverage table
-    cat('\n')
-    cat('Tariff Coverage by Country (fraction of 2024 import value):\n')
-    cat('==========================================================\n')
-    cat(sprintf('%-10s  %12s  %12s  %12s\n', 'Country', 'Under 232', 'Under IEEPA', 'Neither'))
-    cat(sprintf('%-10s  %12s  %12s  %12s\n', '-------', '---------', '-----------', '-------'))
-
-    for (i in 1:nrow(coverage_by_partner)) {
-      cat(sprintf('%-10s  %11.1f%%  %11.1f%%  %11.1f%%\n',
-                  toupper(coverage_by_partner$partner[i]),
-                  coverage_by_partner$share_232[i] * 100,
-                  coverage_by_partner$share_ieepa[i] * 100,
-                  coverage_by_partner$share_neither[i] * 100))
-    }
-
-    cat('\n')
-    cat(sprintf('%-10s  %11.1f%%  %11.1f%%  %11.1f%%\n',
-                'TOTAL',
-                coverage_total$share_232 * 100,
-                coverage_total$share_ieepa * 100,
-                coverage_total$share_neither * 100))
-    cat('\n')
+    coverage_stats <- list(by_partner = coverage_by_partner, total = coverage_total)
   }
 
   # ===========================
-  # Write results to file
+  # Format and output results
   # ===========================
 
-  if (!is.null(scenario)) {
-    output_dir <- sprintf('output/%s', scenario)
-    dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
-    output_path <- file.path(output_dir, output_file)
+  # Build formatted output lines
+  etr_lines <- format_etr_table(country_etrs, gtap_total_etr_value, census_total_etr_value)
+  coverage_lines <- if (!is.null(coverage_stats)) {
+    format_coverage_table(coverage_stats$by_partner, coverage_stats$total)
   } else {
-    output_path <- output_file
+    character(0)
   }
 
-  con <- file(output_path, 'w')
-
-  writeLines('Overall ETRs by Country (change from early 2025 baseline):', con)
-  writeLines('==========================================================', con)
-  writeLines('', con)
-
-  if (!is.null(hs10_country_etrs)) {
-    writeLines(sprintf('%-10s  %15s  %18s', '', 'GTAP Weights', '2024 Census Weights'), con)
-    writeLines(sprintf('%-10s  %15s  %18s', 'Country', '', ''), con)
-    writeLines(sprintf('%-10s  %15s  %18s', '-------', '------------', '-----------------'), con)
-  } else {
-    writeLines(sprintf('%-10s  %15s', '', 'GTAP Weights'), con)
-    writeLines(sprintf('%-10s  %15s', 'Country', ''), con)
-    writeLines(sprintf('%-10s  %15s', '-------', '------------'), con)
+  # Print to console
+  cat('\n')
+  cat(paste(etr_lines, collapse = '\n'))
+  cat('\n\n')
+  if (length(coverage_lines) > 0) {
+    cat(paste(coverage_lines, collapse = '\n'))
+    cat('\n')
   }
 
-  for (i in 1:nrow(country_etrs)) {
-    if (!is.null(hs10_country_etrs)) {
-      writeLines(sprintf('%-10s  %14.2f%%  %17.2f%%',
-                         toupper(country_etrs$partner[i]),
-                         country_etrs$gtap_etr[i] * 100,
-                         country_etrs$census_etr[i] * 100), con)
-    } else {
-      writeLines(sprintf('%-10s  %14.2f%%',
-                         toupper(country_etrs$partner[i]),
-                         country_etrs$gtap_etr[i] * 100), con)
-    }
-  }
-
-  writeLines('', con)
-  if (!is.null(hs10_country_etrs)) {
-    writeLines(sprintf('%-10s  %14.2f%%  %17.2f%%',
-                       'TOTAL',
-                       gtap_total_etr_value * 100,
-                       census_total_etr_value * 100), con)
-  } else {
-    writeLines(sprintf('%-10s  %14.2f%%',
-                       'TOTAL',
-                       gtap_total_etr_value * 100), con)
-  }
-
-  # Write coverage table if available
-  if (!is.null(coverage_stats)) {
-    writeLines('', con)
-    writeLines('', con)
-    writeLines('Tariff Coverage by Country (fraction of 2024 import value):', con)
-    writeLines('==========================================================', con)
-    writeLines(sprintf('%-10s  %12s  %12s  %12s', 'Country', 'Under 232', 'Under IEEPA', 'Neither'), con)
-    writeLines(sprintf('%-10s  %12s  %12s  %12s', '-------', '---------', '-----------', '-------'), con)
-
-    coverage_by_partner <- coverage_stats$by_partner
-    for (i in 1:nrow(coverage_by_partner)) {
-      writeLines(sprintf('%-10s  %11.1f%%  %11.1f%%  %11.1f%%',
-                         toupper(coverage_by_partner$partner[i]),
-                         coverage_by_partner$share_232[i] * 100,
-                         coverage_by_partner$share_ieepa[i] * 100,
-                         coverage_by_partner$share_neither[i] * 100), con)
-    }
-
-    writeLines('', con)
-    coverage_total <- coverage_stats$total
-    writeLines(sprintf('%-10s  %11.1f%%  %11.1f%%  %11.1f%%',
-                       'TOTAL',
-                       coverage_total$share_232 * 100,
-                       coverage_total$share_ieepa * 100,
-                       coverage_total$share_neither * 100), con)
-  }
-
-  close(con)
+  # Write to file
+  output_path <- get_output_path(output_file, scenario)
+  writeLines(c(etr_lines, '', coverage_lines), output_path)
 
   message(sprintf('Wrote overall ETRs to %s', output_path))
 
