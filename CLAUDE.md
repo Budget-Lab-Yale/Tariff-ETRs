@@ -74,8 +74,11 @@ Each scenario in `config/{scenario}/` requires:
      base: [list of variable-length HTS codes: 4, 6, 8, or 10 digits]
      rates:
        default: 0.5          # Default rate for all countries
-       '4120': 0.25          # UK-specific override (Census code)
-       '5700': 0.3           # China-specific override
+       uk: 0.25              # UK-specific override (mnemonic)
+       china: 0.3            # China-specific override (mnemonic)
+       # Or use Census codes directly:
+       '4120': 0.25          # UK (Census code)
+       '5700': 0.3           # China (Census code)
      usmca_exempt: 0         # 1 = apply USMCA exemptions, 0 = no exemption
    ```
 
@@ -83,9 +86,10 @@ Each scenario in `config/{scenario}/` requires:
    ```yaml
    headline_rates:
      default: 0.1            # Default rate for unmapped countries
-     '5700': 0.2             # China (Census code 5700)
-     '1220': 0.35            # Canada
-     # ... other country codes
+     china: 0.2              # China (mnemonic - expands to code 5700)
+     canada: 0.35            # Canada (mnemonic)
+     eu: 0.15                # EU-27 (expands to all 27 country codes!)
+     # ... other countries/mnemonics
 
    product_rates:            # Optional: HTS-specific overrides
      '8703': 0.15            # Simple rate (applies to all countries)
@@ -95,12 +99,23 @@ Each scenario in `config/{scenario}/` requires:
    ```yaml
    headline_rates:
      default: 0.1            # Default rate for unmapped countries
-     '5700': 0.1             # China - STACKS on top of 232 + reciprocal
-     # ... other country codes
+     china: 0.1              # China - STACKS on top of 232 + reciprocal
+     # ... other countries/mnemonics
 
    product_rates:            # Optional: HTS-specific overrides
      '2939': 0.2             # Fentanyl precursors
    ```
+
+**Country Mnemonics:** Config files support friendly names that expand to Census codes:
+- `china` → 5700
+- `canada` → 1220
+- `mexico` → 2010
+- `uk` → 4120
+- `japan` → 5880
+- `eu` → all 27 EU country codes (Austria, Belgium, Bulgaria, etc.)
+- `ftrow` → all free-trade ROW countries (Australia, Korea, Singapore, etc.)
+
+You can mix mnemonics and Census codes in the same config file.
 
 4. **other_params.yaml** - USMCA parameters, auto rebate rates, etc.
 
@@ -129,6 +144,8 @@ The codebase uses a clean separation between config parsing and calculations:
 **Core Functions:**
 
 *src/config_parsing.R:*
+- `get_mnemonic_mapping()`: Loads country_partner_mapping.csv and returns mnemonic → country codes mapping
+- `resolve_country_mnemonics()`: Expands mnemonics (e.g., 'eu') to individual Census country codes in rates config
 - `load_232_rates()`: Loads 232 YAML, expands to complete HS10×country tibble with coverage and country-specific rates
 - `load_ieepa_rates_yaml()`: Generic IEEPA loader with configurable column name - applies hierarchical rate logic (headline → product → product×country)
 
