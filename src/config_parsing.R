@@ -5,11 +5,74 @@
 # Functions for loading and parsing tariff configuration files.
 #
 # Functions:
-#   - deduplicate_232_codes():    Deduplicate HTS codes across Section 232 tariffs
+#   - get_mnemonic_mapping():     Get mnemonic → country code mapping
+#   - resolve_country_mnemonics(): Resolve mnemonics in rates config
 #   - load_232_rates():           Load Section 232 rates at country level with defaults
 #   - load_ieepa_rates_yaml():    Load IEEPA rates at country level with hierarchical config
 #
 # =============================================================================
+
+
+#' Get mapping from mnemonics to Census country codes
+#'
+#' Returns a named list where names are mnemonics (e.g., 'china', 'eu') and
+#' values are vectors of Census country codes. This allows config files to use
+#' friendly names instead of numeric codes.
+#'
+#' @param country_partner_file Path to country_partner_mapping.csv
+#'
+#' @return Named list: mnemonic → character vector of country codes
+get_mnemonic_mapping <- function(country_partner_file = 'resources/country_partner_mapping.csv') {
+
+  # Read the partner mapping file
+  mapping <- read_csv(country_partner_file, show_col_types = FALSE) %>%
+    mutate(cty_code = as.character(cty_code))
+
+  # Build the mnemonic → codes mapping
+  # Group by partner and collect all country codes for each
+  mnemonic_map <- mapping %>%
+    group_by(partner) %>%
+    summarise(codes = list(cty_code), .groups = 'drop') %>%
+    deframe()
+
+  return(mnemonic_map)
+}
+
+
+#' Resolve mnemonics in a rates configuration list
+#'
+#' Takes a rates config (named list of code → rate) and expands any mnemonics
+#' (like 'china', 'eu', 'canada') to their constituent Census country codes.
+#' Preserves 'default' and numeric country codes as-is.
+#'
+#' @param rates_config Named list with keys like 'default', '5700', 'china', 'eu'
+#' @param mnemonic_map Named list from get_mnemonic_mapping()
+#'
+#' @return Named list with all mnemonics expanded to individual country codes
+resolve_country_mnemonics <- function(rates_config, mnemonic_map) {
+
+  resolved <- list()
+
+  for (key in names(rates_config)) {
+    rate <- rates_config[[key]]
+
+    if (key == 'default') {
+      # Keep default as-is
+      resolved[['default']] <- rate
+    } else if (key %in% names(mnemonic_map)) {
+      # This is a mnemonic - expand to all constituent country codes
+      country_codes <- mnemonic_map[[key]]
+      for (code in country_codes) {
+        resolved[[code]] <- rate
+      }
+    } else {
+      # Assume it's already a country code
+      resolved[[key]] <- rate
+    }
+  }
+
+  return(resolved)
+}
 
 
 
@@ -24,24 +87,35 @@
 #'     base: [list of HTS codes]
 #'     rates:
 #'       default: 0.5
-#'       '5700': 0.25  # China
+#'       '5700': 0.25  # China (or use 'china' mnemonic)
+#'       china: 0.25   # Mnemonic form
+#'       eu: 0.15      # Expands to all 27 EU country codes
 #'     usmca_exempt: 0
+#'
+#' Supported mnemonics: china, canada, mexico, uk, japan, eu, ftrow
+#' (based on resources/country_partner_mapping.csv)
 #'
 #' @param yaml_file Path to 232 YAML configuration file
 #' @param crosswalk_file Path to HS10-GTAP crosswalk CSV (for HS10 universe)
 #' @param census_codes_file Path to Census country codes CSV (for country universe)
+#' @param country_partner_file Path to country-partner mapping CSV (for mnemonic resolution)
 #'
 #' @return List with two elements:
 #'   - rate_matrix: Tibble with columns hs10, cty_code, s232_[tariff]_rate (one per tariff)
 #'   - usmca_exempt: Named vector of usmca_exempt flags by tariff name
 load_232_rates <- function(yaml_file,
                            crosswalk_file = 'resources/hs10_gtap_crosswalk.csv',
-                           census_codes_file = 'resources/census_codes.csv') {
+                           census_codes_file = 'resources/census_codes.csv',
+                           country_partner_file = 'resources/country_partner_mapping.csv') {
 
   message('Loading Section 232 rates from YAML...')
 
   # Read YAML configuration
   params_232 <- read_yaml(yaml_file)
+
+  # Load mnemonic mapping for resolving friendly country names
+
+  mnemonic_map <- get_mnemonic_mapping(country_partner_file)
 
   # Read HS10 universe from crosswalk
   crosswalk <- read_csv(crosswalk_file, show_col_types = FALSE) %>%
@@ -68,8 +142,8 @@ load_232_rates <- function(yaml_file,
     # Get HTS codes that define coverage
     hts_codes <- params_232[[tariff_name]]$base
 
-    # Get rates config
-    rates_config <- params_232[[tariff_name]]$rates
+    # Get rates config and resolve mnemonics (e.g., 'china' → '5700', 'eu' → 27 codes)
+    rates_config <- resolve_country_mnemonics(params_232[[tariff_name]]$rates, mnemonic_map)
     default_rate <- rates_config$default
     if (is.null(default_rate)) {
       stop(sprintf('Tariff %s is missing required "default" rate', tariff_name))
@@ -151,21 +225,29 @@ load_232_rates <- function(yaml_file,
 #' 2. Product rates: Override headline for specific HTS codes
 #' 3. Product × country rates: Override everything for specific combinations
 #'
+#' Supported mnemonics in headline_rates: china, canada, mexico, uk, japan, eu, ftrow
+#' (based on resources/country_partner_mapping.csv)
+#'
 #' @param yaml_file Path to IEEPA YAML configuration file
 #' @param rate_col_name Name for the rate column in output tibble (e.g., 'ieepa_reciprocal_rate')
 #' @param crosswalk_file Path to HS10-GTAP crosswalk CSV file
 #' @param census_codes_file Path to Census country codes CSV file
+#' @param country_partner_file Path to country-partner mapping CSV (for mnemonic resolution)
 #'
 #' @return Tibble with columns: hs10, cty_code, [rate_col_name]
 load_ieepa_rates_yaml <- function(yaml_file,
                                   rate_col_name = 'ieepa_rate',
                                   crosswalk_file = 'resources/hs10_gtap_crosswalk.csv',
-                                  census_codes_file = 'resources/census_codes.csv') {
+                                  census_codes_file = 'resources/census_codes.csv',
+                                  country_partner_file = 'resources/country_partner_mapping.csv') {
 
   message('Loading IEEPA rates from YAML...')
 
   # Read YAML configuration
   config <- read_yaml(yaml_file)
+
+  # Load mnemonic mapping for resolving friendly country names
+  mnemonic_map <- get_mnemonic_mapping(country_partner_file)
 
   # Read HS10 universe
   crosswalk <- read_csv(crosswalk_file, show_col_types = FALSE) %>%
@@ -175,8 +257,11 @@ load_ieepa_rates_yaml <- function(yaml_file,
   # Read country universe
   all_country_codes <- load_census_codes(census_codes_file)$cty_code
 
+  # Resolve mnemonics in headline_rates (e.g., 'china' → '5700', 'eu' → 27 codes)
+  headline_rates <- resolve_country_mnemonics(config$headline_rates, mnemonic_map)
+
   # Get default rate
-  default_rate <- config$headline_rates$default
+  default_rate <- headline_rates$default
   if (is.null(default_rate)) {
     stop('IEEPA headline_rates is missing required "default" rate')
   }
@@ -189,7 +274,7 @@ load_ieepa_rates_yaml <- function(yaml_file,
     mutate(
       # Apply country-specific headline rates or default
       rate = sapply(cty_code, function(code) {
-        country_rate <- config$headline_rates[[code]]
+        country_rate <- headline_rates[[code]]
         if (!is.null(country_rate)) {
           return(country_rate)
         } else {
@@ -232,9 +317,16 @@ load_ieepa_rates_yaml <- function(yaml_file,
     # Build product×country rate lookup by iterating through each exemption
     product_country_overrides <- config$product_country_rates %>%
       map_df(function(exemption) {
-        # Get the country code and rate for this exemption
-        country_code <- as.character(exemption$country)
+        # Get the country identifier and rate for this exemption
+        country_id <- as.character(exemption$country)
         exemption_rate <- exemption$rate
+
+        # Resolve mnemonic to country codes (e.g., 'canada' → '1220', 'eu' → 27 codes)
+        if (country_id %in% names(mnemonic_map)) {
+          country_codes <- mnemonic_map[[country_id]]
+        } else {
+          country_codes <- country_id
+        }
 
         # Expand HTS codes to matching HS10 codes
         matching_hs10 <- exemption$hts %>%
@@ -244,13 +336,13 @@ load_ieepa_rates_yaml <- function(yaml_file,
           unlist() %>%
           unique()
 
-        # Create a tibble for this exemption
+        # Create a tibble for this exemption (expanding across all country codes)
         if (length(matching_hs10) > 0) {
-          tibble(
+          expand_grid(
             hs10 = matching_hs10,
-            cty_code = country_code,
-            product_country_rate = exemption_rate
-          )
+            cty_code = country_codes
+          ) %>%
+            mutate(product_country_rate = exemption_rate)
         } else {
           tibble(
             hs10 = character(),
