@@ -480,7 +480,7 @@ calc_weighted_etr <- function(rates_232,
       #    - Others: Only applies to base not covered by 232 or reciprocal
 
       final_rate = case_when(
-        # China: Fentanyl stacks on top of normal 232-repicorical logic
+        # China: Fentanyl stacks on top of normal 232-reciprocal logic
         cty_code == '5700' ~ if_else(rate_232_max > 0, rate_232_max, ieepa_reciprocal_rate) + ieepa_fentanyl_rate,
 
         # Everyone else: 232 takes precedence, then reciprocal + fentanyl
@@ -585,7 +585,7 @@ write_shock_commands <- function(etr_data, output_file = 'shocks.txt', scenario)
       partner_fmt = partner_map[partner],
       etr_pct = round(etr * 100, 1)
     ) %>%
-    filter(etr_pct > 0, !is.na(gtap_code)) %>%
+    filter(etr_pct != 0, !is.na(gtap_code)) %>%
     arrange(match(partner_fmt, partner_order), gtap_code) %>%
     mutate(
       command = sprintf('Shock tms("%s","%s","USA") = %.1f;', gtap_code, partner_fmt, etr_pct)
