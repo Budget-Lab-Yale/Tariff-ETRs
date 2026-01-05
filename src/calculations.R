@@ -17,6 +17,20 @@
 #
 # =============================================================================
 
+# -----------------------------------------------------------------------------
+# Constants
+# -----------------------------------------------------------------------------
+
+# Census country codes
+CTY_CANADA <- '1220'
+CTY_MEXICO <- '2010'
+CTY_CHINA  <- '5700'
+USMCA_COUNTRIES <- c(CTY_CANADA, CTY_MEXICO)
+
+# Partner ordering for outputs (different orderings for different outputs)
+PARTNER_ORDER_CSV <- c('china', 'canada', 'mexico', 'uk', 'japan', 'eu', 'row', 'ftrow')
+PARTNER_ORDER_SHOCKS <- c('China', 'ROW', 'FTROW', 'Canada', 'Mexico', 'Japan', 'EU', 'UK')
+
 
 #' Build output file path, creating directory if needed
 #'
@@ -363,8 +377,8 @@ calc_weighted_etr <- function(rates_232,
     pivot_longer(cols = -gtap_code, names_to = 'partner', values_to = 'usmca_share') %>%
     mutate(
       cty_code = case_when(
-        partner == 'canada' ~ '1220',
-        partner == 'mexico' ~ '2010',
+        partner == 'canada' ~ CTY_CANADA,
+        partner == 'mexico' ~ CTY_MEXICO,
         TRUE ~ NA
       )
     ) %>%
@@ -403,7 +417,7 @@ calc_weighted_etr <- function(rates_232,
           mutate(
             adjusted_usmca_share = usmca_share * us_auto_content_share,
             !!rate_col := if_else(
-              cty_code %in% c('1220', '2010'),
+              cty_code %in% USMCA_COUNTRIES,
               !!sym(rate_col) * (1 - adjusted_usmca_share),
               !!sym(rate_col)
             )
@@ -415,7 +429,7 @@ calc_weighted_etr <- function(rates_232,
         rate_matrix <- rate_matrix %>%
           mutate(
             !!rate_col := if_else(
-              cty_code %in% c('1220', '2010'),
+              cty_code %in% USMCA_COUNTRIES,
               !!sym(rate_col) * (1 - usmca_share),
               !!sym(rate_col)
             )
@@ -429,12 +443,12 @@ calc_weighted_etr <- function(rates_232,
     rate_matrix <- rate_matrix %>%
       mutate(
         ieepa_reciprocal_rate = if_else(
-          cty_code %in% c('1220', '2010'),
+          cty_code %in% USMCA_COUNTRIES,
           ieepa_reciprocal_rate * (1 - usmca_share),
           ieepa_reciprocal_rate
         ),
         ieepa_fentanyl_rate = if_else(
-          cty_code %in% c('1220', '2010'),
+          cty_code %in% USMCA_COUNTRIES,
           ieepa_fentanyl_rate * (1 - usmca_share),
           ieepa_fentanyl_rate
         )
@@ -476,12 +490,12 @@ calc_weighted_etr <- function(rates_232,
       # Stacking rules:
       # 1. IEEPA Reciprocal: Mutually exclusive with 232 (applies only to uncovered base)
       # 2. IEEPA Fentanyl:
-      #    - China (5700): STACKS on top of everything (232 + reciprocal + fentanyl)
+      #    - China: STACKS on top of everything (232 + reciprocal + fentanyl)
       #    - Others: Only applies to base not covered by 232 or reciprocal
 
       final_rate = case_when(
         # China: Fentanyl stacks on top of normal 232-reciprocal logic
-        cty_code == '5700' ~ if_else(rate_232_max > 0, rate_232_max, ieepa_reciprocal_rate) + ieepa_fentanyl_rate,
+        cty_code == CTY_CHINA ~ if_else(rate_232_max > 0, rate_232_max, ieepa_reciprocal_rate) + ieepa_fentanyl_rate,
 
         # Everyone else: 232 takes precedence, then reciprocal + fentanyl
         # If 232 applies, use 232
@@ -576,9 +590,6 @@ write_shock_commands <- function(etr_data, output_file = 'shocks.txt', scenario)
     'uk'     = 'UK'
   )
 
-  # Define partner order for output
-  partner_order <- c('China', 'ROW', 'FTROW', 'Canada', 'Mexico', 'Japan', 'EU', 'UK')
-
   # Prepare data
   shock_commands <- etr_data %>%
     mutate(
@@ -586,7 +597,7 @@ write_shock_commands <- function(etr_data, output_file = 'shocks.txt', scenario)
       etr_pct = round(etr * 100, 1)
     ) %>%
     filter(etr_pct != 0, !is.na(gtap_code)) %>%
-    arrange(match(partner_fmt, partner_order), gtap_code) %>%
+    arrange(match(partner_fmt, PARTNER_ORDER_SHOCKS), gtap_code) %>%
     mutate(
       command = sprintf('Shock tms("%s","%s","USA") = %.1f;', gtap_code, partner_fmt, etr_pct)
     )
@@ -594,7 +605,7 @@ write_shock_commands <- function(etr_data, output_file = 'shocks.txt', scenario)
   # Write to file with blank lines between partners
   con <- file(output_path, 'w')
 
-  for (p in partner_order) {
+  for (p in PARTNER_ORDER_SHOCKS) {
     partner_commands <- shock_commands %>% filter(partner_fmt == p)
 
     if (nrow(partner_commands) > 0) {
@@ -634,14 +645,11 @@ write_sector_country_etrs <- function(etr_data,
     'eeq', 'ome', 'mvh', 'otn', 'omf', 'ely', 'gdt', 'wtr', 'cns'
   )
 
-  # Define country order
-  country_order <- c('china', 'canada', 'mexico', 'uk', 'japan', 'eu', 'row', 'ftrow')
-
   # Pivot ETRs to wide format and convert to percentage points
   etrs_wide <- etr_data %>%
     select(partner, gtap_code, etr) %>%
     pivot_wider(names_from = partner, values_from = etr, values_fill = 0) %>%
-    select(gtap_code, any_of(country_order)) %>%
+    select(gtap_code, any_of(PARTNER_ORDER_CSV)) %>%
     mutate(across(-gtap_code, ~ .x * 100))
 
   # Apply sector ordering

@@ -136,12 +136,6 @@ load_232_rates <- function(yaml_file,
   # Read country universe from Census codes
   all_country_codes <- load_census_codes(census_codes_file)$cty_code
 
-  # Initialize with complete HS10 × country combinations
-  rate_matrix <- expand_grid(
-    hs10 = hs10_codes,
-    cty_code = all_country_codes
-  )
-
   # Extract USMCA exempt flags
   usmca_exempt_flags <- sapply(names(params_232), function(t) params_232[[t]]$usmca_exempt)
 
