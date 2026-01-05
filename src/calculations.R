@@ -36,11 +36,12 @@ PARTNER_ORDER_SHOCKS <- c('China', 'ROW', 'FTROW', 'Canada', 'Mexico', 'Japan', 
 #'
 #' @param output_file Base filename
 #' @param scenario Scenario name (optional)
+#' @param output_base Base output directory (default: 'output')
 #'
 #' @return Full path to output file
-get_output_path <- function(output_file, scenario = NULL) {
+get_output_path <- function(output_file, scenario = NULL, output_base = 'output') {
   if (is.null(scenario)) return(output_file)
-  output_dir <- sprintf('output/%s', scenario)
+  output_dir <- file.path(output_base, scenario)
   dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
   file.path(output_dir, output_file)
 }
@@ -129,12 +130,15 @@ format_coverage_table <- function(coverage_by_partner, coverage_total) {
 
 #' Run complete ETR analysis for a given scenario
 #'
-#' @param scenario Scenario name (corresponds to config/{scenario}/ directory)
+#' @param scenario Scenario name (corresponds to {config_dir}/{scenario}/ directory)
+#' @param config_dir Base directory for scenario configs (default: 'config')
+#' @param output_dir Base directory for outputs (default: 'output')
 #' @param import_data_path Path to Census Bureau import data files
 #' @param use_cache Use cached HS10 data if available (default: TRUE)
 #'
 #' @return Returns ETR data invisibly
-do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads', use_cache = TRUE) {
+do_scenario <- function(scenario, config_dir = 'config', output_dir = 'output',
+                        import_data_path = 'C:/Users/jar335/Downloads', use_cache = TRUE) {
 
   message(sprintf('\n=========================================================='))
   message(sprintf('Running scenario: %s', scenario))
@@ -147,22 +151,22 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
   message('Loading scenario parameters...')
 
   # Section 232 tariffs (returns list with rate_matrix and usmca_exempt)
-  params_232 <- load_232_rates(sprintf('config/%s/232.yaml', scenario))
+  params_232 <- load_232_rates(file.path(config_dir, scenario, '232.yaml'))
 
   # IEEPA Reciprocal rates (returns tibble with hs10, cty_code, ieepa_reciprocal_rate)
   rates_ieepa_reciprocal <- load_ieepa_rates_yaml(
-    sprintf('config/%s/ieepa_reciprocal.yaml', scenario),
+    file.path(config_dir, scenario, 'ieepa_reciprocal.yaml'),
     rate_col_name = 'ieepa_reciprocal_rate'
   )
 
   # IEEPA Fentanyl rates (returns tibble with hs10, cty_code, ieepa_fentanyl_rate)
   rates_ieepa_fentanyl <- load_ieepa_rates_yaml(
-    sprintf('config/%s/ieepa_fentanyl.yaml', scenario),
+    file.path(config_dir, scenario, 'ieepa_fentanyl.yaml'),
     rate_col_name = 'ieepa_fentanyl_rate'
   )
 
   # Other scenario parameters
-  other_params <- read_yaml(sprintf('config/%s/other_params.yaml', scenario))
+  other_params <- read_yaml(file.path(config_dir, scenario, 'other_params.yaml'))
 
   # USMCA share of trade by sector
   usmca_shares <- read_csv('./resources/usmca_shares.csv', show_col_types = FALSE)
@@ -278,28 +282,32 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
   write_shock_commands(
     etr_data    = partner_etrs,
     output_file = 'shocks.txt',
-    scenario    = scenario
+    scenario    = scenario,
+    output_base = output_dir
   )
 
   # Write sector x country ETR CSV
   write_sector_country_etrs(
-    etr_data     = partner_etrs,
-    output_file  = 'etrs_by_sector_country.csv',
-    scenario     = scenario
+    etr_data    = partner_etrs,
+    output_file = 'etrs_by_sector_country.csv',
+    scenario    = scenario,
+    output_base = output_dir
   )
 
   # Write country-level ETR CSV (census country codes with overall ETRs)
   write_country_level_etrs(
     hs10_country_etrs = hs10_country_etrs,
     output_file       = 'etrs_by_census_country.csv',
-    scenario          = scenario
+    scenario          = scenario,
+    output_base       = output_dir
   )
 
   # Write country × HTS2 ETR CSV (census countries × 2-digit HTS chapters)
   write_country_hts2_etrs(
     hs10_country_etrs = hs10_country_etrs,
     output_file       = 'etrs_by_census_country_hts2.csv',
-    scenario          = scenario
+    scenario          = scenario,
+    output_base       = output_dir
   )
 
   # Calculate and print overall ETRs with both GTAP and 2024 Census weights
@@ -307,7 +315,8 @@ do_scenario <- function(scenario, import_data_path = 'C:/Users/jar335/Downloads'
     etr_data          = partner_etrs,
     hs10_country_etrs = hs10_country_etrs,
     country_mapping   = country_mapping,
-    scenario          = scenario
+    scenario          = scenario,
+    output_base       = output_dir
   )
 
   message(sprintf('\nScenario %s complete!\n', scenario))
@@ -572,11 +581,13 @@ aggregate_countries_to_partners <- function(hs10_country_etrs, country_mapping) 
 #' @param etr_data Data frame with columns: partner, gtap_code, etr
 #' @param output_file Path to output file
 #' @param scenario Scenario name for output directory
+#' @param output_base Base output directory (default: 'output')
 #'
 #' @return Writes file and returns invisibly
-write_shock_commands <- function(etr_data, output_file = 'shocks.txt', scenario) {
+write_shock_commands <- function(etr_data, output_file = 'shocks.txt', scenario,
+                                 output_base = 'output') {
 
-  output_path <- get_output_path(output_file, scenario)
+  output_path <- get_output_path(output_file, scenario, output_base)
 
   # Map partner names to proper format
   partner_map <- c(
@@ -628,13 +639,15 @@ write_shock_commands <- function(etr_data, output_file = 'shocks.txt', scenario)
 #' @param etr_data Data frame with columns: partner, gtap_code, etr
 #' @param output_file Path to output file (default: 'etrs_by_sector_country.csv')
 #' @param scenario Scenario name for output directory
+#' @param output_base Base output directory (default: 'output')
 #'
 #' @return Writes CSV file (in pp units) and returns invisibly
 write_sector_country_etrs <- function(etr_data,
                                        output_file = 'etrs_by_sector_country.csv',
-                                       scenario = NULL) {
+                                       scenario = NULL,
+                                       output_base = 'output') {
 
-  output_path <- get_output_path(output_file, scenario)
+  output_path <- get_output_path(output_file, scenario, output_base)
 
   # Define sector order
   sector_order <- c(
@@ -676,13 +689,15 @@ write_sector_country_etrs <- function(etr_data,
 #' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr
 #' @param output_file Path to output file (default: 'etrs_by_census_country.csv')
 #' @param scenario Scenario name for output directory
+#' @param output_base Base output directory (default: 'output')
 #'
 #' @return Writes CSV file (in pp units) and returns invisibly
 write_country_level_etrs <- function(hs10_country_etrs,
                                       output_file = 'etrs_by_census_country.csv',
-                                      scenario = NULL) {
+                                      scenario = NULL,
+                                      output_base = 'output') {
 
-  output_path <- get_output_path(output_file, scenario)
+  output_path <- get_output_path(output_file, scenario, output_base)
   census_codes <- load_census_codes()
 
   # Calculate overall ETR by country using census import weights
@@ -719,13 +734,15 @@ write_country_level_etrs <- function(hs10_country_etrs,
 #' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr
 #' @param output_file Path to output file (default: 'etrs_by_census_country_hts2.csv')
 #' @param scenario Scenario name for output directory
+#' @param output_base Base output directory (default: 'output')
 #'
 #' @return Writes CSV file (in pp units) and returns invisibly
 write_country_hts2_etrs <- function(hs10_country_etrs,
                                      output_file = 'etrs_by_census_country_hts2.csv',
-                                     scenario = NULL) {
+                                     scenario = NULL,
+                                     output_base = 'output') {
 
-  output_path <- get_output_path(output_file, scenario)
+  output_path <- get_output_path(output_file, scenario, output_base)
   census_codes <- load_census_codes()
 
   # Extract 2-digit HTS code and calculate import-weighted ETR by country × hts2
@@ -773,13 +790,15 @@ write_country_hts2_etrs <- function(hs10_country_etrs,
 #' @param weights_file Path to GTAP import weights CSV file
 #' @param output_file Path to output text file (default: 'overall_etrs.txt')
 #' @param scenario Scenario name for output directory
+#' @param output_base Base output directory (default: 'output')
 #'
 #' @return Prints overall ETR changes and returns them invisibly
 calc_overall_etrs <- function(etr_data, hs10_country_etrs = NULL,
                               country_mapping = NULL,
                               weights_file = 'resources/gtap_import_weights.csv',
                               output_file = 'overall_etrs.txt',
-                              scenario = NULL) {
+                              scenario = NULL,
+                              output_base = 'output') {
 
   # ===========================
   # Calculate GTAP-weighted ETRs
@@ -920,7 +939,7 @@ calc_overall_etrs <- function(etr_data, hs10_country_etrs = NULL,
   }
 
   # Write to file
-  output_path <- get_output_path(output_file, scenario)
+  output_path <- get_output_path(output_file, scenario, output_base)
   writeLines(c(etr_lines, '', coverage_lines), output_path)
 
   message(sprintf('Wrote overall ETRs to %s', output_path))
