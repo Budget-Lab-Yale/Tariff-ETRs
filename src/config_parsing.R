@@ -52,6 +52,7 @@ get_mnemonic_mapping <- function(country_partner_file = 'resources/country_partn
 resolve_country_mnemonics <- function(rates_config, mnemonic_map) {
 
   resolved <- list()
+  valid_mnemonics <- names(mnemonic_map)
 
   for (key in names(rates_config)) {
     rate <- rates_config[[key]]
@@ -59,15 +60,25 @@ resolve_country_mnemonics <- function(rates_config, mnemonic_map) {
     if (key == 'default') {
       # Keep default as-is
       resolved[['default']] <- rate
-    } else if (key %in% names(mnemonic_map)) {
+    } else if (key %in% valid_mnemonics) {
       # This is a mnemonic - expand to all constituent country codes
       country_codes <- mnemonic_map[[key]]
       for (code in country_codes) {
         resolved[[code]] <- rate
       }
-    } else {
-      # Assume it's already a country code
+    } else if (grepl('^[0-9]+$', key)) {
+      # Valid numeric country code
       resolved[[key]] <- rate
+    } else {
+      # Invalid key - not 'default', not a mnemonic, not numeric
+      stop(
+        'Invalid country identifier in config: "', key, '"\n',
+        '  Must be one of:\n',
+        '    - "default" for the default rate\n',
+        '    - A valid mnemonic (lowercase): ', paste(valid_mnemonics, collapse = ', '), '\n',
+        '    - A numeric Census country code (e.g., "5700" for China)\n',
+        '  Note: Mnemonics are case-sensitive and must be lowercase.'
+      )
     }
   }
 
@@ -124,12 +135,6 @@ load_232_rates <- function(yaml_file,
 
   # Read country universe from Census codes
   all_country_codes <- load_census_codes(census_codes_file)$cty_code
-
-  # Initialize with complete HS10 × country combinations
-  rate_matrix <- expand_grid(
-    hs10 = hs10_codes,
-    cty_code = all_country_codes
-  )
 
   # Extract USMCA exempt flags
   usmca_exempt_flags <- sapply(names(params_232), function(t) params_232[[t]]$usmca_exempt)
@@ -324,8 +329,17 @@ load_ieepa_rates_yaml <- function(yaml_file,
         # Resolve mnemonic to country codes (e.g., 'canada' → '1220', 'eu' → 27 codes)
         if (country_id %in% names(mnemonic_map)) {
           country_codes <- mnemonic_map[[country_id]]
-        } else {
+        } else if (grepl('^[0-9]+$', country_id)) {
           country_codes <- country_id
+        } else {
+          stop(
+            'Invalid country identifier in product_country_rates: "', country_id, '"',
+            ' (in exemption "', exemption$name, '")\n',
+            '  Must be one of:\n',
+            '    - A valid mnemonic (lowercase): ', paste(names(mnemonic_map), collapse = ', '), '\n',
+            '    - A numeric Census country code (e.g., "5700" for China)\n',
+            '  Note: Mnemonics are case-sensitive and must be lowercase.'
+          )
         }
 
         # Expand HTS codes to matching HS10 codes

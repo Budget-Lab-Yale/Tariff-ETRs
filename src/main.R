@@ -35,12 +35,13 @@ source('src/calculations.R')
 import_data_path <- 'C:/Users/jar335/Downloads'
 
 # Use cached data if available (set to FALSE to force re-processing)
-use_cache <- T
+use_cache <- TRUE
 
 # Scenarios to run (add/remove as needed)
 scenarios <- c(
-  '10-30', 
-  '11-17'
+  '10-30',
+  '11-17', 
+  '12-16'
 )
 
 
