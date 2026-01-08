@@ -1,0 +1,5 @@
+# 12-4-ex-ieepa: IEEPA reciprocal rates zeroed out
+headline_rates:
+  default: 0.0
+product_rates: []
+product_country_rates: []
