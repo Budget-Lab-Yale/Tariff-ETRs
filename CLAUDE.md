@@ -20,11 +20,13 @@ This is an R-based data analysis project for processing U.S. import trade data. 
   - `con_val_mo` (positions 74-88): Consumption imports value
   - `gen_val_mo` (positions 179-193): General imports value
 
-**IEEPA Tariff Types:**
-- **Reciprocal**: Mutually exclusive with 232 (applies only to uncovered base)
-- **Fentanyl**:
+**Tariff Types:**
+- **Section 232**: Product-specific tariffs (steel, aluminum, autos, etc.)
+- **IEEPA Reciprocal**: Mutually exclusive with 232 (applies only to uncovered base)
+- **IEEPA Fentanyl**:
   - China: STACKS on top of 232 + reciprocal
   - Others: Only applies to base not covered by 232 or reciprocal
+- **Section 122** (optional): STACKS on top of everything (all countries)
 
 **Country Code Mappings:**
 The project uses Census Bureau country codes (not ISO codes). Country-to-partner mapping used for final aggregation:
@@ -117,7 +119,18 @@ Each scenario in `config/{scenario}/` requires:
 
 You can mix mnemonics and Census codes in the same config file.
 
-4. **other_params.yaml** - USMCA parameters, auto rebate rates, etc.
+4. **s122.yaml** (optional) - Section 122 tariffs (STACKS on everything):
+   ```yaml
+   headline_rates:
+     default: 0.05           # Default rate for all countries
+     china: 0.10             # China-specific override
+     # ... other countries/mnemonics
+
+   product_rates:            # Optional: HTS-specific overrides
+     '8703': 0.08            # Autos get different rate
+   ```
+
+5. **other_params.yaml** - USMCA parameters, auto rebate rates, etc.
 
 ## Key Implementation Notes
 
@@ -135,10 +148,11 @@ The codebase uses a clean separation between config parsing and calculations:
 
 *Calculations → Stacking Rules:*
 - `calc_weighted_etr()`: Joins config tibbles with import data, applies USMCA/rebates, then applies stacking rules
-- Stacking rules are centralized in calculations.R:348-382
+- Stacking rules are centralized in calculations.R
 - Current rules:
-  - **China (5700)**: `final_rate = max(232, reciprocal) + fentanyl` (fentanyl stacks on top of whichever applies)
-  - **Others**: Hierarchical precedence - 232 > (reciprocal + fentanyl) (232 is mutually exclusive with IEEPA)
+  - **China (5700)**: `final_rate = max(232, reciprocal) + fentanyl + s122`
+  - **Others**: `final_rate = (232 > 0 ? 232 : reciprocal + fentanyl) + s122`
+  - Section 122 always stacks on top of everything
 - Easy to modify for new tariff types or stacking logic
 
 **Core Functions:**
