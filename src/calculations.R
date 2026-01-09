@@ -165,6 +165,14 @@ do_scenario <- function(scenario, config_dir = 'config', output_dir = 'output',
     rate_col_name = 'ieepa_fentanyl_rate'
   )
 
+  # Section 122 rates (optional - returns tibble with hs10, cty_code, s122_rate)
+  s122_path <- file.path(config_dir, scenario, 's122.yaml')
+  if (file.exists(s122_path)) {
+    rates_s122 <- load_ieepa_rates_yaml(s122_path, rate_col_name = 's122_rate')
+  } else {
+    rates_s122 <- NULL
+  }
+
   # Other scenario parameters
   other_params <- read_yaml(file.path(config_dir, scenario, 'other_params.yaml'))
 
@@ -257,6 +265,7 @@ do_scenario <- function(scenario, config_dir = 'config', output_dir = 'output',
     usmca_exempt_232       = params_232$usmca_exempt,
     rates_ieepa_reciprocal = rates_ieepa_reciprocal,
     rates_ieepa_fentanyl   = rates_ieepa_fentanyl,
+    rates_s122             = rates_s122,
     import_data            = hs10_by_country,
     usmca_data             = usmca_shares,
     us_auto_content_share  = other_params$us_auto_content_share,
@@ -335,6 +344,7 @@ do_scenario <- function(scenario, config_dir = 'config', output_dir = 'output',
 #' @param usmca_exempt_232 Named vector of USMCA exempt flags by tariff name
 #' @param rates_ieepa_reciprocal Tibble with columns: hs10, cty_code, ieepa_reciprocal_rate
 #' @param rates_ieepa_fentanyl Tibble with columns: hs10, cty_code, ieepa_fentanyl_rate
+#' @param rates_s122 Tibble with columns: hs10, cty_code, s122_rate (or NULL if no s122.yaml)
 #' @param import_data Data frame with hs10, cty_code, gtap_code, imports
 #' @param usmca_data Data frame with USMCA shares by partner and GTAP sector
 #' @param us_auto_content_share Share of US content in auto assembly
@@ -347,6 +357,7 @@ calc_weighted_etr <- function(rates_232,
                               usmca_exempt_232,
                               rates_ieepa_reciprocal,
                               rates_ieepa_fentanyl,
+                              rates_s122 = NULL,
                               import_data,
                               usmca_data,
                               us_auto_content_share,
@@ -365,6 +376,15 @@ calc_weighted_etr <- function(rates_232,
     left_join(rates_ieepa_reciprocal, by = c('hs10', 'cty_code')) %>%
     left_join(rates_ieepa_fentanyl, by = c('hs10', 'cty_code'))
 
+  # Join Section 122 rates if provided
+  if (!is.null(rates_s122)) {
+    rate_matrix <- rate_matrix %>%
+      left_join(rates_s122, by = c('hs10', 'cty_code'))
+  } else {
+    rate_matrix <- rate_matrix %>%
+      mutate(s122_rate = 0)
+  }
+
   # Get all 232 rate column names
   rate_232_cols <- names(rate_matrix)[str_detect(names(rate_matrix), '^s232_.*_rate$')]
 
@@ -372,7 +392,7 @@ calc_weighted_etr <- function(rates_232,
   rate_matrix <- rate_matrix %>%
     mutate(
       across(
-        .cols = all_of(c(rate_232_cols, 'ieepa_reciprocal_rate', 'ieepa_fentanyl_rate')), 
+        .cols = all_of(c(rate_232_cols, 'ieepa_reciprocal_rate', 'ieepa_fentanyl_rate', 's122_rate')),
         .fns  = ~ if_else(is.na(.), 0, .)
       )
     )
@@ -501,17 +521,18 @@ calc_weighted_etr <- function(rates_232,
       # 2. IEEPA Fentanyl:
       #    - China: STACKS on top of everything (232 + reciprocal + fentanyl)
       #    - Others: Only applies to base not covered by 232 or reciprocal
+      # 3. Section 122: STACKS on top of everything (all countries)
 
       final_rate = case_when(
-        # China: Fentanyl stacks on top of normal 232-reciprocal logic
-        cty_code == CTY_CHINA ~ if_else(rate_232_max > 0, rate_232_max, ieepa_reciprocal_rate) + ieepa_fentanyl_rate,
+        # China: Fentanyl stacks on top of normal 232-reciprocal logic, then s122 stacks on top
+        cty_code == CTY_CHINA ~ if_else(rate_232_max > 0, rate_232_max, ieepa_reciprocal_rate) + ieepa_fentanyl_rate + s122_rate,
 
-        # Everyone else: 232 takes precedence, then reciprocal + fentanyl
-        # If 232 applies, use 232
-        rate_232_max > 0 ~ rate_232_max,
+        # Everyone else: 232 takes precedence, then reciprocal + fentanyl, then s122 stacks on top
+        # If 232 applies, use 232 + s122
+        rate_232_max > 0 ~ rate_232_max + s122_rate,
 
-        # Otherwise use all IEEPA
-        TRUE ~ ieepa_reciprocal_rate + ieepa_fentanyl_rate
+        # Otherwise use all IEEPA + s122
+        TRUE ~ ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate
       )
     )
 
