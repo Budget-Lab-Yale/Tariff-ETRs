@@ -351,6 +351,7 @@ do_scenario <- function(scenario, config_dir = 'config', output_dir = 'output',
 #' @param auto_rebate Auto rebate rate
 #' @param us_assembly_share Share of US assembly in autos
 #' @param ieepa_usmca_exempt Apply USMCA exemption to IEEPA tariffs (1 = yes, 0 = no)
+#' @param apply_adjustments Apply USMCA exemptions and auto rebates (TRUE/FALSE)
 #'
 #' @return Data frame with columns: hs10, cty_code, gtap_code, imports, etr, base_232, base_ieepa, base_neither
 calc_weighted_etr <- function(rates_232,
@@ -359,11 +360,12 @@ calc_weighted_etr <- function(rates_232,
                               rates_ieepa_fentanyl,
                               rates_s122 = NULL,
                               import_data,
-                              usmca_data,
-                              us_auto_content_share,
-                              auto_rebate,
-                              us_assembly_share,
-                              ieepa_usmca_exempt) {
+                              usmca_data = NULL,
+                              us_auto_content_share = NULL,
+                              auto_rebate = NULL,
+                              us_assembly_share = NULL,
+                              ieepa_usmca_exempt = NULL,
+                              apply_adjustments = TRUE) {
 
   # =============================================================================
   # Build complete rate matrix by joining config tables with import data
@@ -388,6 +390,9 @@ calc_weighted_etr <- function(rates_232,
   # Get all 232 rate column names
   rate_232_cols <- names(rate_matrix)[str_detect(names(rate_matrix), '^s232_.*_rate$')]
 
+  # Get tariff names from rate column names (used for stacking regardless of adjustments)
+  tariff_names <- str_replace(rate_232_cols, '^s232_(.*)_rate$', '\\1')
+
   # Replace NAs (indicates no tariff) with 0 for all rate columns
   rate_matrix <- rate_matrix %>%
     mutate(
@@ -401,92 +406,109 @@ calc_weighted_etr <- function(rates_232,
   # Apply USMCA exemptions and auto rebates
   # =============================================================================
 
-  # Reshape USMCA shares to long format for joining
-  usmca_long <- usmca_data %>%
-    pivot_longer(cols = -gtap_code, names_to = 'partner', values_to = 'usmca_share') %>%
-    mutate(
-      cty_code = case_when(
-        partner == 'canada' ~ CTY_CANADA,
-        partner == 'mexico' ~ CTY_MEXICO,
-        TRUE ~ NA
-      )
-    ) %>%
-    filter(!is.na(cty_code)) %>%
-    select(gtap_code, cty_code, usmca_share)
+  if (isTRUE(apply_adjustments)) {
+    if (is.null(usmca_data)) stop('usmca_data is required when apply_adjustments = TRUE')
+    if (is.null(us_auto_content_share)) stop('us_auto_content_share is required when apply_adjustments = TRUE')
+    if (is.null(auto_rebate)) stop('auto_rebate is required when apply_adjustments = TRUE')
+    if (is.null(us_assembly_share)) stop('us_assembly_share is required when apply_adjustments = TRUE')
+    if (is.null(ieepa_usmca_exempt)) stop('ieepa_usmca_exempt is required when apply_adjustments = TRUE')
+
+    # Reshape USMCA shares to long format for joining
+    usmca_long <- usmca_data %>%
+      pivot_longer(cols = -gtap_code, names_to = 'partner', values_to = 'usmca_share') %>%
+      mutate(
+        cty_code = case_when(
+          partner == 'canada' ~ CTY_CANADA,
+          partner == 'mexico' ~ CTY_MEXICO,
+          TRUE ~ NA
+        )
+      ) %>%
+      filter(!is.na(cty_code)) %>%
+      select(gtap_code, cty_code, usmca_share)
 
   # Join USMCA shares
   rate_matrix <- rate_matrix %>%
     left_join(usmca_long, by = c('cty_code', 'gtap_code')) %>%
-    mutate(usmca_share = replace_na(usmca_share, 0))
+    mutate(usmca_share = if_else(cty_code %in% USMCA_COUNTRIES, usmca_share, 0))
 
-  # Auto tariff list
-  auto_tariffs <- c('automobiles_passenger_and_light_trucks', 'automobile_parts', 'vehicles_completed_mhd')
+  if (any(is.na(rate_matrix$usmca_share) & rate_matrix$cty_code %in% USMCA_COUNTRIES)) {
+    bad <- rate_matrix %>%
+      filter(cty_code %in% USMCA_COUNTRIES, is.na(usmca_share)) %>%
+      distinct(gtap_code) %>%
+      slice_head(n = 10)
+    stop(sprintf(
+      'Missing USMCA share for %d (cty_code×gtap_code) combination(s); example gtap_code: %s',
+      nrow(rate_matrix %>% filter(cty_code %in% USMCA_COUNTRIES, is.na(usmca_share)) %>% distinct(cty_code, gtap_code)),
+      bad$gtap_code[1]
+    ))
+  }
 
-  # Get tariff names from rate column names
-  tariff_names <- str_replace(rate_232_cols, '^s232_(.*)_rate$', '\\1')
+    # Auto tariff list
+    auto_tariffs <- c('automobiles_passenger_and_light_trucks', 'automobile_parts', 'vehicles_completed_mhd')
 
-  # Apply auto rebate and USMCA exemptions to each 232 tariff
-  for (tariff_name in tariff_names) {
-    rate_col <- paste0('s232_', tariff_name, '_rate')
+    # Apply auto rebate and USMCA exemptions to each 232 tariff
+    for (tariff_name in tariff_names) {
+      rate_col <- paste0('s232_', tariff_name, '_rate')
 
-    # Apply auto rebate if this is an auto tariff
-    if (tariff_name %in% auto_tariffs) {
-      rate_matrix <- rate_matrix %>%
-        mutate(
-          !!rate_col := !!sym(rate_col) - (auto_rebate * us_assembly_share)
-        )
-    }
-
-    # Apply USMCA exemption if enabled for this tariff
-    if (usmca_exempt_232[[tariff_name]] == 1) {
-      
-      # Auto tariffs use adjusted USMCA share
+      # Apply auto rebate if this is an auto tariff
       if (tariff_name %in% auto_tariffs) {
         rate_matrix <- rate_matrix %>%
           mutate(
-            adjusted_usmca_share = usmca_share * us_auto_content_share,
-            !!rate_col := if_else(
-              cty_code %in% USMCA_COUNTRIES,
-              !!sym(rate_col) * (1 - adjusted_usmca_share),
-              !!sym(rate_col)
-            )
-          ) %>%
-          select(-adjusted_usmca_share)
-        
-      # Non-auto tariffs use standard USMCA share
-      } else {
-        rate_matrix <- rate_matrix %>%
-          mutate(
-            !!rate_col := if_else(
-              cty_code %in% USMCA_COUNTRIES,
-              !!sym(rate_col) * (1 - usmca_share),
-              !!sym(rate_col)
-            )
+            !!rate_col := !!sym(rate_col) - (auto_rebate * us_assembly_share)
           )
       }
+
+      # Apply USMCA exemption if enabled for this tariff
+      if (usmca_exempt_232[[tariff_name]] == 1) {
+
+        # Auto tariffs use adjusted USMCA share
+        if (tariff_name %in% auto_tariffs) {
+          rate_matrix <- rate_matrix %>%
+            mutate(
+              adjusted_usmca_share = usmca_share * us_auto_content_share,
+              !!rate_col := if_else(
+                cty_code %in% USMCA_COUNTRIES,
+                !!sym(rate_col) * (1 - adjusted_usmca_share),
+                !!sym(rate_col)
+              )
+            ) %>%
+            select(-adjusted_usmca_share)
+
+        # Non-auto tariffs use standard USMCA share
+        } else {
+          rate_matrix <- rate_matrix %>%
+            mutate(
+              !!rate_col := if_else(
+                cty_code %in% USMCA_COUNTRIES,
+                !!sym(rate_col) * (1 - usmca_share),
+                !!sym(rate_col)
+              )
+            )
+        }
+      }
     }
-  }
 
-  # Apply USMCA exemption to both IEEPA tariffs if enabled
-  if (ieepa_usmca_exempt == 1) {
-    rate_matrix <- rate_matrix %>%
-      mutate(
-        ieepa_reciprocal_rate = if_else(
-          cty_code %in% USMCA_COUNTRIES,
-          ieepa_reciprocal_rate * (1 - usmca_share),
-          ieepa_reciprocal_rate
-        ),
-        ieepa_fentanyl_rate = if_else(
-          cty_code %in% USMCA_COUNTRIES,
-          ieepa_fentanyl_rate * (1 - usmca_share),
-          ieepa_fentanyl_rate
+    # Apply USMCA exemption to both IEEPA tariffs if enabled
+    if (ieepa_usmca_exempt == 1) {
+      rate_matrix <- rate_matrix %>%
+        mutate(
+          ieepa_reciprocal_rate = if_else(
+            cty_code %in% USMCA_COUNTRIES,
+            ieepa_reciprocal_rate * (1 - usmca_share),
+            ieepa_reciprocal_rate
+          ),
+          ieepa_fentanyl_rate = if_else(
+            cty_code %in% USMCA_COUNTRIES,
+            ieepa_fentanyl_rate * (1 - usmca_share),
+            ieepa_fentanyl_rate
+          )
         )
-      )
-  }
+    }
 
-  # Clean up USMCA share column
-  rate_matrix <- rate_matrix %>%
-    select(-usmca_share)
+    # Clean up USMCA share column
+    rate_matrix <- rate_matrix %>%
+      select(-usmca_share)
+  }
 
   
   # =============================================================================
