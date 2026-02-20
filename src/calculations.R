@@ -271,7 +271,9 @@ do_scenario <- function(scenario, config_dir = 'config', output_dir = 'output',
     us_auto_content_share  = other_params$us_auto_content_share,
     auto_rebate            = other_params$auto_rebate_rate,
     us_assembly_share      = other_params$us_auto_assembly_share,
-    ieepa_usmca_exempt     = other_params$ieepa_usmca_exception
+    ieepa_usmca_exempt     = other_params$ieepa_usmca_exception,
+    s122_usmca_exempt      = other_params$s122_usmca_exception %||% 0,
+    s122_stacks_on_232     = other_params$s122_stacks_on_232 %||% 1
   )
 
   # Aggregate HS10×country ETRs to partner×GTAP level for GTAP output
@@ -351,6 +353,7 @@ do_scenario <- function(scenario, config_dir = 'config', output_dir = 'output',
 #' @param auto_rebate Auto rebate rate
 #' @param us_assembly_share Share of US assembly in autos
 #' @param ieepa_usmca_exempt Apply USMCA exemption to IEEPA tariffs (1 = yes, 0 = no)
+#' @param s122_stacks_on_232 Whether s122 stacks on top of 232 for non-China countries (1 = yes, 0 = no)
 #'
 #' @return Data frame with columns: hs10, cty_code, gtap_code, imports, etr, base_232, base_ieepa, base_neither
 calc_weighted_etr <- function(rates_232,
@@ -363,7 +366,9 @@ calc_weighted_etr <- function(rates_232,
                               us_auto_content_share,
                               auto_rebate,
                               us_assembly_share,
-                              ieepa_usmca_exempt) {
+                              ieepa_usmca_exempt,
+                              s122_usmca_exempt = 0,
+                              s122_stacks_on_232 = 1) {
 
   # =============================================================================
   # Build complete rate matrix by joining config tables with import data
@@ -467,7 +472,7 @@ calc_weighted_etr <- function(rates_232,
     }
   }
 
-  # Apply USMCA exemption to both IEEPA tariffs if enabled
+  # Apply USMCA exemption to IEEPA tariffs if enabled
   if (ieepa_usmca_exempt == 1) {
     rate_matrix <- rate_matrix %>%
       mutate(
@@ -480,6 +485,18 @@ calc_weighted_etr <- function(rates_232,
           cty_code %in% USMCA_COUNTRIES,
           ieepa_fentanyl_rate * (1 - usmca_share),
           ieepa_fentanyl_rate
+        )
+      )
+  }
+
+  # Apply USMCA exemption to Section 122 tariffs if enabled
+  if (s122_usmca_exempt == 1) {
+    rate_matrix <- rate_matrix %>%
+      mutate(
+        s122_rate = if_else(
+          cty_code %in% USMCA_COUNTRIES,
+          s122_rate * (1 - usmca_share),
+          s122_rate
         )
       )
   }
@@ -527,9 +544,9 @@ calc_weighted_etr <- function(rates_232,
         # China: Fentanyl stacks on top of normal 232-reciprocal logic, then s122 stacks on top
         cty_code == CTY_CHINA ~ if_else(rate_232_max > 0, rate_232_max, ieepa_reciprocal_rate) + ieepa_fentanyl_rate + s122_rate,
 
-        # Everyone else: 232 takes precedence, then reciprocal + fentanyl, then s122 stacks on top
-        # If 232 applies, use 232 + s122
-        rate_232_max > 0 ~ rate_232_max + s122_rate,
+        # Everyone else: 232 takes precedence, then reciprocal + fentanyl
+        # If 232 applies, s122 stacking depends on s122_stacks_on_232 flag
+        rate_232_max > 0 ~ rate_232_max + s122_rate * s122_stacks_on_232,
 
         # Otherwise use all IEEPA + s122
         TRUE ~ ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate
