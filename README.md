@@ -20,11 +20,19 @@ Tariff-ETRs/
 │   ├── data_processing.R   # Census data processing
 │   └── calculations.R      # ETR calculations and aggregation
 ├── config/
-│   └── {scenario}/         # Scenario-specific configuration
-│       ├── 232.yaml              # Section 232 tariff parameters
-│       ├── ieepa_reciprocal.yaml # IEEPA reciprocal tariffs
-│       ├── ieepa_fentanyl.yaml   # IEEPA fentanyl tariffs
-│       └── other_params.yaml     # USMCA and auto rebate parameters
+│   ├── {scenario}/         # Static scenario configuration
+│   │   ├── 232.yaml              # Section 232 tariff parameters
+│   │   ├── ieepa_reciprocal.yaml # IEEPA reciprocal tariffs
+│   │   ├── ieepa_fentanyl.yaml   # IEEPA fentanyl tariffs
+│   │   └── other_params.yaml     # USMCA and auto rebate parameters
+│   └── {scenario}/         # Time-varying scenario (dated subfolders)
+│       ├── 2025-02-04/           # Each date has a complete config set
+│       │   ├── 232.yaml
+│       │   ├── ieepa_reciprocal.yaml
+│       │   ├── ieepa_fentanyl.yaml
+│       │   └── other_params.yaml
+│       └── 2025-04-02/
+│           └── ...
 ├── resources/
 │   ├── hs10_gtap_crosswalk.csv       # HTS10 to GTAP sector mapping
 │   ├── country_partner_mapping.csv   # Census country code → partner group
@@ -34,12 +42,19 @@ Tariff-ETRs/
 ├── cache/
 │   └── hs10_by_country_gtap_2024_con.rds  # Cached import data
 ├── output/
-│   └── {scenario}/
-│       ├── shocks.txt                     # GTAP shock commands
-│       ├── etrs_by_sector_country.csv     # ETR matrix (sector × partner)
-│       ├── etrs_by_census_country.csv     # Overall ETRs by census country
-│       ├── etrs_by_census_country_hts2.csv # ETRs by country × HTS chapter
-│       └── overall_etrs.txt               # Summary statistics
+│   ├── {static-scenario}/
+│   │   ├── shocks.txt                     # GTAP shock commands
+│   │   ├── etrs_by_sector_country.csv     # ETR matrix (sector × partner)
+│   │   ├── etrs_by_census_country.csv     # Overall ETRs by census country
+│   │   ├── etrs_by_census_country_hts2.csv # ETRs by country × HTS chapter
+│   │   └── overall_etrs.txt               # Summary statistics
+│   └── {time-varying-scenario}/
+│       ├── 2025-02-04/shocks.txt          # Per-date shock commands
+│       ├── 2025-04-02/shocks.txt
+│       ├── etrs_by_sector_country.csv     # Stacked CSV (date column first)
+│       ├── etrs_by_census_country.csv     # Stacked CSV (date column first)
+│       ├── etrs_by_census_country_hts2.csv # Stacked CSV (date column first)
+│       └── overall_etrs.txt               # Combined with per-date sections
 └── README.md
 ```
 
@@ -101,6 +116,29 @@ HTS10 codes map to GTAP sectors via a crosswalk derived from [Angel Aguiar's 6-d
 2. Modify the config files in `config/my_scenario/`
 
 3. Add to `scenarios` in `main.R` and run
+
+### Time-Varying Scenarios
+
+To model tariff rates that change over time, create dated subfolders (YYYY-MM-DD) inside a scenario directory. Each subfolder must contain a complete set of config files:
+
+```bash
+config/tariff-timeline/
+  2025-02-04/
+    232.yaml
+    ieepa_reciprocal.yaml
+    ieepa_fentanyl.yaml
+    other_params.yaml
+  2025-04-02/
+    232.yaml
+    ieepa_reciprocal.yaml
+    ieepa_fentanyl.yaml
+    other_params.yaml
+```
+
+Detection is automatic: if a scenario directory contains YYYY-MM-DD subfolders, it runs as time-varying. The same 2024 import weights are reused across all dates. Outputs:
+- **Shock commands**: Per-date subfolders (`output/scenario/2025-02-04/shocks.txt`)
+- **CSV files**: Single stacked file with `date` as the first column
+- **overall_etrs.txt**: Combined file with per-date sections
 
 ## Configuration
 
