@@ -150,9 +150,9 @@ The codebase uses a clean separation between config parsing and calculations:
 - `calc_weighted_etr()`: Joins config tibbles with import data, applies USMCA/rebates, then applies stacking rules
 - Stacking rules are centralized in calculations.R
 - Current rules:
-  - **China (5700)**: `final_rate = max(232, reciprocal) + fentanyl + s122`
+  - **China (5700)**: `final_rate = max(232, reciprocal) + fentanyl + s122` (fentanyl always stacks)
   - **Others**: `final_rate = (232 > 0 ? 232 : reciprocal + fentanyl) + s122`
-  - Section 122 always stacks on top of everything
+  - Section 122 stacks on IEEPA always; stacking on 232 controlled by `s122_stacks_on_232` flag
 - Easy to modify for new tariff types or stacking logic
 
 **Core Functions:**

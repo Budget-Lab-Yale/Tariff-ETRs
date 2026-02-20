@@ -538,11 +538,15 @@ calc_weighted_etr <- function(rates_232,
       # 2. IEEPA Fentanyl:
       #    - China: STACKS on top of everything (232 + reciprocal + fentanyl)
       #    - Others: Only applies to base not covered by 232 or reciprocal
-      # 3. Section 122: STACKS on top of everything (all countries)
+      # 3. Section 122: Stacks on IEEPA always; stacking on 232 controlled by s122_stacks_on_232 flag
 
       final_rate = case_when(
-        # China: Fentanyl stacks on top of normal 232-reciprocal logic, then s122 stacks on top
-        cty_code == CTY_CHINA ~ if_else(rate_232_max > 0, rate_232_max, ieepa_reciprocal_rate) + ieepa_fentanyl_rate + s122_rate,
+        # China: Fentanyl stacks on top of normal 232-reciprocal logic
+        cty_code == CTY_CHINA ~ if_else(
+          rate_232_max > 0,
+          rate_232_max + ieepa_fentanyl_rate + s122_rate * s122_stacks_on_232,
+          ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate
+        ),
 
         # Everyone else: 232 takes precedence, then reciprocal + fentanyl
         # If 232 applies, s122 stacking depends on s122_stacks_on_232 flag
