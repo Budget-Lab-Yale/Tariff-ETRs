@@ -50,10 +50,15 @@ The project uses Census Bureau country codes (not ISO codes). Country-to-partner
 - Cache is used by default to avoid re-processing large import files
 - Set `use_cache = FALSE` in main.R to force re-processing
 
-**Output:**
+**Output (static scenarios):**
 - GTAP shock commands (output/{scenario}/shocks.txt)
 - Sector×country ETR matrix (output/{scenario}/etrs_by_sector_country.csv)
 - Overall ETRs by country (output/{scenario}/overall_etrs.txt)
+
+**Output (time-varying scenarios):**
+- Per-date shock commands (output/{scenario}/{date}/shocks.txt)
+- Stacked CSVs with `date` as first column (output/{scenario}/etrs_by_sector_country.csv)
+- Combined overall ETRs with per-date sections (output/{scenario}/overall_etrs.txt)
 
 ## Development Commands
 
@@ -68,7 +73,27 @@ source("src/main.R")
 
 ## Configuration Files
 
-Each scenario in `config/{scenario}/` requires:
+### Scenario Types
+
+**Static scenarios** have config files directly in `config/{scenario}/`.
+
+**Time-varying scenarios** use YYYY-MM-DD dated subfolders, each containing a complete config set:
+```
+config/tariff-timeline/
+  2025-02-04/
+    232.yaml
+    ieepa_reciprocal.yaml
+    ieepa_fentanyl.yaml
+    other_params.yaml
+  2025-04-02/
+    232.yaml
+    ...
+```
+Detection is automatic based on subdirectory names. Each date subfolder must have a complete set of config files (no inheritance/fallback). The same 2024 import weights are reused across all dates.
+
+### Config Files
+
+Each scenario (or each date subfolder) requires:
 
 1. **232.yaml** - Section 232 tariffs with country-level rates and defaults:
    ```yaml
@@ -167,10 +192,17 @@ The codebase uses a clean separation between config parsing and calculations:
 - `load_imports_hs10_country()`: Reads Census ZIP files, extracts IMP_DETL.TXT, returns HS10×country×month data
 
 *src/calculations.R:*
-- `calc_import_shares()`: Variable-length HTS code matching using regex prefix matching (still used internally by config parsing)
+- `detect_scenario_type()`: Auto-detects static vs time-varying scenarios by looking for YYYY-MM-DD subfolders
+- `load_scenario_config()`: Loads all config YAMLs from a single directory into a named list
+- `calc_etrs_for_config()`: Runs calc_weighted_etr() + aggregate_countries_to_partners() for one config set
+- `do_scenario()`: Main orchestrator/dispatcher - loads shared data, detects scenario type, dispatches to static or time-varying
+- `do_scenario_static()`: Runs a single-config scenario (original behavior)
+- `do_scenario_time_varying()`: Loops over dated configs, writes per-date shocks + stacked CSVs
 - `calc_weighted_etr()`: Joins tabular config data, applies USMCA exemptions/auto rebates, applies stacking rules, calculates final ETR
 - `aggregate_countries_to_partners()`: Aggregates country-level ETRs to 8 partner groups using import-weighted averaging
-- `do_scenario()`: Main orchestrator - loads tabular config data, calculates country-level ETRs, aggregates to partners, writes outputs
+- `prepare_*()` functions: Pure computation (no I/O) for sector_country, country_level, country_hts2, and overall ETR data
+- `write_*()` functions: Delegate to prepare_* then write files
+- `write_*_stacked()` functions: Stack per-date prepare_* results with date column for time-varying scenarios
 
 **Variable-Length HTS Matching:**
 - Both 232 and IEEPA tariffs use prefix matching: '8703' matches all HS10 codes starting with 8703
