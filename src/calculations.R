@@ -801,15 +801,11 @@ calc_weighted_etr <- function(rates_232,
   # Calculate max of all 232 rates
   if (length(tariff_names) > 0) {
 
-    # Get all 232 rate column names
-    rate_232_cols <- paste0('s232_', tariff_names, '_rate')
-
     rate_matrix <- rate_matrix %>%
       mutate(
 
         # Max 232 rate across all tariffs
-        rate_232_max = pmax(!!!syms(rate_232_cols)),
-        rate_232_max = if_else(is.infinite(rate_232_max), 0, rate_232_max)
+        rate_232_max = pmax(!!!syms(rate_232_cols))
       )
 
   # No 232 tariffs - set max to 0
@@ -831,23 +827,18 @@ calc_weighted_etr <- function(rates_232,
       # Per-type mode: IEEPA covers everything active 232 programs don't claim
       rate_matrix <- rate_matrix %>%
         mutate(
-          has_metal_232 = pmax(!!!syms(metal_232_cols)) > 0,
-          nonmetal_share = if_else(has_metal_232, 1 - .active_type_share, 0)
+          nonmetal_share = if_else(pmax(!!!syms(metal_232_cols)) > 0, 1 - .active_type_share, 0)
         )
     } else {
       # Aggregate mode: IEEPA covers the non-metal portion
       rate_matrix <- rate_matrix %>%
         mutate(
-          has_metal_232 = pmax(!!!syms(metal_232_cols)) > 0,
-          nonmetal_share = if_else(has_metal_232, 1 - metal_share, 0)
+          nonmetal_share = if_else(pmax(!!!syms(metal_232_cols)) > 0, 1 - metal_share, 0)
         )
     }
   } else {
     rate_matrix <- rate_matrix %>%
-      mutate(
-        has_metal_232 = FALSE,
-        nonmetal_share = 0
-      )
+      mutate(nonmetal_share = 0)
   }
 
   # Clean up temporary accumulator column
@@ -1275,7 +1266,7 @@ calc_overall_etrs_data <- function(etr_data, hs10_country_etrs = NULL,
   list(
     by_country     = country_etrs,
     gtap_total     = gtap_total_etr_value,
-    census_total   = if (!is.null(hs10_country_etrs)) census_total_etr_value else NA,
+    census_total   = census_total_etr_value,
     coverage_stats = coverage_stats,
     etr_lines      = etr_lines,
     coverage_lines = coverage_lines

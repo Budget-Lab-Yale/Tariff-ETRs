@@ -123,9 +123,8 @@ if (is.null(cli_config)) {
   import_data_path <- 'C:/Users/jar335/Downloads'
   use_cache <- TRUE
   scenarios <- c(
-    '10-30',
-    '11-17',
-    '12-16'
+    '2-21_perm',
+    '2-21_temp'
   )
 } else {
   # CLI mode: use parsed arguments
