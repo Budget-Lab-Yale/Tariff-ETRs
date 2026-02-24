@@ -245,7 +245,8 @@ calc_etrs_for_config <- function(config, hs10_by_country, usmca_shares, country_
     s122_usmca_exempt      = config$other_params$s122_usmca_exception %||% 0,
     s122_stacks_on_232     = config$other_params$s122_stacks_on_232 %||% 1,
     metal_content          = metal_content,
-    metal_programs         = config$other_params$metal_content$metal_programs %||% character(0)
+    metal_programs         = config$other_params$metal_content$metal_programs %||% character(0),
+    program_metal_types    = config$other_params$metal_content$program_metal_types %||% NULL
   )
 
   message('Aggregating HS10×country ETRs to partner×GTAP level...')
@@ -549,8 +550,11 @@ do_scenario_time_varying <- function(scenario, config_dir, output_dir,
 #' @param us_assembly_share Share of US assembly in autos
 #' @param ieepa_usmca_exempt Apply USMCA exemption to IEEPA tariffs (1 = yes, 0 = no)
 #' @param s122_stacks_on_232 Whether s122 stacks on top of 232 for non-China countries (1 = yes, 0 = no)
-#' @param metal_content Tibble with columns: hs10, metal_share (from load_metal_content())
+#' @param metal_content Tibble with columns: hs10, metal_share (from load_metal_content()).
+#'   May also include steel_share, aluminum_share, copper_share, other_metal_share for detail mode.
 #' @param metal_programs Character vector of 232 tariff names that are metal programs (e.g., 'steel', 'aluminum')
+#' @param program_metal_types Named list: program_name -> metal type string (e.g., list(steel = 'steel', aluminum_base_articles = 'aluminum')).
+#'   When provided with per-type share columns, each program is scaled by its type's share instead of aggregate metal_share.
 #'
 #' @return Data frame with columns: hs10, cty_code, gtap_code, imports, etr, base_232, base_ieepa, base_neither
 calc_weighted_etr <- function(rates_232,
@@ -567,7 +571,8 @@ calc_weighted_etr <- function(rates_232,
                               s122_usmca_exempt = 0,
                               s122_stacks_on_232 = 1,
                               metal_content = NULL,
-                              metal_programs = character(0)) {
+                              metal_programs = character(0),
+                              program_metal_types = NULL) {
 
   # =============================================================================
   # Build complete rate matrix by joining config tables with import data
@@ -711,20 +716,74 @@ calc_weighted_etr <- function(rates_232,
   # is subject to 232 tariffs; the non-metal portion receives IEEPA tariffs.
   # =============================================================================
 
+  # Track whether per-type accumulation is active for nonmetal_share computation
+  use_per_type_nonmetal <- FALSE
+
   if (!is.null(metal_content) && length(metal_programs) > 0) {
 
-    # Join metal content shares
+    # Join metal content shares (may include per-type columns)
     rate_matrix <- rate_matrix %>%
       left_join(metal_content, by = 'hs10') %>%
       mutate(metal_share = if_else(is.na(metal_share), 1.0, metal_share))
 
+    # Check if per-type shares are available and program_metal_types is provided
+    has_per_type <- !is.null(program_metal_types) &&
+      'steel_share' %in% names(rate_matrix)
+
+    # Map metal type names to column names
+    type_col_map <- c(
+      steel   = 'steel_share',
+      aluminum = 'aluminum_share',
+      copper  = 'copper_share',
+      other   = 'other_metal_share'
+    )
+
+    if (has_per_type) {
+      use_per_type_nonmetal <- TRUE
+    }
+
     # Apply metal content share to metal program 232 tariffs
-    # This scales the rate: effective_rate = statutory_rate * metal_share
+    # This scales the rate: effective_rate = statutory_rate * share
     for (tariff_name in tariff_names) {
       if (tariff_name %in% metal_programs) {
         rate_col <- paste0('s232_', tariff_name, '_rate')
-        rate_matrix <- rate_matrix %>%
-          mutate(!!rate_col := !!sym(rate_col) * metal_share)
+
+        # Use per-type share if available, otherwise aggregate metal_share
+        if (has_per_type && tariff_name %in% names(program_metal_types)) {
+          metal_type <- program_metal_types[[tariff_name]]
+          type_col <- type_col_map[[metal_type]]
+          if (is.null(type_col)) {
+            stop(sprintf('Unknown metal type "%s" for program "%s". Expected: %s',
+                          metal_type, tariff_name, paste(names(type_col_map), collapse = ', ')))
+          }
+          rate_matrix <- rate_matrix %>%
+            mutate(!!rate_col := !!sym(rate_col) * !!sym(type_col))
+        } else {
+          rate_matrix <- rate_matrix %>%
+            mutate(!!rate_col := !!sym(rate_col) * metal_share)
+        }
+      }
+    }
+
+    # Compute per-type nonmetal share AFTER scaling.
+    # Group programs by metal type and check if ANY program of that type is active
+    # per row. Add each type's share at most once to avoid double-counting when
+    # multiple programs map to the same type (e.g., aluminum_base + aluminum_derivative).
+    if (has_per_type) {
+      type_to_programs <- split(names(program_metal_types), unlist(program_metal_types))
+      rate_matrix <- rate_matrix %>% mutate(.active_type_share = 0)
+
+      for (metal_type in names(type_to_programs)) {
+        progs_of_type <- intersect(type_to_programs[[metal_type]], tariff_names)
+        type_col <- type_col_map[[metal_type]]
+        rate_cols_for_type <- paste0('s232_', progs_of_type, '_rate')
+        rate_cols_for_type <- rate_cols_for_type[rate_cols_for_type %in% names(rate_matrix)]
+
+        if (length(rate_cols_for_type) > 0) {
+          rate_matrix <- rate_matrix %>%
+            mutate(.active_type_share = .active_type_share +
+              if_else(pmax(!!!syms(rate_cols_for_type)) > 0, !!sym(type_col), 0))
+        }
       }
     }
 
@@ -761,21 +820,39 @@ calc_weighted_etr <- function(rates_232,
 
   # Compute non-metal share for IEEPA application on the non-metal portion of derivatives.
   # Only for products covered by metal 232 programs (not auto 232, etc.).
+  # Per-type mode: nonmetal_share = 1 - sum(active type shares), so IEEPA fills
+  # everything not claimed by the specific 232 programs covering each product.
+  # Aggregate mode: nonmetal_share = 1 - metal_share (unchanged).
   metal_232_cols <- paste0('s232_', intersect(tariff_names, metal_programs), '_rate')
   metal_232_cols <- metal_232_cols[metal_232_cols %in% names(rate_matrix)]
 
   if (length(metal_232_cols) > 0) {
-    rate_matrix <- rate_matrix %>%
-      mutate(
-        has_metal_232 = pmax(!!!syms(metal_232_cols)) > 0,
-        nonmetal_share = if_else(has_metal_232, 1 - metal_share, 0)
-      )
+    if (use_per_type_nonmetal) {
+      # Per-type mode: IEEPA covers everything active 232 programs don't claim
+      rate_matrix <- rate_matrix %>%
+        mutate(
+          has_metal_232 = pmax(!!!syms(metal_232_cols)) > 0,
+          nonmetal_share = if_else(has_metal_232, 1 - .active_type_share, 0)
+        )
+    } else {
+      # Aggregate mode: IEEPA covers the non-metal portion
+      rate_matrix <- rate_matrix %>%
+        mutate(
+          has_metal_232 = pmax(!!!syms(metal_232_cols)) > 0,
+          nonmetal_share = if_else(has_metal_232, 1 - metal_share, 0)
+        )
+    }
   } else {
     rate_matrix <- rate_matrix %>%
       mutate(
         has_metal_232 = FALSE,
         nonmetal_share = 0
       )
+  }
+
+  # Clean up temporary accumulator column
+  if ('.active_type_share' %in% names(rate_matrix)) {
+    rate_matrix <- rate_matrix %>% select(-.active_type_share)
   }
 
   rate_matrix <- rate_matrix %>%

@@ -395,13 +395,17 @@ load_ieepa_rates_yaml <- function(yaml_file,
 #' - 'flat': Uniform metal_share for all products (from flat_share param)
 #' - 'bea': Industry-varying shares from pre-computed BEA I-O data
 #'          Config option bea_table: 'domestic' (default) or 'total'
-#'          Config option bea_granularity: 'gtap' (default) or 'naics'
+#'          Config option bea_granularity: 'gtap' (default), 'naics', or 'detail'
 #'            - 'gtap': GTAP sector-level shares (~45 sectors)
-#'            - 'naics': HS10-level shares via HS10->NAICS->BEA chain (~20K products)
+#'            - 'naics': HS10-level shares via HS10->NAICS->BEA summary chain (~20K products)
+#'            - 'detail': Per-metal-type shares (steel, aluminum, copper, other) via
+#'              2017 BEA Detail IO table (~402 commodities, 10 metal sub-industries)
 #' - 'cbo': Product-level shares from CBO bucket classification (high=0.75, low=0.25, copper=0.90)
 #'
 #' Primary products (chapters in primary_chapters) are forced to metal_share = 1.0
 #' regardless of method, since the tariff applies to their full customs value.
+#' In detail mode, primary chapters also get per-type shares set appropriately
+#' (e.g., ch72/73 -> steel_share=1.0, ch76 -> aluminum_share=1.0).
 #'
 #' When metal_content_config is NULL (old configs without this block),
 #' defaults to flat method with share = 1.0, producing identical behavior
@@ -410,7 +414,8 @@ load_ieepa_rates_yaml <- function(yaml_file,
 #' @param metal_content_config The metal_content block from other_params.yaml (or NULL)
 #' @param import_data Tibble with hs10, gtap_code columns (for joining)
 #'
-#' @return Tibble with columns: hs10, metal_share (one row per unique hs10)
+#' @return Tibble with columns: hs10, metal_share (one row per unique hs10).
+#'   In detail mode, also includes: steel_share, aluminum_share, copper_share, other_metal_share.
 load_metal_content <- function(metal_content_config = NULL,
                                import_data) {
 
@@ -474,6 +479,56 @@ load_metal_content <- function(metal_content_config = NULL,
       message(sprintf('  NAICS coverage: %d of %d HS10 codes (%.1f%%), remainder use GTAP fallback',
                       n_naics, n_total, 100 * n_naics / n_total))
 
+    } else if (bea_granularity == 'detail') {
+
+      # HS10-level per-metal-type shares via HS10 -> NAICS -> BEA detail code chain
+      detail_shares_file <- sprintf('resources/metal_content_shares_detail_hs10_%s.csv', bea_table)
+      if (!file.exists(detail_shares_file)) {
+        stop(sprintf('Detail shares file not found: %s\n  Run: Rscript scripts/build_metal_content_shares.R',
+                      detail_shares_file))
+      }
+
+      detail_shares <- read_csv(detail_shares_file, show_col_types = FALSE,
+                                 col_types = cols(hs10 = col_character())) %>%
+        select(hs10, bea_detail_code, steel_share, aluminum_share, copper_share, other_metal_share, metal_share)
+
+      # Also load GTAP-level aggregate shares as fallback for unmatched HS10 codes
+      gtap_shares_file <- sprintf('resources/metal_content_shares_%s.csv', bea_table)
+      if (!file.exists(gtap_shares_file)) {
+        stop(sprintf('GTAP shares file not found: %s\n  Run: Rscript scripts/build_metal_content_shares.R',
+                      gtap_shares_file))
+      }
+
+      gtap_shares <- read_csv(gtap_shares_file, show_col_types = FALSE) %>%
+        mutate(gtap_code = tolower(gtap_code)) %>%
+        select(gtap_code, metal_share_gtap = metal_share)
+
+      shares <- import_data %>%
+        distinct(hs10, gtap_code) %>%
+        mutate(gtap_code = tolower(gtap_code)) %>%
+        left_join(detail_shares, by = 'hs10') %>%
+        left_join(gtap_shares, by = 'gtap_code') %>%
+        mutate(
+          # Unmatched: per-type shares = 0, total falls back to GTAP then 1.0
+          steel_share       = if_else(is.na(steel_share), 0, steel_share),
+          aluminum_share    = if_else(is.na(aluminum_share), 0, aluminum_share),
+          copper_share      = if_else(is.na(copper_share), 0, copper_share),
+          other_metal_share = if_else(is.na(other_metal_share), 0, other_metal_share),
+          metal_share       = case_when(
+            !is.na(metal_share)      ~ metal_share,
+            !is.na(metal_share_gtap) ~ metal_share_gtap,
+            TRUE                     ~ 1.0
+          )
+        ) %>%
+        select(hs10, steel_share, aluminum_share, copper_share, other_metal_share, metal_share)
+
+      n_detail <- import_data %>% distinct(hs10) %>%
+        left_join(detail_shares %>% select(hs10, bea_detail_code), by = 'hs10') %>%
+        filter(!is.na(bea_detail_code)) %>% nrow()
+      n_total <- import_data %>% distinct(hs10) %>% nrow()
+      message(sprintf('  Detail coverage: %d of %d HS10 codes (%.1f%%), remainder use GTAP fallback',
+                      n_detail, n_total, 100 * n_detail / n_total))
+
     } else if (bea_granularity == 'gtap') {
 
       # Original GTAP sector-level shares
@@ -495,7 +550,7 @@ load_metal_content <- function(metal_content_config = NULL,
         select(hs10, metal_share)
 
     } else {
-      stop(sprintf('Unknown bea_granularity: "%s" (expected "gtap" or "naics")', bea_granularity))
+      stop(sprintf('Unknown bea_granularity: "%s" (expected "gtap", "naics", or "detail")', bea_granularity))
     }
 
   } else if (method == 'cbo') {
@@ -533,14 +588,25 @@ load_metal_content <- function(metal_content_config = NULL,
   }
 
   # Force primary chapters to 1.0 (tariff applies to full customs value)
+  is_primary <- substr(shares$hs10, 1, 2) %in% primary_chapters
   shares <- shares %>%
-    mutate(
-      metal_share = if_else(
-        substr(hs10, 1, 2) %in% primary_chapters,
-        1.0,
-        metal_share
-      )
-    )
+    mutate(metal_share = if_else(is_primary, 1.0, metal_share))
+
+  # For detail mode: set per-type shares for primary chapters
+  if ('steel_share' %in% names(shares)) {
+    shares <- shares %>%
+      mutate(
+        hts2 = substr(hs10, 1, 2),
+        steel_share       = if_else(is_primary & hts2 %in% c('72', '73'), 1.0,
+                            if_else(is_primary, 0, steel_share)),
+        aluminum_share    = if_else(is_primary & hts2 == '76', 1.0,
+                            if_else(is_primary, 0, aluminum_share)),
+        copper_share      = if_else(is_primary & hts2 == '74', 1.0,
+                            if_else(is_primary, 0, copper_share)),
+        other_metal_share = if_else(is_primary, 0, other_metal_share)
+      ) %>%
+      select(-hts2)
+  }
 
   message(sprintf('Metal content shares: %d products, mean = %.4f, range = [%.4f, %.4f]',
                   nrow(shares), mean(shares$metal_share),
