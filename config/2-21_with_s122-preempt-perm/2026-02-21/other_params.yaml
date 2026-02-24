@@ -1,0 +1,13 @@
+# Additional scenario parameters
+
+# USMCA and auto sector parameters
+us_auto_content_share: 0.4      # Share of US content in auto assembly
+us_auto_assembly_share: 0.33    # Share of US assembly in autos
+auto_rebate_rate: 0.0375        # Auto rebate rate
+
+# IEEPA parameters
+ieepa_usmca_exception: 0        # No IEEPA tariffs in this period
+
+# Section 122 parameters
+s122_stacks_on_232: 0           # 232 preempts s122 for non-China countries
+s122_usmca_exception: 1         # Apply USMCA exemption to s122 tariffs (1 = yes, 0 = no)

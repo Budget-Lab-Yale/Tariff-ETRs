@@ -1,0 +1,34 @@
+naics_code,naics_description,bea_code,bea_description,match_type
+111,AGRICULTURAL PRODUCTS,111CA,Farms,exact
+112,LIVESTOCK & LIVESTOCK PRODUCTS,111CA,Farms,exact
+113,"FORESTRY PRODUCTS, NESOI",113FF,"Forestry, fishing, and related activities",exact
+114,"FISH, FRESH/CHILLED/FROZEN & OTHER MARINE PRODUCTS",113FF,"Forestry, fishing, and related activities",exact
+115,PRODUCTS SUPPORTING AGRICULTURE AND FORESTRY,113FF,"Forestry, fishing, and related activities",exact
+211,OIL & GAS,211,Oil and gas extraction,exact
+212,MINERALS & ORES,212,"Mining, except oil and gas",exact
+311,FOOD & KINDRED PRODUCTS,311FT,Food and beverage and tobacco products,exact
+312,BEVERAGES & TOBACCO PRODUCTS,311FT,Food and beverage and tobacco products,exact
+313,TEXTILES & FABRICS,313TT,Textile mills and textile product mills,exact
+314,TEXTILE MILL PRODUCTS,313TT,Textile mills and textile product mills,exact
+315,APPAREL & ACCESSORIES,315AL,Apparel and leather and allied products,exact
+316,LEATHER & ALLIED PRODUCTS,315AL,Apparel and leather and allied products,exact
+321,WOOD PRODUCTS,321,Wood products,exact
+322,PAPER,322,Paper products,exact
+323,"PRINTED MATTER AND RELATED PRODUCTS, NESOI",323,Printing and related support activities,exact
+324,PETROLEUM & COAL PRODUCTS,324,Petroleum and coal products,exact
+325,CHEMICALS,325,Chemical products,exact
+326,PLASTICS & RUBBER PRODUCTS,326,Plastics and rubber products,exact
+327,NONMETALLIC MINERAL PRODUCTS,327,Nonmetallic mineral products,exact
+331,PRIMARY METAL MFG,331,Primary metals,exact
+332,"FABRICATED METAL PRODUCTS, NESOI",332,Fabricated metal products,exact
+333,"MACHINERY, EXCEPT ELECTRICAL",333,Machinery,exact
+334,COMPUTER & ELECTRONIC PRODUCTS,334,Computer and electronic products,exact
+335,"ELECTRICAL EQUIPMENT, APPLIANCES & COMPONENTS",335,"Electrical equipment, appliances, and components",exact
+336,TRANSPORTATION EQUIPMENT,3361MV,"Motor vehicles, bodies and trailers, and parts",split
+336,TRANSPORTATION EQUIPMENT,3364OT,Other transportation equipment,split
+337,FURNITURE & FIXTURES,337,Furniture and related products,exact
+339,MISCELLANEOUS MANUFACTURED COMMODITIES,339,Miscellaneous manufacturing,exact
+910,WASTE AND SCRAP,,No BEA equivalent in x_codes,unmatched
+930,USED OR SECOND-HAND MERCHANDISE,,No BEA equivalent in x_codes,unmatched
+980,GOODS RETURNED (EXPORTS FOR CANADA ONLY),,No BEA equivalent in x_codes,unmatched
+990,OTHER SPECIAL CLASSIFICATION PROVISIONS,,No BEA equivalent in x_codes,unmatched
