@@ -39,22 +39,36 @@ metal_content:
 
 ### 2b. BEA Input-Output Method
 
-Assigns metal content shares at the **GTAP sector level** (~45 sectors) using BEA Input-Output requirements tables. Each GTAP sector maps to a BEA industry via `resources/gtap_bea_crosswalk.csv`, and the metal share equals the row-331 (Primary Metals) requirement coefficient for that industry.
+Assigns metal content shares using BEA Input-Output requirements tables. The metal share equals the row-331 (Primary Metals) requirement coefficient for the BEA industry corresponding to each product.
 
 Two sub-options control which BEA table is used:
 
 - **Domestic requirements** (default): The Leontief inverse excluding imports. Traces the full supply chain through domestic production only. Captures indirect metal content embedded in domestically-produced intermediates but excludes imported intermediates.
 - **Total requirements**: The Leontief inverse including imports. Traces the full global supply chain. Produces higher shares because it captures metal content in imported intermediates that are themselves not subject to 232.
 
-Both are built by `scripts/build_metal_content_shares.R`, which reads the BEA CSVs in `resources/bea/`, extracts row 331, joins with the GTAP-BEA crosswalk, and writes to `resources/metal_content_shares_{domestic,total}.csv`.
+A second sub-option controls the **granularity** of the HS10-to-BEA mapping:
+
+- **`bea_granularity: 'gtap'`** (default): GTAP sector-level (~45 sectors). All HS10 codes in the same GTAP sector get the same share. Maps via `HS10 -> GTAP -> BEA`.
+- **`bea_granularity: 'naics'`**: HS10-level (~20K products). Each HS10 code maps to a 6-digit NAICS code, which is then matched to a BEA summary code via longest-prefix matching. Maps via `HS10 -> NAICS -> BEA`. HS10 codes not in the NAICS crosswalk fall back to GTAP-level shares.
+
+The NAICS granularity produces different BEA codes for ~3,100 of ~18,400 HS10 codes compared to the GTAP path. This matters most for products where the NAICS-level BEA code differs substantially from the GTAP-level BEA code (e.g., iron ores classified as GTAP "OXT" → BEA 212, vs. manufactured metal products in the same GTAP sector).
+
+All shares are built by `scripts/build_metal_content_shares.R`:
+- GTAP-level: reads BEA CSVs, extracts row 331, joins with `resources/gtap_bea_crosswalk.csv` → writes `resources/metal_content_shares_{domestic,total}.csv`
+- NAICS-level: reads BEA row 331, chains `resources/hs10_naics_crosswalk.csv` → `resources/naics_bea_summary_crosswalk.csv` → row 331 → writes `resources/metal_content_shares_naics_{domestic,total}.csv`
+
+The crosswalk files are built by `scripts/build_naics_crosswalks.py`, which extracts:
+- `resources/hs10_naics_crosswalk.csv` from the CBO commodity crosswalk (20,780 HS10 → 6-digit NAICS mappings)
+- `resources/naics_bea_summary_crosswalk.csv` from the BEA NAICS concordance Excel (481 NAICS → BEA summary code mappings)
 
 ```yaml
 metal_content:
   method: 'bea'
-  bea_table: 'domestic'   # or 'total'
+  bea_table: 'domestic'       # 'domestic' or 'total'
+  bea_granularity: 'gtap'     # 'gtap' (sector-level) or 'naics' (HS10-level)
 ```
 
-**Key BEA shares (domestic / total):**
+**Key BEA shares (domestic / total) at GTAP level:**
 
 | GTAP Sector | Description | Domestic | Total |
 |---|---|---|---|
@@ -68,9 +82,9 @@ metal_content:
 | OMF | Miscellaneous manufacturing | 0.0339 | 0.0662 |
 | ELE | Computer & electronic products | 0.0153 | 0.0300 |
 
-**Strengths:** Continuous shares that reflect the actual I-O structure of each industry. Captures inter-industry variation (fabricated metals have much higher metal content than electronics).
+**Strengths:** Continuous shares that reflect the actual I-O structure of each industry. Captures inter-industry variation (fabricated metals have much higher metal content than electronics). NAICS granularity further captures within-sector variation by mapping each HS10 to a more specific BEA industry.
 
-**Limitations:** Shares are at the industry level, so all HTS codes within a GTAP sector get the same share. Also reflects U.S. domestic production technology, not the production function of foreign exporters.
+**Limitations:** Shares reflect U.S. domestic production technology, not the production function of foreign exporters. At GTAP granularity, all HTS codes within a sector get the same share. NAICS granularity improves on this but still assigns the same share to all HS10 codes within the same NAICS industry.
 
 ### 2c. CBO Bucket Method
 
@@ -202,6 +216,7 @@ metal_content:
 
   # BEA method only:
   bea_table: 'domestic'            # 'domestic' or 'total'
+  bea_granularity: 'gtap'          # 'gtap' (sector-level) or 'naics' (HS10-level)
 
   # CBO method only (defaults match CBO):
   cbo_high_share: 0.75
@@ -228,14 +243,21 @@ When the `metal_content` block is absent (old configs), behavior defaults to `fl
 |---|---|
 | `resources/bea/BEA - Domestic Requirements, Industry-by-Commodities - Summary - 2024.csv` | BEA domestic requirements table |
 | `resources/bea/BEA - Total Requirements, Industry-by-Commodities - Summary - 2024.csv` | BEA total requirements table |
+| `resources/bea/BEA-NAICS-Concordance.xlsx` | BEA industry codes to NAICS concordance |
 | `resources/gtap_bea_crosswalk.csv` | GTAP sector to BEA industry mapping |
+| `resources/hs10_naics_crosswalk.csv` | HS10 to 6-digit NAICS mapping (20,780 codes) |
+| `resources/naics_bea_summary_crosswalk.csv` | NAICS to BEA summary code mapping (481 mappings) |
 | `resources/metal_content_shares_domestic.csv` | Pre-computed BEA domestic shares by GTAP sector |
 | `resources/metal_content_shares_total.csv` | Pre-computed BEA total shares by GTAP sector |
+| `resources/metal_content_shares_naics_domestic.csv` | Pre-computed BEA domestic shares by HS10 (via NAICS) |
+| `resources/metal_content_shares_naics_total.csv` | Pre-computed BEA total shares by HS10 (via NAICS) |
 | `resources/cbo/alst_deriv_h.csv` | CBO high metal content HTS list (168 codes) |
 | `resources/cbo/alst_deriv_l.csv` | CBO low metal content HTS list (735 codes) |
 | `resources/cbo/copper.csv` | CBO copper derivative HTS list (118 codes) |
 
-**BEA shares build step:** Run `Rscript scripts/build_metal_content_shares.R` to regenerate the `metal_content_shares_{domestic,total}.csv` files from the raw BEA tables.
+**Build steps:**
+1. Run `python scripts/build_naics_crosswalks.py` to generate `hs10_naics_crosswalk.csv` and `naics_bea_summary_crosswalk.csv` from external sources.
+2. Run `Rscript scripts/build_metal_content_shares.R` to regenerate all `metal_content_shares_*.csv` files from the raw BEA tables and crosswalks.
 
 ---
 
@@ -243,7 +265,7 @@ When the `metal_content` block is absent (old configs), behavior defaults to `fl
 
 1. **Domestic production vs. import composition.** BEA I-O coefficients reflect the average input mix of U.S. domestic producers, not foreign producers of the same goods. Foreign production may use different metal intensities.
 
-2. **Industry-level vs. product-level variation.** BEA shares are at the GTAP sector level (~45 sectors), so all HTS codes within a sector get the same share. A steel desk and a wooden desk with steel legs are in the same industry but have very different metal shares. CBO partially addresses this with product-level classification.
+2. **Industry-level vs. product-level variation.** BEA shares at GTAP granularity are at the sector level (~45 sectors), so all HTS codes within a sector get the same share. The NAICS granularity option improves on this by mapping each HS10 to a more specific BEA industry (~73 summary codes), but within-NAICS variation remains. CBO partially addresses this further with product-level classification.
 
 3. **Value vs. cost concepts.** The BEA I-O coefficient captures the *cost* of metal inputs to the producing industry. CBP assesses tariffs on the *value* of metal content as declared by the importer. CBP's guidance says fabrication costs on the metal itself are *not* deductible, which would make the true dutiable share higher than the raw material input share. This suggests BEA shares may be a **lower bound** on the true dutiable metal share.
 

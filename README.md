@@ -197,6 +197,8 @@ metal_content:
   method: 'bea'                      # 'flat', 'bea', or 'cbo'
   flat_share: 1.0                     # Used when method = 'flat'
   primary_chapters: ['72', '73', '76'] # Forced to share = 1.0
+  bea_table: 'domestic'               # BEA: 'domestic' or 'total'
+  bea_granularity: 'gtap'             # BEA: 'gtap' (sector) or 'naics' (HS10-level)
   metal_programs:                     # 232 tariff names that are metal programs
     - steel
     - steel_derivative
@@ -210,12 +212,12 @@ metal_content:
 
 **Methods:**
 - `flat`: Uniform metal share for all derivative products (e.g., 1.0 = full value, 0.5 = TPC assumption, 0.0 = lower bound)
-- `bea`: Industry-varying shares computed from BEA Input-Output direct requirements (primary metals inputs / total industry output)
+- `bea`: Industry-varying shares computed from BEA Input-Output direct requirements (primary metals inputs / total industry output). Two granularity levels: `gtap` assigns shares at the GTAP sector level (~45 sectors); `naics` assigns shares at the HS10 level via HS10 → NAICS → BEA chaining (~20K products), falling back to GTAP-level for unmatched codes.
 - `cbo`: Product-level shares from the [CBO conventional tariff analysis model](https://github.com/US-CBO/conventional-tariff-analysis-model). Classifies Section 232 derivatives into three buckets: high metal content (75%, 168 products), low metal content (25%, 735 products), and copper derivatives (90%, 118 products). Products not in any CBO list default to 100%. HTS lists are stored in `resources/cbo/`.
 
 **When `metal_content` is absent** from `other_params.yaml`, defaults to `flat` with `share = 1.0` (identical to pre-metal-content behavior).
 
-**To regenerate BEA shares:** Run `Rscript scripts/build_metal_content_shares.R` from the project root.
+**To regenerate BEA shares:** Run `python scripts/build_naics_crosswalks.py` then `Rscript scripts/build_metal_content_shares.R` from the project root.
 
 ## Output
 
