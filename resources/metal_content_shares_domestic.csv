@@ -1,0 +1,46 @@
+gtap_code,bea_code,bea_description,metal_share
+PDR,311FT,Food and beverage and tobacco products,0.0090477
+WHT,311FT,Food and beverage and tobacco products,0.0090477
+GRO,311FT,Food and beverage and tobacco products,0.0090477
+V_F,311FT,Food and beverage and tobacco products,0.0090477
+OSD,311FT,Food and beverage and tobacco products,0.0090477
+C_B,311FT,Food and beverage and tobacco products,0.0090477
+PFB,311FT,Food and beverage and tobacco products,0.0090477
+OCR,111CA,Farms,0.0032618
+CTL,111CA,Farms,0.0032618
+OAP,111CA,Farms,0.0032618
+MIL,311FT,Food and beverage and tobacco products,0.0090477
+WOL,313TT,Textile mills and textile product mills,0.0110847
+FRS,113FF,"Forestry, fishing, and related activities",0.0011112
+FSH,113FF,"Forestry, fishing, and related activities",0.0011112
+COA,212,"Mining, except oil and gas",0.0129868
+OIL,211,Oil and gas extraction,0.028831
+GAS,211,Oil and gas extraction,0.028831
+OXT,212,"Mining, except oil and gas",0.0129868
+CMT,311FT,Food and beverage and tobacco products,0.0090477
+OMT,311FT,Food and beverage and tobacco products,0.0090477
+VOL,311FT,Food and beverage and tobacco products,0.0090477
+SGR,311FT,Food and beverage and tobacco products,0.0090477
+OFD,311FT,Food and beverage and tobacco products,0.0090477
+B_T,311FT,Food and beverage and tobacco products,0.0090477
+PCR,311FT,Food and beverage and tobacco products,0.0090477
+TEX,313TT,Textile mills and textile product mills,0.0110847
+WAP,315AL,Apparel and leather and allied products,0.0044804
+LEA,315AL,Apparel and leather and allied products,0.0044804
+LUM,321,Wood products,0.0118271
+PPP,322,Paper products,0.0173312
+P_C,324,Petroleum and coal products,0.0127979
+CHM,325,Chemical products,0.0050356
+BPH,325,Chemical products,0.0050356
+RPP,326,Plastics and rubber products,0.0176651
+NMM,327,Nonmetallic mineral products,0.0240089
+I_S,331,Primary metals,1
+NFM,331,Primary metals,1
+FMP,332,Fabricated metal products,0.2410354
+OME,333,Machinery,0.1125431
+ELE,334,Computer and electronic products,0.0153166
+EEQ,335,"Electrical equipment, appliances, and components",0.133359
+MVH,3361MV,"Motor vehicles, bodies and trailers, and parts",0.099165
+OTN,3364OT,Other transportation equipment,0.033342
+OMF,339,Miscellaneous manufacturing,0.0338796
+ELY,22,Utilities,0.0056564

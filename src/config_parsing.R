@@ -9,6 +9,7 @@
 #   - resolve_country_mnemonics(): Resolve mnemonics in rates config
 #   - load_232_rates():           Load Section 232 rates at country level with defaults
 #   - load_ieepa_rates_yaml():    Load IEEPA rates at country level with hierarchical config
+#   - load_metal_content():       Load metal content shares for 232 derivative adjustment
 #
 # =============================================================================
 
@@ -385,4 +386,111 @@ load_ieepa_rates_yaml <- function(yaml_file,
                   rate_col_name, format(nrow(rate_matrix), big.mark = ',')))
 
   return(rate_matrix)
+}
+
+
+#' Load metal content shares for Section 232 derivative adjustment
+#'
+#' Supports three methods:
+#' - 'flat': Uniform metal_share for all products (from flat_share param)
+#' - 'bea': Industry-varying shares from pre-computed BEA I-O data
+#'          Config option bea_table: 'domestic' (default) or 'total'
+#' - 'cbo': Product-level shares from CBO bucket classification (high=0.75, low=0.25, copper=0.90)
+#'
+#' Primary products (chapters in primary_chapters) are forced to metal_share = 1.0
+#' regardless of method, since the tariff applies to their full customs value.
+#'
+#' When metal_content_config is NULL (old configs without this block),
+#' defaults to flat method with share = 1.0, producing identical behavior
+#' to the pre-metal-content codebase.
+#'
+#' @param metal_content_config The metal_content block from other_params.yaml (or NULL)
+#' @param import_data Tibble with hs10, gtap_code columns (for joining)
+#'
+#' @return Tibble with columns: hs10, metal_share (one row per unique hs10)
+load_metal_content <- function(metal_content_config = NULL,
+                               import_data) {
+
+  method <- metal_content_config$method %||% 'flat'
+  flat_share <- metal_content_config$flat_share %||% 1.0
+  primary_chapters <- metal_content_config$primary_chapters %||% c('72', '73', '76')
+
+  if (method == 'flat') {
+
+    message(sprintf('Metal content: flat method (share = %.2f)', flat_share))
+    shares <- import_data %>%
+      distinct(hs10) %>%
+      mutate(metal_share = flat_share)
+
+  } else if (method == 'bea') {
+
+    bea_table <- metal_content_config$bea_table %||% 'domestic'
+    shares_file <- sprintf('resources/metal_content_shares_%s.csv', bea_table)
+    message(sprintf('Metal content: BEA I-O method (%s requirements)', bea_table))
+
+    if (!file.exists(shares_file)) {
+      stop(sprintf('BEA shares file not found: %s\n  Run: Rscript scripts/build_metal_content_shares.R', shares_file))
+    }
+
+    bea_shares <- read_csv(shares_file, show_col_types = FALSE) %>%
+      mutate(gtap_code = tolower(gtap_code)) %>%
+      select(gtap_code, metal_share)
+
+    shares <- import_data %>%
+      distinct(hs10, gtap_code) %>%
+      mutate(gtap_code = tolower(gtap_code)) %>%
+      left_join(bea_shares, by = 'gtap_code') %>%
+      # Products with no GTAP match default to 1.0 (conservative)
+      mutate(metal_share = if_else(is.na(metal_share), 1.0, metal_share)) %>%
+      select(hs10, metal_share)
+
+  } else if (method == 'cbo') {
+
+    message('Metal content: CBO bucket method')
+
+    # Read configurable share values (CBO defaults)
+    high_share   <- metal_content_config$cbo_high_share   %||% 0.75
+    low_share    <- metal_content_config$cbo_low_share     %||% 0.25
+    copper_share <- metal_content_config$cbo_copper_share  %||% 0.90
+
+    # Read CBO HTS lists
+    cbo_high   <- read_csv('resources/cbo/alst_deriv_h.csv', show_col_types = FALSE)
+    cbo_low    <- read_csv('resources/cbo/alst_deriv_l.csv', show_col_types = FALSE)
+    cbo_copper <- read_csv('resources/cbo/copper.csv', show_col_types = FALSE)
+
+    # Build HS10 -> metal_share lookup (priority: copper > high > low)
+    # CBO lists have some overlaps and duplicates, so we bind in priority order
+    # and keep the first match per hs10
+    cbo_shares <- bind_rows(
+      cbo_copper %>% transmute(hs10 = as.character(I_COMMODITY), metal_share = copper_share),
+      cbo_high   %>% transmute(hs10 = as.character(I_COMMODITY), metal_share = high_share),
+      cbo_low    %>% transmute(hs10 = as.character(I_COMMODITY), metal_share = low_share)
+    ) %>%
+      distinct(hs10, .keep_all = TRUE)
+
+    # Join with import data universe
+    shares <- import_data %>%
+      distinct(hs10) %>%
+      left_join(cbo_shares, by = 'hs10') %>%
+      mutate(metal_share = if_else(is.na(metal_share), 1.0, metal_share))
+
+  } else {
+    stop(sprintf('Unknown metal_content method: "%s" (expected "flat", "bea", or "cbo")', method))
+  }
+
+  # Force primary chapters to 1.0 (tariff applies to full customs value)
+  shares <- shares %>%
+    mutate(
+      metal_share = if_else(
+        substr(hs10, 1, 2) %in% primary_chapters,
+        1.0,
+        metal_share
+      )
+    )
+
+  message(sprintf('Metal content shares: %d products, mean = %.4f, range = [%.4f, %.4f]',
+                  nrow(shares), mean(shares$metal_share),
+                  min(shares$metal_share), max(shares$metal_share)))
+
+  return(shares)
 }

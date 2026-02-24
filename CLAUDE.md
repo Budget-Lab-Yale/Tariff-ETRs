@@ -172,12 +172,13 @@ The codebase uses a clean separation between config parsing and calculations:
 - No nested lists - just clean tibbles ready for joining
 
 *Calculations → Stacking Rules:*
-- `calc_weighted_etr()`: Joins config tibbles with import data, applies USMCA/rebates, then applies stacking rules
+- `calc_weighted_etr()`: Joins config tibbles with import data, applies USMCA/rebates, metal content adjustment, then stacking rules
 - Stacking rules are centralized in calculations.R
 - Current rules:
   - **China (5700)**: `final_rate = max(232, reciprocal) + fentanyl + s122` (fentanyl always stacks)
   - **Others**: `final_rate = (232 > 0 ? 232 : reciprocal + fentanyl) + s122`
   - Section 122 stacks on IEEPA always; stacking on 232 controlled by `s122_stacks_on_232` flag
+  - **Metal 232 derivatives**: 232 rate scaled by `metal_share`; IEEPA applies to non-metal portion (`nonmetal_share = 1 - metal_share`)
 - Easy to modify for new tariff types or stacking logic
 
 **Core Functions:**
@@ -187,6 +188,7 @@ The codebase uses a clean separation between config parsing and calculations:
 - `resolve_country_mnemonics()`: Expands mnemonics (e.g., 'eu') to individual Census country codes in rates config
 - `load_232_rates()`: Loads 232 YAML, expands to complete HS10×country tibble with coverage and country-specific rates
 - `load_ieepa_rates_yaml()`: Generic IEEPA loader with configurable column name - applies hierarchical rate logic (headline → product → product×country)
+- `load_metal_content()`: Loads metal content shares (flat, BEA, or CBO method) for Section 232 derivative adjustment
 
 *src/data_processing.R:*
 - `load_imports_hs10_country()`: Reads Census ZIP files, extracts IMP_DETL.TXT, returns HS10×country×month data
@@ -198,7 +200,7 @@ The codebase uses a clean separation between config parsing and calculations:
 - `do_scenario()`: Main orchestrator/dispatcher - loads shared data, detects scenario type, dispatches to static or time-varying
 - `do_scenario_static()`: Runs a single-config scenario (original behavior)
 - `do_scenario_time_varying()`: Loops over dated configs, writes per-date shocks + stacked CSVs
-- `calc_weighted_etr()`: Joins tabular config data, applies USMCA exemptions/auto rebates, applies stacking rules, calculates final ETR
+- `calc_weighted_etr()`: Joins tabular config data, applies USMCA exemptions/auto rebates, metal content adjustment, and stacking rules, calculates final ETR
 - `aggregate_countries_to_partners()`: Aggregates country-level ETRs to 8 partner groups using import-weighted averaging
 - `prepare_*()` functions: Pure computation (no I/O) for sector_country, country_level, country_hts2, and overall ETR data
 - `write_*()` functions: Delegate to prepare_* then write files
