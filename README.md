@@ -9,6 +9,7 @@ This project analyzes U.S. import trade data to compute effective tariff rate ch
 - **IEEPA Reciprocal tariffs**: Broad-based tariffs (mutually exclusive with Section 232)
 - **IEEPA Fentanyl tariffs**: Targeted tariffs that stack for China, mutually exclusive otherwise
 - **USMCA exemptions**: Trade agreement provisions with content requirements
+- **Metal content adjustment**: Section 232 derivative products taxed on metal content share only
 
 ## Repository Structure
 
@@ -38,7 +39,11 @@ Tariff-ETRs/
 │   ├── country_partner_mapping.csv   # Census country code → partner group
 │   ├── census_codes.csv              # Census country codes and names
 │   ├── usmca_shares.csv              # USMCA-qualifying trade shares
-│   └── gtap_import_weights.csv       # Import weights for aggregation
+│   ├── gtap_import_weights.csv       # Import weights for aggregation
+│   ├── gtap_bea_crosswalk.csv        # GTAP → BEA industry mapping (for metal content)
+│   ├── metal_content_shares.csv      # Pre-computed metal content shares by GTAP sector
+│   ├── bea/                          # BEA I-O source data
+│   └── cbo/                          # CBO HTS derivative product lists
 ├── cache/
 │   └── hs10_by_country_gtap_2024_con.rds  # Cached import data
 ├── output/
@@ -182,6 +187,35 @@ product_country_rates:
 - **IEEPA Fentanyl**:
   - *China*: Stacks on top (232 or reciprocal, whichever applies, plus fentanyl)
   - *Others*: Only applies if neither 232 nor reciprocal covers the import
+
+### Metal Content Shares (`other_params.yaml`)
+
+Section 232 tariffs on derivative products (outside HTS Chapters 72/73/76) legally apply only to the metal content share of the product, not the full customs value. The non-metal portion receives IEEPA tariffs instead.
+
+```yaml
+metal_content:
+  method: 'bea'                      # 'flat', 'bea', or 'cbo'
+  flat_share: 1.0                     # Used when method = 'flat'
+  primary_chapters: ['72', '73', '76'] # Forced to share = 1.0
+  metal_programs:                     # 232 tariff names that are metal programs
+    - steel
+    - steel_derivative
+    - aluminum
+    - aluminum_derivative
+  # CBO-specific parameters (optional, defaults match CBO's config):
+  cbo_high_share: 0.75               # Used when method = 'cbo'
+  cbo_low_share: 0.25                # Used when method = 'cbo'
+  cbo_copper_share: 0.90             # Used when method = 'cbo'
+```
+
+**Methods:**
+- `flat`: Uniform metal share for all derivative products (e.g., 1.0 = full value, 0.5 = TPC assumption, 0.0 = lower bound)
+- `bea`: Industry-varying shares computed from BEA Input-Output direct requirements (primary metals inputs / total industry output)
+- `cbo`: Product-level shares from the [CBO conventional tariff analysis model](https://github.com/US-CBO/conventional-tariff-analysis-model). Classifies Section 232 derivatives into three buckets: high metal content (75%, 168 products), low metal content (25%, 735 products), and copper derivatives (90%, 118 products). Products not in any CBO list default to 100%. HTS lists are stored in `resources/cbo/`.
+
+**When `metal_content` is absent** from `other_params.yaml`, defaults to `flat` with `share = 1.0` (identical to pre-metal-content behavior).
+
+**To regenerate BEA shares:** Run `Rscript scripts/build_metal_content_shares.R` from the project root.
 
 ## Output
 
