@@ -1,5 +1,6 @@
-# Baseline scenario parameters (MFN-only, no policy tariffs)
-# No 232.yaml, ieepa_reciprocal.yaml, or ieepa_fentanyl.yaml = zero policy rates
+# Baseline scenario parameters (pre-2025 tariff policy)
+# 232.yaml includes original 2018 steel/aluminum + 2020 derivatives at pre-inauguration rates
+# No ieepa_reciprocal.yaml or ieepa_fentanyl.yaml = zero IEEPA rates
 
 # MFN baseline rates
 mfn_rates: 'resources/mfn_rates_2025.csv'
@@ -20,15 +21,11 @@ metal_content:
   metal_programs:
     - steel
     - aluminum_base_articles
-    - aluminum_derivative_9903_85_04
-    - aluminum_derivative_9903_85_07
-    - aluminum_derivative_9903_85_08
-    - copper_derivatives
+    - aluminum_derivative_9980
+    - steel_derivative_9980
 
   program_metal_types:
     steel: 'steel'
     aluminum_base_articles: 'aluminum'
-    aluminum_derivative_9903_85_04: 'aluminum'
-    aluminum_derivative_9903_85_07: 'aluminum'
-    aluminum_derivative_9903_85_08: 'aluminum'
-    copper_derivatives: 'copper'
+    aluminum_derivative_9980: 'aluminum'
+    steel_derivative_9980: 'steel'
