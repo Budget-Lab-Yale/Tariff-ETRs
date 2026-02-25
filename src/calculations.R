@@ -243,7 +243,6 @@ calc_etrs_for_config <- function(config, hs10_by_country, usmca_shares, country_
     us_assembly_share      = config$other_params$us_auto_assembly_share,
     ieepa_usmca_exempt     = config$other_params$ieepa_usmca_exception,
     s122_usmca_exempt      = config$other_params$s122_usmca_exception %||% 0,
-    s122_stacks_on_232     = config$other_params$s122_stacks_on_232 %||% 1,
     metal_content          = metal_content,
     metal_programs         = config$other_params$metal_content$metal_programs %||% character(0),
     program_metal_types    = config$other_params$metal_content$program_metal_types %||% NULL
@@ -549,7 +548,6 @@ do_scenario_time_varying <- function(scenario, config_dir, output_dir,
 #' @param auto_rebate Auto rebate rate
 #' @param us_assembly_share Share of US assembly in autos
 #' @param ieepa_usmca_exempt Apply USMCA exemption to IEEPA tariffs (1 = yes, 0 = no)
-#' @param s122_stacks_on_232 Whether s122 stacks on top of 232 for non-China countries (1 = yes, 0 = no)
 #' @param metal_content Tibble with columns: hs10, metal_share (from load_metal_content()).
 #'   May also include steel_share, aluminum_share, copper_share, other_metal_share for detail mode.
 #' @param metal_programs Character vector of 232 tariff names that are metal programs (e.g., 'steel', 'aluminum')
@@ -569,7 +567,6 @@ calc_weighted_etr <- function(rates_232,
                               us_assembly_share,
                               ieepa_usmca_exempt,
                               s122_usmca_exempt = 0,
-                              s122_stacks_on_232 = 1,
                               metal_content = NULL,
                               metal_programs = character(0),
                               program_metal_types = NULL) {
@@ -798,15 +795,55 @@ calc_weighted_etr <- function(rates_232,
   # Apply stacking rules to calculate final_rate
   # =============================================================================
 
-  # Calculate max of all 232 rates
+  # Calculate effective 232 rate across all tariffs
   if (length(tariff_names) > 0) {
 
-    rate_matrix <- rate_matrix %>%
-      mutate(
+    if (use_per_type_nonmetal) {
+      # Per-type mode: metal rates are already scaled by disjoint type shares,
+      # so rates from different metal types are additive. Within a single metal
+      # type, pmax dedupes overlapping programs (e.g., aluminum_base vs
+      # aluminum_derivative). Non-metal 232 programs (autos) cover the full
+      # product, so they dominate via pmax against the metal sum.
+      nonmetal_232_programs <- setdiff(tariff_names, metal_programs)
+      nonmetal_232_cols <- paste0('s232_', nonmetal_232_programs, '_rate')
+      nonmetal_232_cols <- nonmetal_232_cols[nonmetal_232_cols %in% names(rate_matrix)]
 
-        # Max 232 rate across all tariffs
-        rate_232_max = pmax(!!!syms(rate_232_cols))
-      )
+      # Group metal programs by type and take pmax within each type
+      type_to_programs <- split(names(program_metal_types), unlist(program_metal_types))
+      type_max_exprs <- list()
+      for (metal_type in names(type_to_programs)) {
+        progs_of_type <- intersect(type_to_programs[[metal_type]], tariff_names)
+        cols_for_type <- paste0('s232_', progs_of_type, '_rate')
+        cols_for_type <- cols_for_type[cols_for_type %in% names(rate_matrix)]
+        if (length(cols_for_type) > 0) {
+          type_max_exprs[[metal_type]] <- rlang::expr(pmax(!!!syms(cols_for_type)))
+        }
+      }
+
+      # Sum across metal types (disjoint value fractions are additive)
+      if (length(type_max_exprs) > 0) {
+        metal_sum_expr <- Reduce(function(a, b) rlang::expr(!!a + !!b), type_max_exprs)
+      } else {
+        metal_sum_expr <- rlang::expr(0)
+      }
+
+      # pmax of non-metal 232 (full-product) vs metal sum (partial fractions)
+      if (length(nonmetal_232_cols) > 0) {
+        nonmetal_max_expr <- rlang::expr(pmax(!!!syms(nonmetal_232_cols)))
+        final_expr <- rlang::expr(pmax(!!nonmetal_max_expr, !!metal_sum_expr))
+      } else {
+        final_expr <- metal_sum_expr
+      }
+
+      rate_matrix <- rate_matrix %>%
+        mutate(rate_232_max = !!final_expr)
+
+    } else {
+      # Aggregate mode: single metal_share applied to all metal programs,
+      # so pmax across all 232 columns is correct
+      rate_matrix <- rate_matrix %>%
+        mutate(rate_232_max = pmax(!!!syms(rate_232_cols)))
+    }
 
   # No 232 tariffs - set max to 0
   } else {
@@ -855,23 +892,24 @@ calc_weighted_etr <- function(rates_232,
       # 2. IEEPA Fentanyl:
       #    - China: STACKS on top of everything (232 + reciprocal + fentanyl)
       #    - Others: Only applies to base not covered by 232 or reciprocal
-      # 3. Section 122: Stacks on IEEPA always; stacking on 232 controlled by s122_stacks_on_232 flag
+      # 3. Section 122: Excluded "to the extent the 232 tariff applies," meaning
+      #    S122 applies only to the nonmetal_share of 232-covered products (same as IEEPA).
+      #    For non-232 products, S122 applies in full.
 
       final_rate = case_when(
         # China: Fentanyl stacks on top of normal 232-reciprocal logic
-        # For metal 232 derivatives: reciprocal applies to non-metal portion
+        # For metal 232 derivatives: reciprocal and s122 apply to non-metal portion
         cty_code == CTY_CHINA ~ if_else(
           rate_232_max > 0,
           rate_232_max + ieepa_reciprocal_rate * nonmetal_share
-            + ieepa_fentanyl_rate + s122_rate * s122_stacks_on_232,
+            + ieepa_fentanyl_rate + s122_rate * nonmetal_share,
           ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate
         ),
 
-        # Everyone else: 232 takes precedence, then reciprocal + fentanyl
-        # For metal 232 derivatives: IEEPA applies to non-metal portion
+        # Everyone else: 232 takes precedence, then reciprocal + fentanyl + s122
+        # For metal 232 derivatives: IEEPA and s122 apply to non-metal portion
         rate_232_max > 0 ~
-          rate_232_max + (ieepa_reciprocal_rate + ieepa_fentanyl_rate) * nonmetal_share
-            + s122_rate * s122_stacks_on_232,
+          rate_232_max + (ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate) * nonmetal_share,
 
         # Otherwise use all IEEPA + s122
         TRUE ~ ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate
