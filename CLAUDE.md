@@ -84,6 +84,7 @@ config/tariff-timeline/
     232.yaml
     ieepa_reciprocal.yaml
     ieepa_fentanyl.yaml
+    s122.yaml              # optional
     other_params.yaml
   2025-04-02/
     232.yaml
@@ -144,7 +145,7 @@ Each scenario (or each date subfolder) requires:
 
 You can mix mnemonics and Census codes in the same config file.
 
-4. **s122.yaml** (optional) - Section 122 tariffs (STACKS on everything):
+4. **s122.yaml** (optional) - Section 122 balance-of-payments tariffs:
    ```yaml
    headline_rates:
      default: 0.05           # Default rate for all countries
@@ -153,9 +154,33 @@ You can mix mnemonics and Census codes in the same config file.
 
    product_rates:            # Optional: HTS-specific overrides
      '8703': 0.08            # Autos get different rate
-   ```
 
-5. **other_params.yaml** - USMCA parameters, auto rebate rates, etc.
+   product_country_rates:    # Optional: HTS×country overrides
+     - hts: ['87032201']
+       country: '5700'
+       rate: 0.20
+   ```
+   Uses the same hierarchical format and `load_ieepa_rates_yaml()` loader as IEEPA configs.
+   When absent, Section 122 rates default to zero.
+
+5. **other_params.yaml** - USMCA parameters, auto rebate rates, metal content, s122 flags:
+   ```yaml
+   # USMCA and auto sector parameters
+   us_auto_content_share: 0.4
+   us_auto_assembly_share: 0.33
+   auto_rebate_rate: 0.0375
+   ieepa_usmca_exception: 1      # Apply USMCA exemption to IEEPA (1 = yes)
+
+   # Section 122 flags
+   s122_usmca_exception: 0       # Apply USMCA exemption to s122 (1 = yes, default 0)
+   s122_stacks_on_232: 1         # s122 stacks on 232 (1 = yes, default 1)
+
+   # Metal content shares (optional, see load_metal_content() docstring)
+   metal_content:
+     method: 'cbo'               # 'flat', 'bea', or 'cbo'
+     primary_chapters: ['72', '73', '76']
+     metal_programs: [steel, aluminum_base_articles, ...]
+   ```
 
 ## Key Implementation Notes
 
@@ -166,7 +191,7 @@ The codebase uses a clean separation between config parsing and calculations:
 *Config Parsing → Tabular Data:*
 - `load_232_rates()`: Returns complete HS10×country tibble with one column per tariff (`s232_[tariff]_rate`)
 - `load_ieepa_rates_yaml()`: Generic loader - returns complete HS10×country tibble with configurable column name
-  - Used for both reciprocal and fentanyl tariffs
+  - Used for reciprocal, fentanyl, and Section 122 tariffs
   - Handles hierarchical rate structure (headline → product → product×country)
 - Both functions handle the full universe of HS10 codes × 240 countries
 - No nested lists - just clean tibbles ready for joining
@@ -195,7 +220,7 @@ The codebase uses a clean separation between config parsing and calculations:
 
 *src/calculations.R:*
 - `detect_scenario_type()`: Auto-detects static vs time-varying scenarios by looking for YYYY-MM-DD subfolders
-- `load_scenario_config()`: Loads all config YAMLs from a single directory into a named list
+- `load_scenario_config()`: Loads all config YAMLs (232, IEEPA reciprocal, IEEPA fentanyl, optional s122, other_params) from a single directory into a named list
 - `calc_etrs_for_config()`: Runs calc_weighted_etr() + aggregate_countries_to_partners() for one config set
 - `do_scenario()`: Main orchestrator/dispatcher - loads shared data, detects scenario type, dispatches to static or time-varying
 - `do_scenario_static()`: Runs a single-config scenario (original behavior)
