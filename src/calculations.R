@@ -5,7 +5,8 @@
 # Functions for calculating tariff deltas (counterfactual - baseline) and levels.
 #
 # Functions:
-#   - detect_scenario_structure():        Detect baseline/counterfactual structure
+#   - detect_baseline_structure():         Detect baseline structure (shared config)
+#   - detect_scenario_structure():        Detect counterfactual structure
 #   - load_scenario_config():             Load all config YAMLs from a directory
 #   - calc_etrs_for_config():             Calculate tariff levels for a single config set
 #   - calc_delta():                       Compute delta between baseline and counterfactual
@@ -57,35 +58,40 @@ find_date_subdirs <- function(dir_path) {
 }
 
 
-#' Detect scenario structure (baseline + counterfactual)
+#' Detect baseline structure (shared across scenarios)
+#'
+#' Checks that the shared baseline directory exists and detects whether
+#' it is static (config files at top level) or time-varying (YYYY-MM-DD
+#' subfolders).
+#'
+#' @param baseline_dir Path to the shared baseline config directory
+#'
+#' @return Named list with:
+#'   - baseline_dates: sorted date strings if time-varying, NULL if static
+detect_baseline_structure <- function(baseline_dir) {
+  if (!dir.exists(baseline_dir)) {
+    stop(sprintf('Shared baseline directory not found: %s', baseline_dir))
+  }
+
+  list(
+    baseline_dates = find_date_subdirs(baseline_dir)
+  )
+}
+
+
+#' Detect counterfactual structure for a scenario
 #'
 #' Examines the scenario config directory for:
-#'   - baseline/ subfolder (required)
 #'   - YYYY-MM-DD subfolders as counterfactual dates (time-varying)
 #'   - or config files at the top level (static counterfactual)
 #'
 #' @param scenario_dir Path to the scenario config directory
 #'
 #' @return Named list with:
-#'   - has_baseline: logical
-#'   - baseline_dates: sorted date strings if baseline is time-varying, NULL if static
 #'   - counter_dates: sorted date strings if counterfactual is time-varying, NULL if static
 detect_scenario_structure <- function(scenario_dir) {
-  has_baseline <- dir.exists(file.path(scenario_dir, 'baseline'))
-
-  # Counterfactual dates: YYYY-MM-DD subfolders at top level (excluding baseline/)
-  counter_dates <- find_date_subdirs(scenario_dir)
-
-  # Baseline dates: YYYY-MM-DD subfolders within baseline/
-  baseline_dates <- NULL
-  if (has_baseline) {
-    baseline_dates <- find_date_subdirs(file.path(scenario_dir, 'baseline'))
-  }
-
   list(
-    has_baseline   = has_baseline,
-    baseline_dates = baseline_dates,
-    counter_dates  = counter_dates
+    counter_dates = find_date_subdirs(scenario_dir)
   )
 }
 
@@ -463,11 +469,9 @@ do_scenario <- function(scenario, config_dir = 'config', output_dir = 'output',
   #---------------------------
 
   scenario_path <- file.path(config_dir, scenario)
-  structure <- detect_scenario_structure(scenario_path)
-
-  if (!structure$has_baseline) {
-    stop(sprintf('Scenario "%s" requires a baseline/ subdirectory in %s', scenario, scenario_path))
-  }
+  baseline_dir <- file.path(config_dir, 'baseline')
+  baseline_structure <- detect_baseline_structure(baseline_dir)
+  scenario_structure <- detect_scenario_structure(scenario_path)
 
   #---------------------------
   # Process baseline
@@ -476,17 +480,16 @@ do_scenario <- function(scenario, config_dir = 'config', output_dir = 'output',
   message('\n--- Processing baseline ---')
   baseline_results <- list()
 
-  if (is.null(structure$baseline_dates)) {
+  if (is.null(baseline_structure$baseline_dates)) {
     # Static baseline: config files directly in baseline/
-    baseline_path <- file.path(scenario_path, 'baseline')
-    baseline_config <- load_scenario_config(baseline_path)
+    baseline_config <- load_scenario_config(baseline_dir)
     baseline_etrs <- calc_etrs_for_config(baseline_config, hs10_by_country, usmca_shares, country_mapping)
     baseline_results[['static']] <- baseline_etrs$hs10_country_etrs
   } else {
     # Time-varying baseline
-    for (date_str in structure$baseline_dates) {
+    for (date_str in baseline_structure$baseline_dates) {
       message(sprintf('\n--- Processing baseline date: %s ---', date_str))
-      baseline_path <- file.path(scenario_path, 'baseline', date_str)
+      baseline_path <- file.path(baseline_dir, date_str)
       baseline_config <- load_scenario_config(baseline_path)
       baseline_etrs <- calc_etrs_for_config(baseline_config, hs10_by_country, usmca_shares, country_mapping)
       baseline_results[[date_str]] <- baseline_etrs$hs10_country_etrs
@@ -497,7 +500,7 @@ do_scenario <- function(scenario, config_dir = 'config', output_dir = 'output',
   # Dispatch to static or time-varying counterfactual
   #---------------------------
 
-  if (is.null(structure$counter_dates)) {
+  if (is.null(scenario_structure$counter_dates)) {
     # Static counterfactual (config files at scenario root)
     result <- do_scenario_static(
       scenario          = scenario,
@@ -511,12 +514,12 @@ do_scenario <- function(scenario, config_dir = 'config', output_dir = 'output',
   } else {
     # Time-varying counterfactual
     message(sprintf('\nDetected time-varying counterfactual with %d dates: %s',
-                    length(structure$counter_dates), paste(structure$counter_dates, collapse = ', ')))
+                    length(scenario_structure$counter_dates), paste(scenario_structure$counter_dates, collapse = ', ')))
     result <- do_scenario_time_varying(
       scenario          = scenario,
       scenario_path     = scenario_path,
       output_dir        = output_dir,
-      counter_dates     = structure$counter_dates,
+      counter_dates     = scenario_structure$counter_dates,
       hs10_by_country   = hs10_by_country,
       usmca_shares      = usmca_shares,
       country_mapping   = country_mapping,
@@ -576,6 +579,58 @@ match_baseline <- function(counter_date, baseline_results) {
 }
 
 
+#' Run a counterfactual config against the matched baseline
+#'
+#' Shared helper for static and time-varying counterfactual workflows.
+#'
+#' @param config_path Path to counterfactual config directory
+#' @param baseline_key Baseline matcher key ('static' or YYYY-MM-DD)
+#' @param hs10_by_country Pre-loaded import data
+#' @param usmca_shares Pre-loaded USMCA shares
+#' @param country_mapping Pre-loaded country mapping
+#' @param baseline_results Named list of baseline HS10-country results
+#' @param write_shocks Whether to write shocks.txt for this run
+#' @param shock_scenario Scenario path segment for shock output
+#' @param output_dir Base output directory for shock output
+#'
+#' @return Named list with hs10_country_etrs and partner_etrs
+run_counterfactual <- function(config_path, baseline_key,
+                               hs10_by_country, usmca_shares, country_mapping,
+                               baseline_results,
+                               write_shocks = FALSE,
+                               shock_scenario = NULL,
+                               output_dir = 'output') {
+
+  config <- load_scenario_config(config_path)
+  etrs <- calc_etrs_for_config(config, hs10_by_country, usmca_shares, country_mapping)
+
+  baseline_hs10 <- match_baseline(baseline_key, baseline_results)
+  hs10_country_etrs <- calc_delta(baseline_hs10, etrs$hs10_country_etrs)
+
+  partner_etrs <- aggregate_countries_to_partners(
+    hs10_country_etrs = hs10_country_etrs,
+    country_mapping   = country_mapping
+  )
+
+  if (write_shocks) {
+    if (is.null(shock_scenario)) {
+      stop('shock_scenario is required when write_shocks = TRUE')
+    }
+    write_shock_commands(
+      etr_data    = partner_etrs,
+      output_file = 'shocks.txt',
+      scenario    = shock_scenario,
+      output_base = output_dir
+    )
+  }
+
+  list(
+    hs10_country_etrs = hs10_country_etrs,
+    partner_etrs = partner_etrs
+  )
+}
+
+
 #' Run a static (non-time-varying) counterfactual scenario
 #'
 #' @param scenario Scenario name
@@ -591,18 +646,16 @@ do_scenario_static <- function(scenario, scenario_path, output_dir,
                                 hs10_by_country, usmca_shares, country_mapping,
                                 baseline_results) {
 
-  config <- load_scenario_config(scenario_path)
-  etrs <- calc_etrs_for_config(config, hs10_by_country, usmca_shares, country_mapping)
-
-  # Compute delta (counterfactual - baseline)
-  baseline_hs10 <- match_baseline('static', baseline_results)
-  hs10_country_etrs <- calc_delta(baseline_hs10, etrs$hs10_country_etrs)
-
-  # Re-aggregate with delta-adjusted etr
-  partner_etrs <- aggregate_countries_to_partners(
-    hs10_country_etrs = hs10_country_etrs,
-    country_mapping   = country_mapping
+  counterfactual <- run_counterfactual(
+    config_path      = scenario_path,
+    baseline_key     = 'static',
+    hs10_by_country  = hs10_by_country,
+    usmca_shares     = usmca_shares,
+    country_mapping  = country_mapping,
+    baseline_results = baseline_results
   )
+  hs10_country_etrs <- counterfactual$hs10_country_etrs
+  partner_etrs <- counterfactual$partner_etrs
 
   message('Writing outputs...')
 
@@ -690,27 +743,19 @@ do_scenario_time_varying <- function(scenario, scenario_path, output_dir,
   for (date_str in counter_dates) {
     message(sprintf('\n--- Processing counterfactual date: %s ---', date_str))
 
-    config_path <- file.path(scenario_path, date_str)
-    config <- load_scenario_config(config_path)
-    etrs <- calc_etrs_for_config(config, hs10_by_country, usmca_shares, country_mapping)
-
-    # Compute delta (counterfactual - baseline)
-    baseline_hs10 <- match_baseline(date_str, baseline_results)
-    hs10_country_etrs <- calc_delta(baseline_hs10, etrs$hs10_country_etrs)
-
-    # Re-aggregate with delta-adjusted etr
-    partner_etrs <- aggregate_countries_to_partners(
-      hs10_country_etrs = hs10_country_etrs,
-      country_mapping   = country_mapping
+    counterfactual <- run_counterfactual(
+      config_path      = file.path(scenario_path, date_str),
+      baseline_key     = date_str,
+      hs10_by_country  = hs10_by_country,
+      usmca_shares     = usmca_shares,
+      country_mapping  = country_mapping,
+      baseline_results = baseline_results,
+      write_shocks     = TRUE,
+      shock_scenario   = file.path(scenario, date_str),
+      output_dir       = output_dir
     )
-
-    # Write per-date shock commands (into output/scenario/date/shocks.txt)
-    write_shock_commands(
-      etr_data    = partner_etrs,
-      output_file = 'shocks.txt',
-      scenario    = file.path(scenario, date_str),
-      output_base = output_dir
-    )
+    hs10_country_etrs <- counterfactual$hs10_country_etrs
+    partner_etrs <- counterfactual$partner_etrs
 
     all_partner_etrs[[date_str]]      <- partner_etrs
     all_hs10_country_etrs[[date_str]] <- hs10_country_etrs
@@ -1362,19 +1407,37 @@ write_shock_commands <- function(etr_data, output_file = 'shocks.txt', scenario,
 #' @param etr_data Data frame with columns: partner, gtap_code, etr
 #'
 #' @return Tibble with gtap_code column and one column per partner (in pp)
-prepare_sector_country_deltas <- function(etr_data) {
+prepare_sector_country_wide <- function(etr_data, value_col) {
 
-  etrs_wide <- etr_data %>%
-    select(partner, gtap_code, etr) %>%
-    pivot_wider(names_from = partner, values_from = etr, values_fill = 0) %>%
+  wide_data <- etr_data %>%
+    select(partner, gtap_code, value = all_of(value_col)) %>%
+    pivot_wider(names_from = partner, values_from = value, values_fill = 0) %>%
     select(gtap_code, any_of(PARTNER_ORDER_CSV)) %>%
     mutate(across(-gtap_code, ~ .x * 100))
 
-  existing_sectors <- intersect(SECTOR_ORDER, etrs_wide$gtap_code)
+  existing_sectors <- intersect(SECTOR_ORDER, wide_data$gtap_code)
 
-  etrs_wide %>%
+  wide_data %>%
     filter(gtap_code %in% existing_sectors) %>%
     arrange(match(gtap_code, SECTOR_ORDER))
+}
+
+prepare_sector_country_deltas <- function(etr_data) {
+  prepare_sector_country_wide(etr_data, value_col = 'etr')
+}
+
+
+write_sector_country_wide <- function(etr_data, value_col,
+                                      output_file,
+                                      scenario = NULL,
+                                      output_base = 'output',
+                                      label = 'sector and country output') {
+
+  output_path <- get_output_path(output_file, scenario, output_base)
+  wide_data <- prepare_sector_country_wide(etr_data, value_col = value_col)
+  write_csv(wide_data, output_path)
+  message(sprintf('Wrote %s to %s (in pp units)', label, output_path))
+  invisible(wide_data)
 }
 
 
@@ -1393,11 +1456,14 @@ write_sector_country_deltas <- function(etr_data,
                                          scenario = NULL,
                                          output_base = 'output') {
 
-  output_path <- get_output_path(output_file, scenario, output_base)
-  deltas_wide <- prepare_sector_country_deltas(etr_data)
-  write_csv(deltas_wide, output_path)
-  message(sprintf('Wrote deltas by sector and country to %s (in pp units)', output_path))
-  invisible(deltas_wide)
+  write_sector_country_wide(
+    etr_data    = etr_data,
+    value_col   = 'etr',
+    output_file = output_file,
+    scenario    = scenario,
+    output_base = output_base,
+    label       = 'deltas by sector and country'
+  )
 }
 
 
@@ -1720,17 +1786,14 @@ write_sector_country_deltas_stacked <- function(all_partner_etrs,
                                                  scenario = NULL,
                                                  output_base = 'output') {
 
-  output_path <- get_output_path(output_file, scenario, output_base)
-
-  stacked <- names(all_partner_etrs) %>%
-    map_df(function(date_str) {
-      prepare_sector_country_deltas(all_partner_etrs[[date_str]]) %>%
-        mutate(date = date_str, .before = 1)
-    })
-
-  write_csv(stacked, output_path)
-  message(sprintf('Wrote stacked sector × country deltas to %s (in pp units)', output_path))
-  invisible(stacked)
+  write_sector_country_wide_stacked(
+    all_partner_etrs = all_partner_etrs,
+    value_col        = 'etr',
+    output_file      = output_file,
+    scenario         = scenario,
+    output_base      = output_base,
+    label            = 'sector x country deltas'
+  )
 }
 
 
@@ -1838,18 +1901,7 @@ write_overall_deltas_combined <- function(all_overall_data,
 #'
 #' @return Tibble with gtap_code column and one column per partner (in pp)
 prepare_levels_by_sector_country <- function(etr_data) {
-
-  levels_wide <- etr_data %>%
-    select(partner, gtap_code, level) %>%
-    pivot_wider(names_from = partner, values_from = level, values_fill = 0) %>%
-    select(gtap_code, any_of(PARTNER_ORDER_CSV)) %>%
-    mutate(across(-gtap_code, ~ .x * 100))
-
-  existing_sectors <- intersect(SECTOR_ORDER, levels_wide$gtap_code)
-
-  levels_wide %>%
-    filter(gtap_code %in% existing_sectors) %>%
-    arrange(match(gtap_code, SECTOR_ORDER))
+  prepare_sector_country_wide(etr_data, value_col = 'level')
 }
 
 
@@ -1868,11 +1920,14 @@ write_levels_by_sector_country <- function(etr_data,
                                             scenario = NULL,
                                             output_base = 'output') {
 
-  output_path <- get_output_path(output_file, scenario, output_base)
-  levels_wide <- prepare_levels_by_sector_country(etr_data)
-  write_csv(levels_wide, output_path)
-  message(sprintf('Wrote tariff levels by sector and country to %s (in pp units)', output_path))
-  invisible(levels_wide)
+  write_sector_country_wide(
+    etr_data    = etr_data,
+    value_col   = 'level',
+    output_file = output_file,
+    scenario    = scenario,
+    output_base = output_base,
+    label       = 'tariff levels by sector and country'
+  )
 }
 
 
@@ -1963,22 +2018,39 @@ write_overall_levels <- function(etr_data, hs10_country_etrs = NULL,
 #' @param output_file Output filename
 #' @param scenario Scenario name
 #' @param output_base Base output directory
-write_levels_by_sector_country_stacked <- function(all_partner_etrs,
-                                                    output_file = 'levels_by_sector_country.csv',
-                                                    scenario = NULL,
-                                                    output_base = 'output') {
+write_sector_country_wide_stacked <- function(all_partner_etrs,
+                                              value_col,
+                                              output_file,
+                                              scenario = NULL,
+                                              output_base = 'output',
+                                              label = 'sector x country output') {
 
   output_path <- get_output_path(output_file, scenario, output_base)
 
   stacked <- names(all_partner_etrs) %>%
     map_df(function(date_str) {
-      prepare_levels_by_sector_country(all_partner_etrs[[date_str]]) %>%
+      prepare_sector_country_wide(all_partner_etrs[[date_str]], value_col = value_col) %>%
         mutate(date = date_str, .before = 1)
     })
 
   write_csv(stacked, output_path)
-  message(sprintf('Wrote stacked sector × country tariff levels to %s (in pp units)', output_path))
+  message(sprintf('Wrote stacked %s to %s (in pp units)', label, output_path))
   invisible(stacked)
+}
+
+write_levels_by_sector_country_stacked <- function(all_partner_etrs,
+                                                    output_file = 'levels_by_sector_country.csv',
+                                                    scenario = NULL,
+                                                    output_base = 'output') {
+
+  write_sector_country_wide_stacked(
+    all_partner_etrs = all_partner_etrs,
+    value_col        = 'level',
+    output_file      = output_file,
+    scenario         = scenario,
+    output_base      = output_base,
+    label            = 'sector x country tariff levels'
+  )
 }
 
 
@@ -2020,3 +2092,5 @@ write_overall_levels_combined <- function(all_levels_data,
   message(sprintf('Wrote combined overall tariff levels to %s', output_path))
   invisible(all_levels_data)
 }
+
+

@@ -4,7 +4,8 @@
 #
 # This script runs tariff analysis for one or more scenarios, computing
 # deltas (counterfactual - baseline) and absolute tariff levels.
-# Each scenario has a baseline/ config and counterfactual config(s):
+# All scenarios share a baseline config (config/baseline/); each scenario
+# provides counterfactual config(s):
 #   - Section 232 tariffs (steel, aluminum, softwood, furniture, autos, etc.)
 #   - IEEPA tariffs (residual catch-all for imports not covered by 232)
 #   - USMCA exemptions with content requirements

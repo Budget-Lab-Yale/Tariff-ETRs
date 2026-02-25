@@ -71,7 +71,8 @@ The project uses Census Bureau country codes (not ISO codes). Country-to-partner
 - Specific-duty-only lines (~7% of HS8 codes) have mfn_rate = 0 (ad valorem equivalent not available)
 
 **Baseline Architecture:**
-- Every scenario requires a `baseline/` subdirectory with at least `other_params.yaml`
+- A single shared baseline lives at `config/baseline/` (not per-scenario)
+- Baseline requires at least `other_params.yaml`
 - Tariff YAML files (232.yaml, ieepa_*.yaml, s122.yaml) are optional; missing = zero rates
 - Deltas are computed as: counterfactual tariff level - baseline tariff level
 - For MFN-only baseline: omit all tariff YAMLs → all policy rates = 0 → delta = policy rate
@@ -92,20 +93,21 @@ source("src/main.R")
 
 ### Scenario Structure
 
-Every scenario requires a `baseline/` subdirectory. Counterfactual configs live either at the scenario root (static) or in YYYY-MM-DD dated subfolders (time-varying):
+All scenarios share a single baseline at `config/baseline/`. Counterfactual configs live in each scenario directory, either at the root (static) or in YYYY-MM-DD dated subfolders (time-varying):
 
 ```
-config/{scenario}/
-  baseline/                    # Baseline config (required)
+config/
+  baseline/                    # Shared baseline config (required)
     other_params.yaml          # Must include mfn_rates pointer
     232.yaml                   # Optional (missing = zero rates)
     ieepa_reciprocal.yaml      # Optional
     ieepa_fentanyl.yaml        # Optional
-  2026-01-01/                  # Counterfactual date (time-varying)
-    other_params.yaml
-    232.yaml
-    ieepa_reciprocal.yaml
-    ...
+  {scenario}/                  # Counterfactual configs only
+    2026-01-01/                # Counterfactual date (time-varying)
+      other_params.yaml
+      232.yaml
+      ieepa_reciprocal.yaml
+      ...
 ```
 
 Detection is automatic based on subdirectory names. Each date subfolder must have a complete config set (no inheritance/fallback). The same 2024 import weights are reused across all dates.
@@ -217,7 +219,8 @@ The codebase uses a clean separation between config parsing and calculations:
 - `load_mfn_rates()`: Loads MFN baseline tariff rates at HS8 level from resources/mfn_rates_2025.csv
 
 *src/calculations.R:*
-- `detect_scenario_structure()`: Detects baseline/counterfactual structure (baseline dates, counter dates)
+- `detect_baseline_structure()`: Detects shared baseline structure (static or time-varying)
+- `detect_scenario_structure()`: Detects counterfactual structure (counter dates)
 - `load_scenario_config()`: Loads all config YAMLs from a single directory into a named list. Tariff files (232, IEEPA, s122) are optional; missing = NULL = zero rates. MFN rates loaded from `other_params$mfn_rates` path.
 - `calc_etrs_for_config()`: Runs calc_weighted_etr() + aggregate_countries_to_partners() for one config set. MFN rates come from config (no separate parameter).
 - `calc_delta()`: Computes delta = counterfactual level - baseline level at HS10×country level

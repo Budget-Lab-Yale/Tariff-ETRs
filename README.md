@@ -22,9 +22,10 @@ Tariff-ETRs/
 │   ├── data_processing.R   # Census data processing
 │   └── calculations.R      # Delta/level calculations and aggregation
 ├── config/
-│   └── {scenario}/         # Scenario configuration
-│       ├── baseline/             # Baseline config (required)
-│       │   └── other_params.yaml # MFN-only baseline (no tariff YAMLs = zero rates)
+│   ├── baseline/                 # Shared baseline config
+│   │   ├── other_params.yaml     # Baseline parameters (MFN rates pointer, metal content)
+│   │   └── 232.yaml              # Pre-2025 Section 232 tariffs (optional)
+│   └── {scenario}/               # Counterfactual configs only
 │       ├── 2026-01-01/           # Counterfactual date (time-varying)
 │       │   ├── 232.yaml
 │       │   ├── ieepa_reciprocal.yaml
@@ -108,7 +109,7 @@ HTS10 codes map to GTAP sectors via a crosswalk derived from [Angel Aguiar's 6-d
    scenarios <- c('2-21_perm', '2-21_temp')
    ```
 
-2. Ensure config files exist in `config/{scenario}/` with a `baseline/` subdirectory
+2. Ensure config files exist in `config/{scenario}/` and a shared baseline exists at `config/baseline/`
 
 3. Run:
    ```r
@@ -117,12 +118,12 @@ HTS10 codes map to GTAP sectors via a crosswalk derived from [Angel Aguiar's 6-d
 
 ### Creating a New Scenario
 
-1. Create scenario directory with baseline:
-   ```bash
-   mkdir -p config/my_scenario/baseline
-   ```
+1. Ensure the shared baseline exists at `config/baseline/` (with at least `other_params.yaml`)
 
-2. Create `baseline/other_params.yaml` (MFN-only baseline needs only `mfn_rates` pointer)
+2. Create scenario directory:
+   ```bash
+   mkdir -p config/my_scenario
+   ```
 
 3. Add counterfactual config files (date subfolders for time-varying, or files at root for static)
 
@@ -130,23 +131,24 @@ HTS10 codes map to GTAP sectors via a crosswalk derived from [Angel Aguiar's 6-d
 
 ### Scenario Structure
 
-Every scenario requires a `baseline/` subdirectory. The baseline defines the reference point; deltas are computed as `counterfactual_level - baseline_level`.
+All scenarios share a single baseline at `config/baseline/`. The baseline defines the reference point; deltas are computed as `counterfactual_level - baseline_level`.
 
 ```
-config/{scenario}/
-  baseline/                    # Baseline config (required)
+config/
+  baseline/                    # Shared baseline config
     other_params.yaml          # Must include mfn_rates pointer
     232.yaml                   # Optional (missing = zero 232 rates)
     ieepa_reciprocal.yaml      # Optional (missing = zero rates)
     ieepa_fentanyl.yaml        # Optional (missing = zero rates)
     s122.yaml                  # Optional (missing = zero rates)
-  2026-01-01/                  # Counterfactual date (time-varying)
-    other_params.yaml
-    232.yaml
-    ...
+  {scenario}/                  # Counterfactual configs only
+    2026-01-01/                # Counterfactual date (time-varying)
+      other_params.yaml
+      232.yaml
+      ...
 ```
 
-For a simple MFN-only baseline, just `baseline/other_params.yaml` is needed (all tariff YAMLs omitted = zero policy rates). The baseline itself can be time-varying by adding YYYY-MM-DD subfolders within `baseline/`.
+For a simple MFN-only baseline, just `baseline/other_params.yaml` is needed (all tariff YAMLs omitted = zero policy rates). The current `2-21_perm` and `2-21_temp` scenarios use a pre-2025 baseline that includes original Section 232 steel/aluminum tariffs (Proclamations 9705/9704) and 2020 derivative products (Proclamation 9980) at the rates and country exemptions in effect as of January 2025. The baseline itself can be time-varying by adding YYYY-MM-DD subfolders within `baseline/`.
 
 ### MFN Rates
 
@@ -161,9 +163,9 @@ mfn_rates: 'resources/mfn_rates_2025.csv'
 To model tariff rates that change over time, create dated subfolders (YYYY-MM-DD) for the counterfactual configs. Each subfolder must contain a complete set of config files:
 
 ```bash
-config/tariff-timeline/
-  baseline/
-    other_params.yaml
+config/baseline/                  # Shared baseline
+  other_params.yaml
+config/tariff-timeline/           # Scenario counterfactuals
   2025-02-04/
     232.yaml
     ieepa_reciprocal.yaml
