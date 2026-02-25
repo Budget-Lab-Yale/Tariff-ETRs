@@ -53,14 +53,18 @@ Tariff-ETRs/
 │   │   ├── etrs_by_sector_country.csv     # ETR matrix (sector × partner)
 │   │   ├── etrs_by_census_country.csv     # Overall ETRs by census country
 │   │   ├── etrs_by_census_country_hts2.csv # ETRs by country × HTS chapter
-│   │   └── overall_etrs.txt               # Summary statistics
+│   │   ├── overall_etrs.txt               # Summary statistics
+│   │   ├── levels_by_sector_country.csv   # Total tariff levels (MFN + delta)
+│   │   └── overall_levels.txt             # Summary: total tariff levels
 │   └── {time-varying-scenario}/
 │       ├── 2025-02-04/shocks.txt          # Per-date shock commands
 │       ├── 2025-04-02/shocks.txt
 │       ├── etrs_by_sector_country.csv     # Stacked CSV (date column first)
 │       ├── etrs_by_census_country.csv     # Stacked CSV (date column first)
 │       ├── etrs_by_census_country_hts2.csv # Stacked CSV (date column first)
-│       └── overall_etrs.txt               # Combined with per-date sections
+│       ├── overall_etrs.txt               # Combined with per-date sections
+│       ├── levels_by_sector_country.csv   # Stacked levels CSV (date column first)
+│       └── overall_levels.txt             # Combined levels with per-date sections
 └── README.md
 ```
 
@@ -263,6 +267,14 @@ ETRs by country and 2-digit HTS chapter. Countries as rows, chapters (01-97) as 
 ### Summary Statistics (`overall_etrs.txt`)
 
 Overall ETRs by partner using both GTAP weights and 2024 Census import weights, plus tariff coverage statistics.
+
+### Tariff Levels (`levels_by_sector_country.csv`)
+
+Total tariff levels (MFN baseline + policy tariffs) in percentage points. Same format as `etrs_by_sector_country.csv` but represents total tariff rates rather than deltas from baseline. MFN rates are joined at the HS8 level from `resources/mfn_rates_2025.csv`.
+
+### Overall Tariff Levels (`overall_levels.txt`)
+
+Overall tariff levels by partner using both GTAP weights and 2024 Census import weights.
 
 ## Trading Partner Groups
 

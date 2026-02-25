@@ -23,6 +23,13 @@
 #   - calc_overall_etrs_data():           Compute overall ETR data (no I/O)
 #   - calc_overall_etrs():                Calculate and print overall ETR changes by country
 #   - write_*_stacked():                  Stacked output writers for time-varying scenarios
+#   - prepare_levels_by_sector_country(): Prepare sector × country tariff level data (no I/O)
+#   - write_levels_by_sector_country():   Write tariff levels to CSV (sector × country)
+#   - calc_overall_levels_data():         Compute overall tariff level data (no I/O)
+#   - format_level_table():               Format tariff level table as text lines
+#   - write_overall_levels():             Write overall tariff levels to text file
+#   - write_levels_by_sector_country_stacked(): Stacked levels CSV for time-varying
+#   - write_overall_levels_combined():    Combined levels text for time-varying
 #   - write_overall_etrs_combined():      Combined overall ETRs for time-varying scenarios
 #   - get_output_path():                  Helper to build output file paths
 #
@@ -218,9 +225,11 @@ load_scenario_config <- function(config_path) {
 #' @param hs10_by_country Import data (hs10, cty_code, gtap_code, imports)
 #' @param usmca_shares USMCA share data
 #' @param country_mapping Country-to-partner mapping
+#' @param mfn_rates MFN rates tibble (hs8, mfn_rate)
 #'
 #' @return Named list with hs10_country_etrs and partner_etrs
-calc_etrs_for_config <- function(config, hs10_by_country, usmca_shares, country_mapping) {
+calc_etrs_for_config <- function(config, hs10_by_country, usmca_shares, country_mapping,
+                                  mfn_rates) {
 
   message('Calculating ETRs at HS10 × country level...')
 
@@ -245,7 +254,8 @@ calc_etrs_for_config <- function(config, hs10_by_country, usmca_shares, country_
     s122_usmca_exempt      = config$other_params$s122_usmca_exception %||% 0,
     metal_content          = metal_content,
     metal_programs         = config$other_params$metal_content$metal_programs %||% character(0),
-    program_metal_types    = config$other_params$metal_content$program_metal_types %||% NULL
+    program_metal_types    = config$other_params$metal_content$program_metal_types %||% NULL,
+    mfn_rates              = mfn_rates
   )
 
   message('Aggregating HS10×country ETRs to partner×GTAP level...')
@@ -295,6 +305,9 @@ do_scenario <- function(scenario, config_dir = 'config', output_dir = 'output',
 
   # Read GTAP crosswalk (HS10 -> GTAP)
   crosswalk <- read_csv('resources/hs10_gtap_crosswalk.csv', show_col_types = FALSE)
+
+  # Load MFN baseline tariff rates (HS8 level)
+  mfn_rates <- load_mfn_rates()
 
   # Define cache path for processed data
   cache_dir <- 'cache'
@@ -369,7 +382,8 @@ do_scenario <- function(scenario, config_dir = 'config', output_dir = 'output',
       output_dir      = output_dir,
       hs10_by_country = hs10_by_country,
       usmca_shares    = usmca_shares,
-      country_mapping = country_mapping
+      country_mapping = country_mapping,
+      mfn_rates       = mfn_rates
     )
   } else {
     # Time-varying scenario
@@ -382,7 +396,8 @@ do_scenario <- function(scenario, config_dir = 'config', output_dir = 'output',
       scenario_dates  = scenario_dates,
       hs10_by_country = hs10_by_country,
       usmca_shares    = usmca_shares,
-      country_mapping = country_mapping
+      country_mapping = country_mapping,
+      mfn_rates       = mfn_rates
     )
   }
 
@@ -399,13 +414,15 @@ do_scenario <- function(scenario, config_dir = 'config', output_dir = 'output',
 #' @param hs10_by_country Pre-loaded import data
 #' @param usmca_shares Pre-loaded USMCA shares
 #' @param country_mapping Pre-loaded country mapping
+#' @param mfn_rates Pre-loaded MFN rates (hs8, mfn_rate)
 #'
 #' @return partner_etrs invisibly
 do_scenario_static <- function(scenario, config_dir, output_dir,
-                                hs10_by_country, usmca_shares, country_mapping) {
+                                hs10_by_country, usmca_shares, country_mapping,
+                                mfn_rates) {
 
   config <- load_scenario_config(file.path(config_dir, scenario))
-  etrs <- calc_etrs_for_config(config, hs10_by_country, usmca_shares, country_mapping)
+  etrs <- calc_etrs_for_config(config, hs10_by_country, usmca_shares, country_mapping, mfn_rates)
 
   message('Writing outputs...')
 
@@ -445,6 +462,21 @@ do_scenario_static <- function(scenario, config_dir, output_dir,
     output_base       = output_dir
   )
 
+  write_levels_by_sector_country(
+    etr_data    = etrs$partner_etrs,
+    output_file = 'levels_by_sector_country.csv',
+    scenario    = scenario,
+    output_base = output_dir
+  )
+
+  write_overall_levels(
+    etr_data          = etrs$partner_etrs,
+    hs10_country_etrs = etrs$hs10_country_etrs,
+    country_mapping   = country_mapping,
+    scenario          = scenario,
+    output_base       = output_dir
+  )
+
   etrs$partner_etrs
 }
 
@@ -461,23 +493,26 @@ do_scenario_static <- function(scenario, config_dir, output_dir,
 #' @param hs10_by_country Pre-loaded import data
 #' @param usmca_shares Pre-loaded USMCA shares
 #' @param country_mapping Pre-loaded country mapping
+#' @param mfn_rates Pre-loaded MFN rates (hs8, mfn_rate)
 #'
 #' @return Named list of per-date partner_etrs
 do_scenario_time_varying <- function(scenario, config_dir, output_dir,
                                       scenario_dates, hs10_by_country,
-                                      usmca_shares, country_mapping) {
+                                      usmca_shares, country_mapping,
+                                      mfn_rates) {
 
   # Collect per-date results
   all_partner_etrs      <- list()
   all_hs10_country_etrs <- list()
   all_overall_data      <- list()
+  all_levels_data       <- list()
 
   for (date_str in scenario_dates) {
     message(sprintf('\n--- Processing date: %s ---', date_str))
 
     config_path <- file.path(config_dir, scenario, date_str)
     config <- load_scenario_config(config_path)
-    etrs <- calc_etrs_for_config(config, hs10_by_country, usmca_shares, country_mapping)
+    etrs <- calc_etrs_for_config(config, hs10_by_country, usmca_shares, country_mapping, mfn_rates)
 
     # Write per-date shock commands (into output/scenario/date/shocks.txt)
     write_shock_commands(
@@ -495,6 +530,13 @@ do_scenario_time_varying <- function(scenario, config_dir, output_dir,
       etr_data        = etrs$partner_etrs,
       hs10_country_etrs = etrs$hs10_country_etrs,
       country_mapping = country_mapping
+    )
+
+    # Compute overall tariff level data for this date (no I/O)
+    all_levels_data[[date_str]] <- calc_overall_levels_data(
+      etr_data          = etrs$partner_etrs,
+      hs10_country_etrs = etrs$hs10_country_etrs,
+      country_mapping   = country_mapping
     )
   }
 
@@ -528,6 +570,19 @@ do_scenario_time_varying <- function(scenario, config_dir, output_dir,
     output_base      = output_dir
   )
 
+  write_levels_by_sector_country_stacked(
+    all_partner_etrs = all_partner_etrs,
+    output_file      = 'levels_by_sector_country.csv',
+    scenario         = scenario,
+    output_base      = output_dir
+  )
+
+  write_overall_levels_combined(
+    all_levels_data = all_levels_data,
+    scenario        = scenario,
+    output_base     = output_dir
+  )
+
   all_partner_etrs
 }
 
@@ -553,8 +608,9 @@ do_scenario_time_varying <- function(scenario, config_dir, output_dir,
 #' @param metal_programs Character vector of 232 tariff names that are metal programs (e.g., 'steel', 'aluminum')
 #' @param program_metal_types Named list: program_name -> metal type string (e.g., list(steel = 'steel', aluminum_base_articles = 'aluminum')).
 #'   When provided with per-type share columns, each program is scaled by its type's share instead of aggregate metal_share.
+#' @param mfn_rates Tibble with columns: hs8, mfn_rate (MFN baseline tariff rates)
 #'
-#' @return Data frame with columns: hs10, cty_code, gtap_code, imports, etr, base_232, base_ieepa, base_neither
+#' @return Data frame with columns: hs10, cty_code, gtap_code, imports, etr, mfn_rate, level, base_232, base_ieepa, base_neither
 calc_weighted_etr <- function(rates_232,
                               usmca_exempt_232,
                               rates_ieepa_reciprocal,
@@ -569,7 +625,8 @@ calc_weighted_etr <- function(rates_232,
                               s122_usmca_exempt = 0,
                               metal_content = NULL,
                               metal_programs = character(0),
-                              program_metal_types = NULL) {
+                              program_metal_types = NULL,
+                              mfn_rates = NULL) {
 
   # =============================================================================
   # Build complete rate matrix by joining config tables with import data
@@ -929,8 +986,39 @@ calc_weighted_etr <- function(rates_232,
       base_232     = if_else(rate_232_max > 0, imports, 0),
       base_ieepa   = if_else(rate_232_max == 0 & (ieepa_reciprocal_rate > 0 | ieepa_fentanyl_rate > 0), imports, 0),
       base_neither = if_else(rate_232_max == 0 & ieepa_reciprocal_rate == 0 & ieepa_fentanyl_rate == 0, imports, 0)
-    ) %>%
-    select(hs10, cty_code, gtap_code, imports, etr, base_232, base_ieepa, base_neither)
+    )
+
+  # =============================================================================
+  # Join MFN baseline rates and compute total tariff level
+  # =============================================================================
+
+  if (!is.null(mfn_rates)) {
+    hs10_country_etrs <- hs10_country_etrs %>%
+      mutate(hs8 = substr(hs10, 1, 8)) %>%
+      left_join(mfn_rates, by = 'hs8')
+
+    # Log coverage of MFN join (missing = HS8 codes not in MFN file)
+    n_missing <- sum(is.na(hs10_country_etrs$mfn_rate))
+    n_total <- nrow(hs10_country_etrs)
+    if (n_missing > 0) {
+      n_hs8_missing <- length(unique(hs10_country_etrs$hs8[is.na(hs10_country_etrs$mfn_rate)]))
+      message(sprintf('MFN join: %d of %d rows (%d unique HS8 codes) have no MFN rate, defaulting to 0',
+                       n_missing, n_total, n_hs8_missing))
+    }
+
+    hs10_country_etrs <- hs10_country_etrs %>%
+      mutate(
+        mfn_rate = if_else(is.na(mfn_rate), 0, mfn_rate),
+        level = mfn_rate + etr
+      ) %>%
+      select(-hs8)
+  } else {
+    hs10_country_etrs <- hs10_country_etrs %>%
+      mutate(mfn_rate = 0, level = etr)
+  }
+
+  hs10_country_etrs <- hs10_country_etrs %>%
+    select(hs10, cty_code, gtap_code, imports, etr, mfn_rate, level, base_232, base_ieepa, base_neither)
 
   return(hs10_country_etrs)
 }
@@ -942,10 +1030,10 @@ calc_weighted_etr <- function(rates_232,
 #' using import-weighted averaging. Also aggregates coverage bases for tariff
 #' coverage reporting.
 #'
-#' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr, base_232, base_ieepa, base_neither
+#' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr, mfn_rate, level, base_232, base_ieepa, base_neither
 #' @param country_mapping Data frame with columns: cty_code, partner
 #'
-#' @return Data frame with columns: partner, gtap_code, etr, base_232, base_ieepa, base_neither
+#' @return Data frame with columns: partner, gtap_code, etr, level, base_232, base_ieepa, base_neither
 aggregate_countries_to_partners <- function(hs10_country_etrs, country_mapping) {
 
   # Map countries to partners
@@ -958,20 +1046,24 @@ aggregate_countries_to_partners <- function(hs10_country_etrs, country_mapping) 
     mutate(partner = if_else(is.na(partner), 'row', partner))
 
   # Aggregate to partner × GTAP level using import-weighted average
+  # NOTE: weighted_etr and weighted_level must be computed BEFORE imports is overwritten
+  # (dplyr summarise gotcha — later expressions see the scalar aggregate, not the vector)
   partner_etrs <- etrs_with_partner %>%
     group_by(partner, gtap_code) %>%
     summarise(
       total_imports = sum(imports),
       weighted_etr = sum(etr * imports),
+      weighted_level = sum(level * imports),
       base_232 = sum(base_232),
       base_ieepa = sum(base_ieepa),
       base_neither = sum(base_neither),
       .groups = 'drop'
     ) %>%
     mutate(
-      etr = if_else(total_imports > 0, weighted_etr / total_imports, 0)
+      etr = if_else(total_imports > 0, weighted_etr / total_imports, 0),
+      level = if_else(total_imports > 0, weighted_level / total_imports, 0)
     ) %>%
-    select(partner, gtap_code, etr, base_232, base_ieepa, base_neither)
+    select(partner, gtap_code, etr, level, base_232, base_ieepa, base_neither)
 
   return(partner_etrs)
 }
@@ -1477,4 +1569,296 @@ write_overall_etrs_combined <- function(all_overall_data,
   writeLines(all_lines, output_path)
   message(sprintf('Wrote combined overall ETRs to %s', output_path))
   invisible(all_overall_data)
+}
+
+
+# =============================================================================
+# Level (MFN + delta) output functions
+# =============================================================================
+
+#' Prepare sector × country tariff level data in wide format (percentage points)
+#'
+#' @param etr_data Data frame with columns: partner, gtap_code, level
+#'
+#' @return Tibble with gtap_code column and one column per partner (in pp)
+prepare_levels_by_sector_country <- function(etr_data) {
+
+  sector_order <- c(
+    'pdr', 'wht', 'gro', 'v_f', 'osd', 'c_b', 'pfb', 'ocr', 'ctl', 'oap',
+    'rmk', 'wol', 'frs', 'fsh', 'coa', 'oil', 'gas', 'oxt', 'cmt', 'omt',
+    'vol', 'mil', 'pcr', 'sgr', 'ofd', 'b_t', 'tex', 'wap', 'lea', 'lum',
+    'ppp', 'p_c', 'chm', 'bph', 'rpp', 'nmm', 'i_s', 'nfm', 'fmp', 'ele',
+    'eeq', 'ome', 'mvh', 'otn', 'omf', 'ely', 'gdt', 'wtr', 'cns'
+  )
+
+  levels_wide <- etr_data %>%
+    select(partner, gtap_code, level) %>%
+    pivot_wider(names_from = partner, values_from = level, values_fill = 0) %>%
+    select(gtap_code, any_of(PARTNER_ORDER_CSV)) %>%
+    mutate(across(-gtap_code, ~ .x * 100))
+
+  existing_sectors <- intersect(sector_order, levels_wide$gtap_code)
+
+  levels_wide %>%
+    filter(gtap_code %in% existing_sectors) %>%
+    arrange(match(gtap_code, sector_order))
+}
+
+
+#' Write tariff levels to CSV in sector (rows) x country (columns) format
+#'
+#' Values are written in percentage points (pp), i.e., multiplied by 100.
+#'
+#' @param etr_data Data frame with columns: partner, gtap_code, level
+#' @param output_file Path to output file
+#' @param scenario Scenario name for output directory
+#' @param output_base Base output directory (default: 'output')
+#'
+#' @return Writes CSV file (in pp units) and returns invisibly
+write_levels_by_sector_country <- function(etr_data,
+                                            output_file = 'levels_by_sector_country.csv',
+                                            scenario = NULL,
+                                            output_base = 'output') {
+
+  output_path <- get_output_path(output_file, scenario, output_base)
+  levels_wide <- prepare_levels_by_sector_country(etr_data)
+  write_csv(levels_wide, output_path)
+  message(sprintf('Wrote tariff levels by sector and country to %s (in pp units)', output_path))
+  invisible(levels_wide)
+}
+
+
+#' Compute overall tariff level data (no I/O)
+#'
+#' Calculates country-level total tariff rates (MFN + delta) using GTAP and Census weights.
+#'
+#' @param etr_data Data frame with columns: partner, gtap_code, level
+#' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, level (for Census weights)
+#' @param country_mapping Data frame with columns: cty_code, partner
+#' @param weights_file Path to GTAP import weights CSV file
+#'
+#' @return Named list: by_country (tibble), gtap_total (numeric), census_total (numeric), level_lines (character)
+calc_overall_levels_data <- function(etr_data, hs10_country_etrs = NULL,
+                                     country_mapping = NULL,
+                                     weights_file = 'resources/gtap_import_weights.csv') {
+
+  # Calculate GTAP-weighted levels
+  gtap_weights <- read_csv(weights_file, show_col_types = FALSE)
+
+  gtap_weights_long <- gtap_weights %>%
+    pivot_longer(cols = -gtap_code, names_to = 'partner', values_to = 'import_weight') %>%
+    filter(import_weight > 0)
+
+  gtap_weighted_data <- etr_data %>%
+    inner_join(gtap_weights_long, by = c('partner', 'gtap_code')) %>%
+    mutate(weighted_level = level * import_weight)
+
+  gtap_country_levels <- gtap_weighted_data %>%
+    group_by(partner) %>%
+    summarise(
+      gtap_level = sum(weighted_level) / sum(import_weight),
+      .groups = 'drop'
+    )
+
+  gtap_total_level <- gtap_weighted_data %>%
+    summarise(gtap_level = sum(weighted_level) / sum(import_weight)) %>%
+    pull(gtap_level)
+
+  # Calculate 2024 Census-weighted levels
+  if (!is.null(hs10_country_etrs) && !is.null(country_mapping)) {
+    census_weights <- hs10_country_etrs %>%
+      left_join(
+        country_mapping %>% select(cty_code, partner) %>% distinct(),
+        by = 'cty_code'
+      ) %>%
+      mutate(partner = if_else(is.na(partner), 'row', partner)) %>%
+      group_by(partner, gtap_code) %>%
+      summarise(import_weight = sum(imports), .groups = 'drop') %>%
+      filter(import_weight > 0)
+
+    census_weighted_data <- etr_data %>%
+      inner_join(census_weights, by = c('partner', 'gtap_code')) %>%
+      mutate(weighted_level = level * import_weight)
+
+    census_country_levels <- census_weighted_data %>%
+      group_by(partner) %>%
+      summarise(
+        census_level = sum(weighted_level) / sum(import_weight),
+        .groups = 'drop'
+      )
+
+    census_total_level <- census_weighted_data %>%
+      summarise(census_level = sum(weighted_level) / sum(import_weight)) %>%
+      pull(census_level)
+
+    country_levels <- gtap_country_levels %>%
+      left_join(census_country_levels, by = 'partner') %>%
+      arrange(desc(gtap_level))
+  } else {
+    country_levels <- gtap_country_levels %>%
+      mutate(census_level = NA) %>%
+      arrange(desc(gtap_level))
+    census_total_level <- NA
+  }
+
+  level_lines <- format_level_table(country_levels, gtap_total_level, census_total_level)
+
+  list(
+    by_country   = country_levels,
+    gtap_total   = gtap_total_level,
+    census_total = census_total_level,
+    level_lines  = level_lines
+  )
+}
+
+
+#' Format tariff level table as vector of lines
+#'
+#' @param country_levels Data frame with partner, gtap_level, and optionally census_level
+#' @param gtap_total Total GTAP-weighted level
+#' @param census_total Total Census-weighted level (optional)
+#'
+#' @return Character vector of formatted lines
+format_level_table <- function(country_levels, gtap_total, census_total = NULL) {
+  has_census <- !is.null(census_total) && !is.na(census_total)
+
+  lines <- c(
+    'Overall Tariff Levels by Country (MFN baseline + policy tariffs):',
+    '=================================================================',
+    ''
+  )
+
+  if (has_census) {
+    lines <- c(lines,
+      sprintf('%-10s  %15s  %18s', '', 'GTAP Weights', '2024 Census Weights'),
+      sprintf('%-10s  %15s  %18s', 'Country', '', ''),
+      sprintf('%-10s  %15s  %18s', '-------', '------------', '-----------------')
+    )
+    for (i in 1:nrow(country_levels)) {
+      lines <- c(lines, sprintf('%-10s  %14.2f%%  %17.2f%%',
+        toupper(country_levels$partner[i]),
+        country_levels$gtap_level[i] * 100,
+        country_levels$census_level[i] * 100))
+    }
+    lines <- c(lines, '', sprintf('%-10s  %14.2f%%  %17.2f%%',
+      'TOTAL', gtap_total * 100, census_total * 100))
+  } else {
+    lines <- c(lines,
+      sprintf('%-10s  %15s', '', 'GTAP Weights'),
+      sprintf('%-10s  %15s', 'Country', ''),
+      sprintf('%-10s  %15s', '-------', '------------')
+    )
+    for (i in 1:nrow(country_levels)) {
+      lines <- c(lines, sprintf('%-10s  %14.2f%%',
+        toupper(country_levels$partner[i]),
+        country_levels$gtap_level[i] * 100))
+    }
+    lines <- c(lines, '', sprintf('%-10s  %14.2f%%', 'TOTAL', gtap_total * 100))
+  }
+
+  lines
+}
+
+
+#' Write overall tariff levels to text file
+#'
+#' @param etr_data Data frame with columns: partner, gtap_code, level
+#' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, level
+#' @param country_mapping Data frame with columns: cty_code, partner
+#' @param weights_file Path to GTAP import weights CSV file
+#' @param output_file Path to output text file
+#' @param scenario Scenario name for output directory
+#' @param output_base Base output directory (default: 'output')
+#'
+#' @return Prints overall levels and returns them invisibly
+write_overall_levels <- function(etr_data, hs10_country_etrs = NULL,
+                                  country_mapping = NULL,
+                                  weights_file = 'resources/gtap_import_weights.csv',
+                                  output_file = 'overall_levels.txt',
+                                  scenario = NULL,
+                                  output_base = 'output') {
+
+  result <- calc_overall_levels_data(etr_data, hs10_country_etrs, country_mapping, weights_file)
+
+  # Print to console
+  cat('\n')
+  cat(paste(result$level_lines, collapse = '\n'))
+  cat('\n\n')
+
+  # Write to file
+  output_path <- get_output_path(output_file, scenario, output_base)
+  writeLines(result$level_lines, output_path)
+
+  message(sprintf('Wrote overall tariff levels to %s', output_path))
+
+  invisible(list(
+    by_country = result$by_country,
+    gtap_total = result$gtap_total,
+    census_total = result$census_total
+  ))
+}
+
+
+#' Write stacked sector × country tariff level CSV with date column
+#'
+#' @param all_partner_etrs Named list (date → partner_etrs tibble)
+#' @param output_file Output filename
+#' @param scenario Scenario name
+#' @param output_base Base output directory
+write_levels_by_sector_country_stacked <- function(all_partner_etrs,
+                                                    output_file = 'levels_by_sector_country.csv',
+                                                    scenario = NULL,
+                                                    output_base = 'output') {
+
+  output_path <- get_output_path(output_file, scenario, output_base)
+
+  stacked <- names(all_partner_etrs) %>%
+    map_df(function(date_str) {
+      prepare_levels_by_sector_country(all_partner_etrs[[date_str]]) %>%
+        mutate(date = date_str, .before = 1)
+    })
+
+  write_csv(stacked, output_path)
+  message(sprintf('Wrote stacked sector × country tariff levels to %s (in pp units)', output_path))
+  invisible(stacked)
+}
+
+
+#' Write combined overall tariff levels text file for time-varying scenarios
+#'
+#' Each date gets its own section with level tables.
+#'
+#' @param all_levels_data Named list (date → result from calc_overall_levels_data())
+#' @param output_file Output filename
+#' @param scenario Scenario name
+#' @param output_base Base output directory
+write_overall_levels_combined <- function(all_levels_data,
+                                           output_file = 'overall_levels.txt',
+                                           scenario = NULL,
+                                           output_base = 'output') {
+
+  output_path <- get_output_path(output_file, scenario, output_base)
+
+  all_lines <- character(0)
+
+  for (date_str in names(all_levels_data)) {
+    data <- all_levels_data[[date_str]]
+
+    section_header <- c(
+      sprintf('Date: %s', date_str),
+      paste(rep('=', 65), collapse = ''),
+      ''
+    )
+
+    all_lines <- c(all_lines, section_header, data$level_lines, '', '')
+
+    # Print to console
+    cat('\n')
+    cat(paste(c(section_header, data$level_lines), collapse = '\n'))
+    cat('\n\n')
+  }
+
+  writeLines(all_lines, output_path)
+  message(sprintf('Wrote combined overall tariff levels to %s', output_path))
+  invisible(all_levels_data)
 }

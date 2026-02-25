@@ -54,11 +54,20 @@ The project uses Census Bureau country codes (not ISO codes). Country-to-partner
 - GTAP shock commands (output/{scenario}/shocks.txt)
 - Sector×country ETR matrix (output/{scenario}/etrs_by_sector_country.csv)
 - Overall ETRs by country (output/{scenario}/overall_etrs.txt)
+- Sector×country tariff levels (output/{scenario}/levels_by_sector_country.csv)
+- Overall tariff levels by country (output/{scenario}/overall_levels.txt)
 
 **Output (time-varying scenarios):**
 - Per-date shock commands (output/{scenario}/{date}/shocks.txt)
 - Stacked CSVs with `date` as first column (output/{scenario}/etrs_by_sector_country.csv)
 - Combined overall ETRs with per-date sections (output/{scenario}/overall_etrs.txt)
+- Stacked levels CSV with `date` as first column (output/{scenario}/levels_by_sector_country.csv)
+- Combined overall tariff levels with per-date sections (output/{scenario}/overall_levels.txt)
+
+**MFN Baseline Rates:**
+- MFN rates at HS8 level loaded from resources/mfn_rates_2025.csv
+- Tariff levels = MFN baseline + policy delta (ETR)
+- Specific-duty-only lines (~7% of HS8 codes) have mfn_rate = 0 (ad valorem equivalent not available)
 
 ## Development Commands
 
@@ -192,6 +201,7 @@ The codebase uses a clean separation between config parsing and calculations:
 
 *src/data_processing.R:*
 - `load_imports_hs10_country()`: Reads Census ZIP files, extracts IMP_DETL.TXT, returns HS10×country×month data
+- `load_mfn_rates()`: Loads MFN baseline tariff rates at HS8 level from resources/mfn_rates_2025.csv
 
 *src/calculations.R:*
 - `detect_scenario_type()`: Auto-detects static vs time-varying scenarios by looking for YYYY-MM-DD subfolders
@@ -200,11 +210,14 @@ The codebase uses a clean separation between config parsing and calculations:
 - `do_scenario()`: Main orchestrator/dispatcher - loads shared data, detects scenario type, dispatches to static or time-varying
 - `do_scenario_static()`: Runs a single-config scenario (original behavior)
 - `do_scenario_time_varying()`: Loops over dated configs, writes per-date shocks + stacked CSVs
-- `calc_weighted_etr()`: Joins tabular config data, applies USMCA exemptions/auto rebates, metal content adjustment, and stacking rules, calculates final ETR
-- `aggregate_countries_to_partners()`: Aggregates country-level ETRs to 8 partner groups using import-weighted averaging
+- `calc_weighted_etr()`: Joins tabular config data, applies USMCA exemptions/auto rebates, metal content adjustment, and stacking rules, calculates final ETR. Also joins MFN rates and computes tariff levels (MFN + delta).
+- `aggregate_countries_to_partners()`: Aggregates country-level ETRs and levels to 8 partner groups using import-weighted averaging
 - `prepare_*()` functions: Pure computation (no I/O) for sector_country, country_level, country_hts2, and overall ETR data
 - `write_*()` functions: Delegate to prepare_* then write files
 - `write_*_stacked()` functions: Stack per-date prepare_* results with date column for time-varying scenarios
+- `prepare_levels_by_sector_country()`, `write_levels_by_sector_country()`: Tariff level outputs (MFN + delta) mirroring the ETR equivalents
+- `calc_overall_levels_data()`, `format_level_table()`, `write_overall_levels()`: Overall tariff level summaries
+- `write_levels_by_sector_country_stacked()`, `write_overall_levels_combined()`: Stacked/combined level outputs for time-varying scenarios
 
 **Variable-Length HTS Matching:**
 - Both 232 and IEEPA tariffs use prefix matching: '8703' matches all HS10 codes starting with 8703
