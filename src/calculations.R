@@ -21,13 +21,14 @@
 #   - write_country_level_deltas():       Write overall country-level deltas to CSV
 #   - prepare_country_hts2_deltas():      Prepare country × HTS2 delta data (no I/O)
 #   - write_country_hts2_deltas():        Write country × HTS2 deltas to CSV
+#   - format_summary_table():             Format summary table (deltas or levels) as text
+#   - calc_weighted_summary():            Shared helper for GTAP/Census weighted averages
 #   - calc_overall_deltas_data():         Compute overall delta data (no I/O)
 #   - calc_overall_deltas():              Calculate and print overall deltas by country
 #   - write_*_stacked():                  Stacked output writers for time-varying scenarios
 #   - prepare_levels_by_sector_country(): Prepare sector × country tariff level data (no I/O)
 #   - write_levels_by_sector_country():   Write tariff levels to CSV (sector × country)
 #   - calc_overall_levels_data():         Compute overall tariff level data (no I/O)
-#   - format_level_table():               Format tariff level table as text lines
 #   - write_overall_levels():             Write overall tariff levels to text file
 #   - write_levels_by_sector_country_stacked(): Stacked levels CSV for time-varying
 #   - write_overall_levels_combined():    Combined levels text for time-varying
@@ -103,6 +104,15 @@ USMCA_COUNTRIES <- c(CTY_CANADA, CTY_MEXICO)
 PARTNER_ORDER_CSV <- c('china', 'canada', 'mexico', 'uk', 'japan', 'eu', 'row', 'ftrow')
 PARTNER_ORDER_SHOCKS <- c('China', 'ROW', 'FTROW', 'Canada', 'Mexico', 'Japan', 'EU', 'UK')
 
+# GTAP sector ordering for output CSVs
+SECTOR_ORDER <- c(
+  'pdr', 'wht', 'gro', 'v_f', 'osd', 'c_b', 'pfb', 'ocr', 'ctl', 'oap',
+  'rmk', 'wol', 'frs', 'fsh', 'coa', 'oil', 'gas', 'oxt', 'cmt', 'omt',
+  'vol', 'mil', 'pcr', 'sgr', 'ofd', 'b_t', 'tex', 'wap', 'lea', 'lum',
+  'ppp', 'p_c', 'chm', 'bph', 'rpp', 'nmm', 'i_s', 'nfm', 'fmp', 'ele',
+  'eeq', 'ome', 'mvh', 'otn', 'omf', 'ely', 'gdt', 'wtr', 'cns'
+)
+
 
 #' Build output file path, creating directory if needed
 #'
@@ -119,18 +129,22 @@ get_output_path <- function(output_file, scenario = NULL, output_base = 'output'
 }
 
 
-#' Format delta table as vector of lines
+#' Format summary table (deltas or levels) as vector of lines
 #'
-#' @param country_etrs Data frame with partner, gtap_etr, and optionally census_etr
-#' @param gtap_total Total GTAP-weighted delta
-#' @param census_total Total Census-weighted delta (optional)
+#' @param data Data frame with partner and gtap/census value columns
+#' @param gtap_total Total GTAP-weighted value
+#' @param census_total Total Census-weighted value (optional)
+#' @param gtap_col Name of the GTAP value column in data
+#' @param census_col Name of the Census value column in data
+#' @param header First line of the table (title)
 #'
 #' @return Character vector of formatted lines
-format_delta_table <- function(country_etrs, gtap_total, census_total = NULL) {
+format_summary_table <- function(data, gtap_total, census_total = NULL,
+                                 gtap_col, census_col, header) {
   has_census <- !is.null(census_total) && !is.na(census_total)
 
   lines <- c(
-    'Overall Tariff Deltas by Country (change from baseline scenario):',
+    header,
     '=================================================================',
     ''
   )
@@ -141,11 +155,11 @@ format_delta_table <- function(country_etrs, gtap_total, census_total = NULL) {
       sprintf('%-10s  %15s  %18s', 'Country', '', ''),
       sprintf('%-10s  %15s  %18s', '-------', '------------', '-----------------')
     )
-    for (i in 1:nrow(country_etrs)) {
+    for (i in 1:nrow(data)) {
       lines <- c(lines, sprintf('%-10s  %14.2f%%  %17.2f%%',
-        toupper(country_etrs$partner[i]),
-        country_etrs$gtap_etr[i] * 100,
-        country_etrs$census_etr[i] * 100))
+        toupper(data$partner[i]),
+        data[[gtap_col]][i] * 100,
+        data[[census_col]][i] * 100))
     }
     lines <- c(lines, '', sprintf('%-10s  %14.2f%%  %17.2f%%',
       'TOTAL', gtap_total * 100, census_total * 100))
@@ -155,15 +169,23 @@ format_delta_table <- function(country_etrs, gtap_total, census_total = NULL) {
       sprintf('%-10s  %15s', 'Country', ''),
       sprintf('%-10s  %15s', '-------', '------------')
     )
-    for (i in 1:nrow(country_etrs)) {
+    for (i in 1:nrow(data)) {
       lines <- c(lines, sprintf('%-10s  %14.2f%%',
-        toupper(country_etrs$partner[i]),
-        country_etrs$gtap_etr[i] * 100))
+        toupper(data$partner[i]),
+        data[[gtap_col]][i] * 100))
     }
     lines <- c(lines, '', sprintf('%-10s  %14.2f%%', 'TOTAL', gtap_total * 100))
   }
 
   lines
+}
+
+format_delta_table <- function(country_etrs, gtap_total, census_total = NULL) {
+  format_summary_table(
+    country_etrs, gtap_total, census_total,
+    gtap_col = 'gtap_etr', census_col = 'census_etr',
+    header = 'Overall Tariff Deltas by Country (change from baseline scenario):'
+  )
 }
 
 
@@ -178,7 +200,7 @@ format_coverage_table <- function(coverage_by_partner, coverage_total) {
     '',
     'Tariff Coverage by Country (fraction of 2024 import value):',
     '==========================================================',
-    sprintf('%-10s  %12s  %12s  %12s', 'Country', 'Under 232', 'Under IEEPA', 'Neither'),
+    sprintf('%-10s  %12s  %12s  %12s', 'Country', 'Under 232', 'Under non-232', 'Neither'),
     sprintf('%-10s  %12s  %12s  %12s', '-------', '---------', '-----------', '-------')
   )
 
@@ -521,14 +543,36 @@ match_baseline <- function(counter_date, baseline_results) {
     return(baseline_results[['static']])
   }
 
-  # Time-varying baseline: find most recent date <= counter_date
-  baseline_dates <- sort(names(baseline_results))
-  eligible <- baseline_dates[baseline_dates <= counter_date]
-  if (length(eligible) == 0) {
-    stop(sprintf('No baseline date found on or before counterfactual date %s (available: %s)',
-                 counter_date, paste(baseline_dates, collapse = ', ')))
+  # Time-varying baseline keys must be valid dates.
+  baseline_date_keys <- sort(names(baseline_results))
+  baseline_dates <- as.Date(baseline_date_keys, format = '%Y-%m-%d')
+  if (any(is.na(baseline_dates))) {
+    stop(sprintf('Baseline results contain non-date keys: %s',
+                 paste(baseline_date_keys[is.na(baseline_dates)], collapse = ', ')))
   }
-  baseline_results[[eligible[length(eligible)]]]
+
+  # Static counterfactual + time-varying baseline:
+  # use the latest available baseline explicitly.
+  if (counter_date == 'static') {
+    chosen_idx <- which.max(baseline_dates)
+    chosen_date <- baseline_date_keys[chosen_idx]
+    message(sprintf('Static counterfactual with time-varying baseline: using latest baseline date %s', chosen_date))
+    return(baseline_results[[chosen_date]])
+  }
+
+  counter_date_parsed <- as.Date(counter_date, format = '%Y-%m-%d')
+  if (is.na(counter_date_parsed)) {
+    stop(sprintf('Invalid counterfactual date: %s', counter_date))
+  }
+
+  # Time-varying baseline: find most recent date <= counterfactual date.
+  eligible_idx <- which(baseline_dates <= counter_date_parsed)
+  if (length(eligible_idx) == 0) {
+    stop(sprintf('No baseline date found on or before counterfactual date %s (available: %s)',
+                 counter_date, paste(baseline_date_keys, collapse = ', ')))
+  }
+  chosen_date <- baseline_date_keys[max(eligible_idx)]
+  baseline_results[[chosen_date]]
 }
 
 
@@ -1189,10 +1233,17 @@ calc_weighted_etr <- function(rates_232,
       etr = final_rate,
 
       # Coverage tracking (mutually exclusive categories for reporting)
-      # Note: For China, fentanyl stacks on top, but for coverage we track primary authority
+      # Note: For China, fentanyl stacks on top, but for coverage we track primary authority.
+      # The non-232 bucket includes IEEPA and Section 122.
       base_232     = if_else(rate_232_max > 0, imports, 0),
-      base_ieepa   = if_else(rate_232_max == 0 & (ieepa_reciprocal_rate > 0 | ieepa_fentanyl_rate > 0), imports, 0),
-      base_neither = if_else(rate_232_max == 0 & ieepa_reciprocal_rate == 0 & ieepa_fentanyl_rate == 0, imports, 0)
+      base_ieepa   = if_else(
+        rate_232_max == 0 & (ieepa_reciprocal_rate > 0 | ieepa_fentanyl_rate > 0 | s122_rate > 0),
+        imports, 0
+      ),
+      base_neither = if_else(
+        rate_232_max == 0 & ieepa_reciprocal_rate == 0 & ieepa_fentanyl_rate == 0 & s122_rate == 0,
+        imports, 0
+      )
     )
 
   hs10_country_etrs <- hs10_country_etrs %>%
@@ -1313,25 +1364,17 @@ write_shock_commands <- function(etr_data, output_file = 'shocks.txt', scenario,
 #' @return Tibble with gtap_code column and one column per partner (in pp)
 prepare_sector_country_deltas <- function(etr_data) {
 
-  sector_order <- c(
-    'pdr', 'wht', 'gro', 'v_f', 'osd', 'c_b', 'pfb', 'ocr', 'ctl', 'oap',
-    'rmk', 'wol', 'frs', 'fsh', 'coa', 'oil', 'gas', 'oxt', 'cmt', 'omt',
-    'vol', 'mil', 'pcr', 'sgr', 'ofd', 'b_t', 'tex', 'wap', 'lea', 'lum',
-    'ppp', 'p_c', 'chm', 'bph', 'rpp', 'nmm', 'i_s', 'nfm', 'fmp', 'ele',
-    'eeq', 'ome', 'mvh', 'otn', 'omf', 'ely', 'gdt', 'wtr', 'cns'
-  )
-
   etrs_wide <- etr_data %>%
     select(partner, gtap_code, etr) %>%
     pivot_wider(names_from = partner, values_from = etr, values_fill = 0) %>%
     select(gtap_code, any_of(PARTNER_ORDER_CSV)) %>%
     mutate(across(-gtap_code, ~ .x * 100))
 
-  existing_sectors <- intersect(sector_order, etrs_wide$gtap_code)
+  existing_sectors <- intersect(SECTOR_ORDER, etrs_wide$gtap_code)
 
   etrs_wide %>%
     filter(gtap_code %in% existing_sectors) %>%
-    arrange(match(gtap_code, sector_order))
+    arrange(match(gtap_code, SECTOR_ORDER))
 }
 
 
@@ -1457,6 +1500,89 @@ write_country_hts2_deltas <- function(hs10_country_etrs,
 }
 
 
+#' Compute weighted summary data for a value column (shared helper for deltas and levels)
+#'
+#' Calculates per-country and total weighted averages using both GTAP and Census weights.
+#'
+#' @param etr_data Data frame with columns: partner, gtap_code, and the value column
+#' @param value_col Name of the value column to weight (e.g., 'etr' or 'level')
+#' @param gtap_col Name for the GTAP-weighted result column (e.g., 'gtap_etr' or 'gtap_level')
+#' @param census_col Name for the Census-weighted result column (e.g., 'census_etr' or 'census_level')
+#' @param hs10_country_etrs Data frame with hs10-level data for Census weights (optional)
+#' @param country_mapping Data frame with cty_code → partner mapping (optional)
+#' @param weights_file Path to GTAP import weights CSV file
+#'
+#' @return Named list: by_country (tibble), gtap_total (numeric), census_total (numeric)
+calc_weighted_summary <- function(etr_data, value_col, gtap_col, census_col,
+                                  hs10_country_etrs = NULL,
+                                  country_mapping = NULL,
+                                  weights_file = 'resources/gtap_import_weights.csv') {
+
+  gtap_weights <- read_csv(weights_file, show_col_types = FALSE)
+
+  gtap_weights_long <- gtap_weights %>%
+    pivot_longer(cols = -gtap_code, names_to = 'partner', values_to = 'import_weight') %>%
+    filter(import_weight > 0)
+
+  gtap_weighted_data <- etr_data %>%
+    inner_join(gtap_weights_long, by = c('partner', 'gtap_code')) %>%
+    mutate(weighted_val = .data[[value_col]] * import_weight)
+
+  gtap_country <- gtap_weighted_data %>%
+    group_by(partner) %>%
+    summarise(
+      !!gtap_col := sum(weighted_val) / sum(import_weight),
+      .groups = 'drop'
+    )
+
+  gtap_total <- gtap_weighted_data %>%
+    summarise(val = sum(weighted_val) / sum(import_weight)) %>%
+    pull(val)
+
+  if (!is.null(hs10_country_etrs) && !is.null(country_mapping)) {
+    census_weights <- hs10_country_etrs %>%
+      left_join(
+        country_mapping %>% select(cty_code, partner) %>% distinct(),
+        by = 'cty_code'
+      ) %>%
+      mutate(partner = if_else(is.na(partner), 'row', partner)) %>%
+      group_by(partner, gtap_code) %>%
+      summarise(import_weight = sum(imports), .groups = 'drop') %>%
+      filter(import_weight > 0)
+
+    census_weighted_data <- etr_data %>%
+      inner_join(census_weights, by = c('partner', 'gtap_code')) %>%
+      mutate(weighted_val = .data[[value_col]] * import_weight)
+
+    census_country <- census_weighted_data %>%
+      group_by(partner) %>%
+      summarise(
+        !!census_col := sum(weighted_val) / sum(import_weight),
+        .groups = 'drop'
+      )
+
+    census_total <- census_weighted_data %>%
+      summarise(val = sum(weighted_val) / sum(import_weight)) %>%
+      pull(val)
+
+    by_country <- gtap_country %>%
+      left_join(census_country, by = 'partner') %>%
+      arrange(desc(.data[[gtap_col]]))
+  } else {
+    by_country <- gtap_country %>%
+      mutate(!!census_col := NA) %>%
+      arrange(desc(.data[[gtap_col]]))
+    census_total <- NA
+  }
+
+  list(
+    by_country   = by_country,
+    gtap_total   = gtap_total,
+    census_total = census_total
+  )
+}
+
+
 #' Compute overall delta data (no I/O)
 #'
 #' Calculates country deltas using GTAP and Census weights plus tariff coverage.
@@ -1473,64 +1599,13 @@ calc_overall_deltas_data <- function(etr_data, hs10_country_etrs = NULL,
                                    country_mapping = NULL,
                                    weights_file = 'resources/gtap_import_weights.csv') {
 
-  # Calculate GTAP-weighted ETRs
-  gtap_weights <- read_csv(weights_file, show_col_types = FALSE)
-
-  gtap_weights_long <- gtap_weights %>%
-    pivot_longer(cols = -gtap_code, names_to = 'partner', values_to = 'import_weight') %>%
-    filter(import_weight > 0)
-
-  gtap_weighted_data <- etr_data %>%
-    inner_join(gtap_weights_long, by = c('partner', 'gtap_code')) %>%
-    mutate(weighted_etr = etr * import_weight)
-
-  gtap_country_etrs <- gtap_weighted_data %>%
-    group_by(partner) %>%
-    summarise(
-      gtap_etr = sum(weighted_etr) / sum(import_weight),
-      .groups = 'drop'
-    )
-
-  gtap_total_etr_value <- gtap_weighted_data %>%
-    summarise(gtap_etr = sum(weighted_etr) / sum(import_weight)) %>%
-    pull(gtap_etr)
-
-  # Calculate 2024 Census-weighted ETRs
-  if (!is.null(hs10_country_etrs) && !is.null(country_mapping)) {
-    census_weights <- hs10_country_etrs %>%
-      left_join(
-        country_mapping %>% select(cty_code, partner) %>% distinct(),
-        by = 'cty_code'
-      ) %>%
-      mutate(partner = if_else(is.na(partner), 'row', partner)) %>%
-      group_by(partner, gtap_code) %>%
-      summarise(import_weight = sum(imports), .groups = 'drop') %>%
-      filter(import_weight > 0)
-
-    census_weighted_data <- etr_data %>%
-      inner_join(census_weights, by = c('partner', 'gtap_code')) %>%
-      mutate(weighted_etr = etr * import_weight)
-
-    census_country_etrs <- census_weighted_data %>%
-      group_by(partner) %>%
-      summarise(
-        census_etr = sum(weighted_etr) / sum(import_weight),
-        .groups = 'drop'
-      )
-
-    census_total_etr_value <- census_weighted_data %>%
-      summarise(census_etr = sum(weighted_etr) / sum(import_weight)) %>%
-      pull(census_etr)
-
-    country_etrs <- gtap_country_etrs %>%
-      left_join(census_country_etrs, by = 'partner') %>%
-      arrange(desc(gtap_etr))
-  } else {
-    country_etrs <- gtap_country_etrs %>%
-      mutate(census_etr = NA) %>%
-      arrange(desc(gtap_etr))
-    census_total_etr_value <- NA
-  }
+  result <- calc_weighted_summary(
+    etr_data, value_col = 'etr',
+    gtap_col = 'gtap_etr', census_col = 'census_etr',
+    hs10_country_etrs = hs10_country_etrs,
+    country_mapping = country_mapping,
+    weights_file = weights_file
+  )
 
   # Calculate tariff coverage
   coverage_stats <- NULL
@@ -1567,7 +1642,7 @@ calc_overall_deltas_data <- function(etr_data, hs10_country_etrs = NULL,
   }
 
   # Build formatted lines
-  delta_lines <- format_delta_table(country_etrs, gtap_total_etr_value, census_total_etr_value)
+  delta_lines <- format_delta_table(result$by_country, result$gtap_total, result$census_total)
   coverage_lines <- if (!is.null(coverage_stats)) {
     format_coverage_table(coverage_stats$by_partner, coverage_stats$total)
   } else {
@@ -1575,9 +1650,9 @@ calc_overall_deltas_data <- function(etr_data, hs10_country_etrs = NULL,
   }
 
   list(
-    by_country     = country_etrs,
-    gtap_total     = gtap_total_etr_value,
-    census_total   = census_total_etr_value,
+    by_country     = result$by_country,
+    gtap_total     = result$gtap_total,
+    census_total   = result$census_total,
     coverage_stats = coverage_stats,
     delta_lines    = delta_lines,
     coverage_lines = coverage_lines
@@ -1764,25 +1839,17 @@ write_overall_deltas_combined <- function(all_overall_data,
 #' @return Tibble with gtap_code column and one column per partner (in pp)
 prepare_levels_by_sector_country <- function(etr_data) {
 
-  sector_order <- c(
-    'pdr', 'wht', 'gro', 'v_f', 'osd', 'c_b', 'pfb', 'ocr', 'ctl', 'oap',
-    'rmk', 'wol', 'frs', 'fsh', 'coa', 'oil', 'gas', 'oxt', 'cmt', 'omt',
-    'vol', 'mil', 'pcr', 'sgr', 'ofd', 'b_t', 'tex', 'wap', 'lea', 'lum',
-    'ppp', 'p_c', 'chm', 'bph', 'rpp', 'nmm', 'i_s', 'nfm', 'fmp', 'ele',
-    'eeq', 'ome', 'mvh', 'otn', 'omf', 'ely', 'gdt', 'wtr', 'cns'
-  )
-
   levels_wide <- etr_data %>%
     select(partner, gtap_code, level) %>%
     pivot_wider(names_from = partner, values_from = level, values_fill = 0) %>%
     select(gtap_code, any_of(PARTNER_ORDER_CSV)) %>%
     mutate(across(-gtap_code, ~ .x * 100))
 
-  existing_sectors <- intersect(sector_order, levels_wide$gtap_code)
+  existing_sectors <- intersect(SECTOR_ORDER, levels_wide$gtap_code)
 
   levels_wide %>%
     filter(gtap_code %in% existing_sectors) %>%
-    arrange(match(gtap_code, sector_order))
+    arrange(match(gtap_code, SECTOR_ORDER))
 }
 
 
@@ -1823,121 +1890,31 @@ calc_overall_levels_data <- function(etr_data, hs10_country_etrs = NULL,
                                      country_mapping = NULL,
                                      weights_file = 'resources/gtap_import_weights.csv') {
 
-  # Calculate GTAP-weighted levels
-  gtap_weights <- read_csv(weights_file, show_col_types = FALSE)
+  result <- calc_weighted_summary(
+    etr_data, value_col = 'level',
+    gtap_col = 'gtap_level', census_col = 'census_level',
+    hs10_country_etrs = hs10_country_etrs,
+    country_mapping = country_mapping,
+    weights_file = weights_file
+  )
 
-  gtap_weights_long <- gtap_weights %>%
-    pivot_longer(cols = -gtap_code, names_to = 'partner', values_to = 'import_weight') %>%
-    filter(import_weight > 0)
-
-  gtap_weighted_data <- etr_data %>%
-    inner_join(gtap_weights_long, by = c('partner', 'gtap_code')) %>%
-    mutate(weighted_level = level * import_weight)
-
-  gtap_country_levels <- gtap_weighted_data %>%
-    group_by(partner) %>%
-    summarise(
-      gtap_level = sum(weighted_level) / sum(import_weight),
-      .groups = 'drop'
-    )
-
-  gtap_total_level <- gtap_weighted_data %>%
-    summarise(gtap_level = sum(weighted_level) / sum(import_weight)) %>%
-    pull(gtap_level)
-
-  # Calculate 2024 Census-weighted levels
-  if (!is.null(hs10_country_etrs) && !is.null(country_mapping)) {
-    census_weights <- hs10_country_etrs %>%
-      left_join(
-        country_mapping %>% select(cty_code, partner) %>% distinct(),
-        by = 'cty_code'
-      ) %>%
-      mutate(partner = if_else(is.na(partner), 'row', partner)) %>%
-      group_by(partner, gtap_code) %>%
-      summarise(import_weight = sum(imports), .groups = 'drop') %>%
-      filter(import_weight > 0)
-
-    census_weighted_data <- etr_data %>%
-      inner_join(census_weights, by = c('partner', 'gtap_code')) %>%
-      mutate(weighted_level = level * import_weight)
-
-    census_country_levels <- census_weighted_data %>%
-      group_by(partner) %>%
-      summarise(
-        census_level = sum(weighted_level) / sum(import_weight),
-        .groups = 'drop'
-      )
-
-    census_total_level <- census_weighted_data %>%
-      summarise(census_level = sum(weighted_level) / sum(import_weight)) %>%
-      pull(census_level)
-
-    country_levels <- gtap_country_levels %>%
-      left_join(census_country_levels, by = 'partner') %>%
-      arrange(desc(gtap_level))
-  } else {
-    country_levels <- gtap_country_levels %>%
-      mutate(census_level = NA) %>%
-      arrange(desc(gtap_level))
-    census_total_level <- NA
-  }
-
-  level_lines <- format_level_table(country_levels, gtap_total_level, census_total_level)
+  level_lines <- format_level_table(result$by_country, result$gtap_total, result$census_total)
 
   list(
-    by_country   = country_levels,
-    gtap_total   = gtap_total_level,
-    census_total = census_total_level,
+    by_country   = result$by_country,
+    gtap_total   = result$gtap_total,
+    census_total = result$census_total,
     level_lines  = level_lines
   )
 }
 
 
-#' Format tariff level table as vector of lines
-#'
-#' @param country_levels Data frame with partner, gtap_level, and optionally census_level
-#' @param gtap_total Total GTAP-weighted level
-#' @param census_total Total Census-weighted level (optional)
-#'
-#' @return Character vector of formatted lines
 format_level_table <- function(country_levels, gtap_total, census_total = NULL) {
-  has_census <- !is.null(census_total) && !is.na(census_total)
-
-  lines <- c(
-    'Overall Tariff Levels by Country (MFN baseline + policy tariffs):',
-    '=================================================================',
-    ''
+  format_summary_table(
+    country_levels, gtap_total, census_total,
+    gtap_col = 'gtap_level', census_col = 'census_level',
+    header = 'Overall Tariff Levels by Country (MFN baseline + policy tariffs):'
   )
-
-  if (has_census) {
-    lines <- c(lines,
-      sprintf('%-10s  %15s  %18s', '', 'GTAP Weights', '2024 Census Weights'),
-      sprintf('%-10s  %15s  %18s', 'Country', '', ''),
-      sprintf('%-10s  %15s  %18s', '-------', '------------', '-----------------')
-    )
-    for (i in 1:nrow(country_levels)) {
-      lines <- c(lines, sprintf('%-10s  %14.2f%%  %17.2f%%',
-        toupper(country_levels$partner[i]),
-        country_levels$gtap_level[i] * 100,
-        country_levels$census_level[i] * 100))
-    }
-    lines <- c(lines, '', sprintf('%-10s  %14.2f%%  %17.2f%%',
-      'TOTAL', gtap_total * 100, census_total * 100))
-  } else {
-    lines <- c(lines,
-      sprintf('%-10s  %15s', '', 'GTAP Weights'),
-      sprintf('%-10s  %15s', 'Country', ''),
-      sprintf('%-10s  %15s', '-------', '------------')
-    )
-    for (i in 1:nrow(country_levels)) {
-      lines <- c(lines, sprintf('%-10s  %14.2f%%',
-        toupper(country_levels$partner[i]),
-        country_levels$gtap_level[i] * 100))
-    }
-    lines <- c(lines, '', sprintf('%-10s  %14.2f%%', 'TOTAL', gtap_total * 100))
-  }
-
-  lines
 }
 
 
