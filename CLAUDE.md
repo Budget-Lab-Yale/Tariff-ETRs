@@ -52,22 +52,30 @@ The project uses Census Bureau country codes (not ISO codes). Country-to-partner
 
 **Output (static scenarios):**
 - GTAP shock commands (output/{scenario}/shocks.txt)
-- Sector×country ETR matrix (output/{scenario}/etrs_by_sector_country.csv)
-- Overall ETRs by country (output/{scenario}/overall_etrs.txt)
+- Sector×country delta matrix (output/{scenario}/deltas_by_sector_country.csv)
+- Overall deltas by country (output/{scenario}/overall_deltas.txt)
 - Sector×country tariff levels (output/{scenario}/levels_by_sector_country.csv)
 - Overall tariff levels by country (output/{scenario}/overall_levels.txt)
 
 **Output (time-varying scenarios):**
 - Per-date shock commands (output/{scenario}/{date}/shocks.txt)
-- Stacked CSVs with `date` as first column (output/{scenario}/etrs_by_sector_country.csv)
-- Combined overall ETRs with per-date sections (output/{scenario}/overall_etrs.txt)
+- Stacked CSVs with `date` as first column (output/{scenario}/deltas_by_sector_country.csv)
+- Combined overall deltas with per-date sections (output/{scenario}/overall_deltas.txt)
 - Stacked levels CSV with `date` as first column (output/{scenario}/levels_by_sector_country.csv)
 - Combined overall tariff levels with per-date sections (output/{scenario}/overall_levels.txt)
 
 **MFN Baseline Rates:**
-- MFN rates at HS8 level loaded from resources/mfn_rates_2025.csv
-- Tariff levels = MFN baseline + policy delta (ETR)
+- MFN rates at HS8 level loaded from path specified in `other_params.yaml` (`mfn_rates` key)
+- Each config (baseline and counterfactual) specifies its own MFN rates path
+- Tariff levels = MFN baseline + policy tariffs; deltas = counterfactual level - baseline level
 - Specific-duty-only lines (~7% of HS8 codes) have mfn_rate = 0 (ad valorem equivalent not available)
+
+**Baseline Architecture:**
+- Every scenario requires a `baseline/` subdirectory with at least `other_params.yaml`
+- Tariff YAML files (232.yaml, ieepa_*.yaml, s122.yaml) are optional; missing = zero rates
+- Deltas are computed as: counterfactual tariff level - baseline tariff level
+- For MFN-only baseline: omit all tariff YAMLs → all policy rates = 0 → delta = policy rate
+- Baseline can be static (files in baseline/) or time-varying (YYYY-MM-DD subfolders within baseline/)
 
 ## Development Commands
 
@@ -82,29 +90,33 @@ source("src/main.R")
 
 ## Configuration Files
 
-### Scenario Types
+### Scenario Structure
 
-**Static scenarios** have config files directly in `config/{scenario}/`.
+Every scenario requires a `baseline/` subdirectory. Counterfactual configs live either at the scenario root (static) or in YYYY-MM-DD dated subfolders (time-varying):
 
-**Time-varying scenarios** use YYYY-MM-DD dated subfolders, each containing a complete config set:
 ```
-config/tariff-timeline/
-  2025-02-04/
+config/{scenario}/
+  baseline/                    # Baseline config (required)
+    other_params.yaml          # Must include mfn_rates pointer
+    232.yaml                   # Optional (missing = zero rates)
+    ieepa_reciprocal.yaml      # Optional
+    ieepa_fentanyl.yaml        # Optional
+  2026-01-01/                  # Counterfactual date (time-varying)
+    other_params.yaml
     232.yaml
     ieepa_reciprocal.yaml
-    ieepa_fentanyl.yaml
-    other_params.yaml
-  2025-04-02/
-    232.yaml
     ...
 ```
-Detection is automatic based on subdirectory names. Each date subfolder must have a complete set of config files (no inheritance/fallback). The same 2024 import weights are reused across all dates.
+
+Detection is automatic based on subdirectory names. Each date subfolder must have a complete config set (no inheritance/fallback). The same 2024 import weights are reused across all dates.
+
+The baseline itself can be static (files directly in `baseline/`) or time-varying (YYYY-MM-DD subfolders within `baseline/`). For time-varying counterfactuals with a time-varying baseline, each counterfactual date is matched to the most recent baseline date <= counter date.
 
 ### Config Files
 
-Each scenario (or each date subfolder) requires:
+Each config directory (baseline or counterfactual date) requires `other_params.yaml`. Tariff YAMLs are optional (missing = zero rates):
 
-1. **232.yaml** - Section 232 tariffs with country-level rates and defaults:
+1. **232.yaml** (optional) - Section 232 tariffs with country-level rates and defaults:
    ```yaml
    tariff_name:
      base: [list of variable-length HTS codes: 4, 6, 8, or 10 digits]
@@ -118,7 +130,7 @@ Each scenario (or each date subfolder) requires:
      usmca_exempt: 0         # 1 = apply USMCA exemptions, 0 = no exemption
    ```
 
-2. **ieepa_reciprocal.yaml** - IEEPA reciprocal tariffs (mutually exclusive with 232):
+2. **ieepa_reciprocal.yaml** (optional) - IEEPA reciprocal tariffs (mutually exclusive with 232):
    ```yaml
    headline_rates:
      default: 0.1            # Default rate for unmapped countries
@@ -131,7 +143,7 @@ Each scenario (or each date subfolder) requires:
      '8703': 0.15            # Simple rate (applies to all countries)
    ```
 
-3. **ieepa_fentanyl.yaml** - IEEPA fentanyl tariffs (STACKS for China, mutually exclusive otherwise):
+3. **ieepa_fentanyl.yaml** (optional) - IEEPA fentanyl tariffs (STACKS for China, mutually exclusive otherwise):
    ```yaml
    headline_rates:
      default: 0.1            # Default rate for unmapped countries
@@ -164,7 +176,8 @@ You can mix mnemonics and Census codes in the same config file.
      '8703': 0.08            # Autos get different rate
    ```
 
-5. **other_params.yaml** - USMCA parameters, auto rebate rates, etc.
+5. **other_params.yaml** (required) - MFN rates pointer, USMCA parameters, auto rebate rates, etc.
+   Must include: `mfn_rates: 'resources/mfn_rates_2025.csv'`
 
 ## Key Implementation Notes
 
@@ -204,18 +217,20 @@ The codebase uses a clean separation between config parsing and calculations:
 - `load_mfn_rates()`: Loads MFN baseline tariff rates at HS8 level from resources/mfn_rates_2025.csv
 
 *src/calculations.R:*
-- `detect_scenario_type()`: Auto-detects static vs time-varying scenarios by looking for YYYY-MM-DD subfolders
-- `load_scenario_config()`: Loads all config YAMLs from a single directory into a named list
-- `calc_etrs_for_config()`: Runs calc_weighted_etr() + aggregate_countries_to_partners() for one config set
-- `do_scenario()`: Main orchestrator/dispatcher - loads shared data, detects scenario type, dispatches to static or time-varying
-- `do_scenario_static()`: Runs a single-config scenario (original behavior)
-- `do_scenario_time_varying()`: Loops over dated configs, writes per-date shocks + stacked CSVs
-- `calc_weighted_etr()`: Joins tabular config data, applies USMCA exemptions/auto rebates, metal content adjustment, and stacking rules, calculates final ETR. Also joins MFN rates and computes tariff levels (MFN + delta).
-- `aggregate_countries_to_partners()`: Aggregates country-level ETRs and levels to 8 partner groups using import-weighted averaging
-- `prepare_*()` functions: Pure computation (no I/O) for sector_country, country_level, country_hts2, and overall ETR data
-- `write_*()` functions: Delegate to prepare_* then write files
-- `write_*_stacked()` functions: Stack per-date prepare_* results with date column for time-varying scenarios
-- `prepare_levels_by_sector_country()`, `write_levels_by_sector_country()`: Tariff level outputs (MFN + delta) mirroring the ETR equivalents
+- `detect_scenario_structure()`: Detects baseline/counterfactual structure (baseline dates, counter dates)
+- `load_scenario_config()`: Loads all config YAMLs from a single directory into a named list. Tariff files (232, IEEPA, s122) are optional; missing = NULL = zero rates. MFN rates loaded from `other_params$mfn_rates` path.
+- `calc_etrs_for_config()`: Runs calc_weighted_etr() + aggregate_countries_to_partners() for one config set. MFN rates come from config (no separate parameter).
+- `calc_delta()`: Computes delta = counterfactual level - baseline level at HS10×country level
+- `do_scenario()`: Main orchestrator - loads shared data, detects structure, processes baseline, processes counterfactual, computes deltas
+- `do_scenario_static()`: Processes a static counterfactual with baseline delta computation
+- `do_scenario_time_varying()`: Loops over counterfactual dates, matches each to baseline, computes deltas
+- `match_baseline()`: Matches a counterfactual date to the appropriate baseline result (static or carry-forward)
+- `calc_weighted_etr()`: Joins tabular config data, applies USMCA exemptions/auto rebates, metal content adjustment, and stacking rules. Handles NULL tariff inputs (missing config = zero rates). Also joins MFN rates and computes tariff levels.
+- `aggregate_countries_to_partners()`: Aggregates country-level results to 8 partner groups using import-weighted averaging
+- `prepare_*_deltas()` functions: Pure computation (no I/O) for sector_country, country_level, country_hts2, and overall delta data
+- `write_*_deltas()` functions: Delegate to prepare_* then write delta files
+- `write_*_deltas_stacked()` functions: Stack per-date prepare_* results with date column for time-varying scenarios
+- `prepare_levels_by_sector_country()`, `write_levels_by_sector_country()`: Tariff level outputs
 - `calc_overall_levels_data()`, `format_level_table()`, `write_overall_levels()`: Overall tariff level summaries
 - `write_levels_by_sector_country_stacked()`, `write_overall_levels_combined()`: Stacked/combined level outputs for time-varying scenarios
 

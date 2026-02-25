@@ -9,7 +9,10 @@ us_auto_assembly_share: 0.33    # Share of US assembly in autos
 auto_rebate_rate: 0.0375        # Auto rebate rate
 
 # IEEPA parameters
-ieepa_usmca_exception: 1        # Apply USMCA exemption to IEEPA tariffs (1 = yes, 0 = no)
+ieepa_usmca_exception: 0        # No IEEPA tariffs in this period
+
+# Section 122 parameters
+s122_usmca_exception: 1         # Apply USMCA exemption to s122 tariffs (1 = yes, 0 = no)
 
 metal_content:
   method: 'bea'

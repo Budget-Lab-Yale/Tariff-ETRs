@@ -2,26 +2,27 @@
 # calculations.R
 # =============================================================================
 #
-# Functions for calculating effective tariff rates and generating outputs.
+# Functions for calculating tariff deltas (counterfactual - baseline) and levels.
 #
 # Functions:
-#   - detect_scenario_type():             Detect static vs time-varying scenario
+#   - detect_scenario_structure():        Detect baseline/counterfactual structure
 #   - load_scenario_config():             Load all config YAMLs from a directory
-#   - calc_etrs_for_config():             Calculate ETRs for a single config set
-#   - do_scenario():                      Run complete ETR analysis (dispatcher)
-#   - do_scenario_static():               Run a static scenario
-#   - do_scenario_time_varying():         Run a time-varying (dated subfolder) scenario
-#   - calc_weighted_etr():                Calculate weighted ETR changes at HS10 × country level
-#   - aggregate_countries_to_partners():  Aggregate HS10×country ETRs to partner×GTAP level
+#   - calc_etrs_for_config():             Calculate tariff levels for a single config set
+#   - calc_delta():                       Compute delta between baseline and counterfactual
+#   - do_scenario():                      Run complete analysis (dispatcher)
+#   - do_scenario_static():               Run a static counterfactual scenario
+#   - do_scenario_time_varying():         Run a time-varying counterfactual scenario
+#   - calc_weighted_etr():                Calculate weighted tariff rates at HS10 × country level
+#   - aggregate_countries_to_partners():  Aggregate HS10×country results to partner×GTAP level
 #   - write_shock_commands():             Write GTAP shock commands to output file
-#   - prepare_sector_country_etrs():      Prepare sector × country ETR data (no I/O)
-#   - write_sector_country_etrs():        Write ETRs to CSV in sector x country format
-#   - prepare_country_level_etrs():       Prepare country-level ETR data (no I/O)
-#   - write_country_level_etrs():         Write overall country-level ETRs to CSV
-#   - prepare_country_hts2_etrs():        Prepare country × HTS2 ETR data (no I/O)
-#   - write_country_hts2_etrs():          Write country × HTS2 ETRs to CSV
-#   - calc_overall_etrs_data():           Compute overall ETR data (no I/O)
-#   - calc_overall_etrs():                Calculate and print overall ETR changes by country
+#   - prepare_sector_country_deltas():    Prepare sector × country delta data (no I/O)
+#   - write_sector_country_deltas():      Write deltas to CSV in sector x country format
+#   - prepare_country_level_deltas():     Prepare country-level delta data (no I/O)
+#   - write_country_level_deltas():       Write overall country-level deltas to CSV
+#   - prepare_country_hts2_deltas():      Prepare country × HTS2 delta data (no I/O)
+#   - write_country_hts2_deltas():        Write country × HTS2 deltas to CSV
+#   - calc_overall_deltas_data():         Compute overall delta data (no I/O)
+#   - calc_overall_deltas():              Calculate and print overall deltas by country
 #   - write_*_stacked():                  Stacked output writers for time-varying scenarios
 #   - prepare_levels_by_sector_country(): Prepare sector × country tariff level data (no I/O)
 #   - write_levels_by_sector_country():   Write tariff levels to CSV (sector × country)
@@ -30,34 +31,61 @@
 #   - write_overall_levels():             Write overall tariff levels to text file
 #   - write_levels_by_sector_country_stacked(): Stacked levels CSV for time-varying
 #   - write_overall_levels_combined():    Combined levels text for time-varying
-#   - write_overall_etrs_combined():      Combined overall ETRs for time-varying scenarios
+#   - write_overall_deltas_combined():    Combined overall deltas for time-varying scenarios
 #   - get_output_path():                  Helper to build output file paths
 #
 # =============================================================================
 
 # -----------------------------------------------------------------------------
-# Scenario type detection
+# Scenario structure detection
 # -----------------------------------------------------------------------------
 
-#' Detect whether a scenario uses time-varying (dated subfolder) config
+#' Extract valid YYYY-MM-DD date subdirectories from a directory
 #'
-#' Lists subdirectories of the scenario config folder, matches YYYY-MM-DD
-#' pattern, validates as parseable dates, and returns a sorted character vector.
-#' Returns NULL for static scenarios (no valid date subfolders).
+#' @param dir_path Path to directory to scan
+#'
+#' @return Sorted character vector of date strings, or NULL if none found
+find_date_subdirs <- function(dir_path) {
+  if (!dir.exists(dir_path)) return(NULL)
+  subdirs <- list.dirs(dir_path, full.names = FALSE, recursive = FALSE)
+  date_pattern <- '^\\d{4}-\\d{2}-\\d{2}$'
+  date_candidates <- subdirs[grepl(date_pattern, subdirs)]
+  valid_dates <- date_candidates[!is.na(as.Date(date_candidates, format = '%Y-%m-%d'))]
+  if (length(valid_dates) == 0) return(NULL)
+  sort(valid_dates)
+}
+
+
+#' Detect scenario structure (baseline + counterfactual)
+#'
+#' Examines the scenario config directory for:
+#'   - baseline/ subfolder (required)
+#'   - YYYY-MM-DD subfolders as counterfactual dates (time-varying)
+#'   - or config files at the top level (static counterfactual)
 #'
 #' @param scenario_dir Path to the scenario config directory
 #'
-#' @return Sorted character vector of date strings, or NULL if static
-detect_scenario_type <- function(scenario_dir) {
-  subdirs <- list.dirs(scenario_dir, full.names = FALSE, recursive = FALSE)
-  date_pattern <- '^\\d{4}-\\d{2}-\\d{2}$'
-  date_candidates <- subdirs[grepl(date_pattern, subdirs)]
+#' @return Named list with:
+#'   - has_baseline: logical
+#'   - baseline_dates: sorted date strings if baseline is time-varying, NULL if static
+#'   - counter_dates: sorted date strings if counterfactual is time-varying, NULL if static
+detect_scenario_structure <- function(scenario_dir) {
+  has_baseline <- dir.exists(file.path(scenario_dir, 'baseline'))
 
-  # Validate that candidates parse as real dates
-  valid_dates <- date_candidates[!is.na(as.Date(date_candidates, format = '%Y-%m-%d'))]
+  # Counterfactual dates: YYYY-MM-DD subfolders at top level (excluding baseline/)
+  counter_dates <- find_date_subdirs(scenario_dir)
 
-  if (length(valid_dates) == 0) return(NULL)
-  sort(valid_dates)
+  # Baseline dates: YYYY-MM-DD subfolders within baseline/
+  baseline_dates <- NULL
+  if (has_baseline) {
+    baseline_dates <- find_date_subdirs(file.path(scenario_dir, 'baseline'))
+  }
+
+  list(
+    has_baseline   = has_baseline,
+    baseline_dates = baseline_dates,
+    counter_dates  = counter_dates
+  )
 }
 
 
@@ -91,19 +119,19 @@ get_output_path <- function(output_file, scenario = NULL, output_base = 'output'
 }
 
 
-#' Format ETR table as vector of lines
+#' Format delta table as vector of lines
 #'
 #' @param country_etrs Data frame with partner, gtap_etr, and optionally census_etr
-#' @param gtap_total Total GTAP-weighted ETR
-#' @param census_total Total Census-weighted ETR (optional)
+#' @param gtap_total Total GTAP-weighted delta
+#' @param census_total Total Census-weighted delta (optional)
 #'
 #' @return Character vector of formatted lines
-format_etr_table <- function(country_etrs, gtap_total, census_total = NULL) {
+format_delta_table <- function(country_etrs, gtap_total, census_total = NULL) {
   has_census <- !is.null(census_total) && !is.na(census_total)
 
   lines <- c(
-    'Overall ETRs by Country (change from early 2025 baseline):',
-    '==========================================================',
+    'Overall Tariff Deltas by Country (change from baseline scenario):',
+    '=================================================================',
     ''
   )
 
@@ -174,28 +202,48 @@ format_coverage_table <- function(coverage_by_partner, coverage_total) {
 
 #' Load all config for a scenario from a single config directory
 #'
-#' Parses 232.yaml, ieepa_reciprocal.yaml, ieepa_fentanyl.yaml, optional s122.yaml,
-#' and other_params.yaml from the given directory.
+#' Parses other_params.yaml (required), 232.yaml, ieepa_reciprocal.yaml,
+#' ieepa_fentanyl.yaml, and s122.yaml (all optional) from the given directory.
+#' Also loads MFN rates from the path specified in other_params$mfn_rates.
 #'
 #' @param config_path Path to directory containing the config YAML files
 #'
 #' @return Named list with: params_232, rates_ieepa_reciprocal, rates_ieepa_fentanyl,
-#'   rates_s122 (or NULL), other_params
+#'   rates_s122, other_params, mfn_rates (all tariff components NULL if file missing)
 load_scenario_config <- function(config_path) {
 
   message(sprintf('Loading scenario parameters from %s...', config_path))
 
-  params_232 <- load_232_rates(file.path(config_path, '232.yaml'))
+  other_params <- read_yaml(file.path(config_path, 'other_params.yaml'))
 
-  rates_ieepa_reciprocal <- load_ieepa_rates_yaml(
-    file.path(config_path, 'ieepa_reciprocal.yaml'),
-    rate_col_name = 'ieepa_reciprocal_rate'
-  )
+  # Load MFN rates from path specified in config
+  mfn_rates_path <- other_params$mfn_rates
+  if (is.null(mfn_rates_path)) {
+    stop(sprintf('other_params.yaml in %s must specify mfn_rates path', config_path))
+  }
+  mfn_rates <- load_mfn_rates(mfn_rates_path)
 
-  rates_ieepa_fentanyl <- load_ieepa_rates_yaml(
-    file.path(config_path, 'ieepa_fentanyl.yaml'),
-    rate_col_name = 'ieepa_fentanyl_rate'
-  )
+  # Load tariff configs (all optional - missing file = NULL = zero rates)
+  s232_path <- file.path(config_path, '232.yaml')
+  params_232 <- if (file.exists(s232_path)) {
+    load_232_rates(s232_path)
+  } else {
+    NULL
+  }
+
+  reciprocal_path <- file.path(config_path, 'ieepa_reciprocal.yaml')
+  rates_ieepa_reciprocal <- if (file.exists(reciprocal_path)) {
+    load_ieepa_rates_yaml(reciprocal_path, rate_col_name = 'ieepa_reciprocal_rate')
+  } else {
+    NULL
+  }
+
+  fentanyl_path <- file.path(config_path, 'ieepa_fentanyl.yaml')
+  rates_ieepa_fentanyl <- if (file.exists(fentanyl_path)) {
+    load_ieepa_rates_yaml(fentanyl_path, rate_col_name = 'ieepa_fentanyl_rate')
+  } else {
+    NULL
+  }
 
   s122_path <- file.path(config_path, 's122.yaml')
   rates_s122 <- if (file.exists(s122_path)) {
@@ -204,34 +252,32 @@ load_scenario_config <- function(config_path) {
     NULL
   }
 
-  other_params <- read_yaml(file.path(config_path, 'other_params.yaml'))
-
   list(
     params_232             = params_232,
     rates_ieepa_reciprocal = rates_ieepa_reciprocal,
     rates_ieepa_fentanyl   = rates_ieepa_fentanyl,
     rates_s122             = rates_s122,
-    other_params           = other_params
+    other_params           = other_params,
+    mfn_rates              = mfn_rates
   )
 }
 
 
-#' Calculate ETRs for a single config (one set of YAML files)
+#' Calculate tariff rates for a single config (one set of YAML files)
 #'
 #' Takes parsed config and pre-loaded shared data, runs calc_weighted_etr()
 #' and aggregate_countries_to_partners(), returns both results.
+#' MFN rates are loaded from the config (config$mfn_rates).
 #'
 #' @param config Named list from load_scenario_config()
 #' @param hs10_by_country Import data (hs10, cty_code, gtap_code, imports)
 #' @param usmca_shares USMCA share data
 #' @param country_mapping Country-to-partner mapping
-#' @param mfn_rates MFN rates tibble (hs8, mfn_rate)
 #'
 #' @return Named list with hs10_country_etrs and partner_etrs
-calc_etrs_for_config <- function(config, hs10_by_country, usmca_shares, country_mapping,
-                                  mfn_rates) {
+calc_etrs_for_config <- function(config, hs10_by_country, usmca_shares, country_mapping) {
 
-  message('Calculating ETRs at HS10 × country level...')
+  message('Calculating tariff rates at HS10 × country level...')
 
   # Load metal content shares for Section 232 derivative adjustment
   metal_content <- load_metal_content(
@@ -240,8 +286,8 @@ calc_etrs_for_config <- function(config, hs10_by_country, usmca_shares, country_
   )
 
   hs10_country_etrs <- calc_weighted_etr(
-    rates_232              = config$params_232$rate_matrix,
-    usmca_exempt_232       = config$params_232$usmca_exempt,
+    rates_232              = if (!is.null(config$params_232)) config$params_232$rate_matrix else NULL,
+    usmca_exempt_232       = if (!is.null(config$params_232)) config$params_232$usmca_exempt else NULL,
     rates_ieepa_reciprocal = config$rates_ieepa_reciprocal,
     rates_ieepa_fentanyl   = config$rates_ieepa_fentanyl,
     rates_s122             = config$rates_s122,
@@ -255,10 +301,10 @@ calc_etrs_for_config <- function(config, hs10_by_country, usmca_shares, country_
     metal_content          = metal_content,
     metal_programs         = config$other_params$metal_content$metal_programs %||% character(0),
     program_metal_types    = config$other_params$metal_content$program_metal_types %||% NULL,
-    mfn_rates              = mfn_rates
+    mfn_rates              = config$mfn_rates
   )
 
-  message('Aggregating HS10×country ETRs to partner×GTAP level...')
+  message('Aggregating HS10×country results to partner×GTAP level...')
   partner_etrs <- aggregate_countries_to_partners(
     hs10_country_etrs = hs10_country_etrs,
     country_mapping   = country_mapping
@@ -271,7 +317,33 @@ calc_etrs_for_config <- function(config, hs10_by_country, usmca_shares, country_
 }
 
 
-#' Run complete ETR analysis for a given scenario
+#' Compute delta between counterfactual and baseline HS10×country results
+#'
+#' Joins on (hs10, cty_code) and computes delta = counterfactual level - baseline level.
+#' The delta replaces the etr column (used for shocks and delta outputs).
+#' The level column retains the counterfactual absolute tariff rate.
+#'
+#' @param baseline_hs10 HS10×country results from baseline config
+#' @param counter_hs10 HS10×country results from counterfactual config
+#'
+#' @return counter_hs10 with etr replaced by delta (counter level - baseline level)
+calc_delta <- function(baseline_hs10, counter_hs10) {
+  counter_hs10 %>%
+    left_join(
+      baseline_hs10 %>% select(hs10, cty_code, level_base = level),
+      by = c('hs10', 'cty_code')
+    ) %>%
+    mutate(
+      level_base = if_else(is.na(level_base), 0, level_base),
+      etr = level - level_base
+    ) %>%
+    select(-level_base)
+}
+
+
+#' Run complete tariff analysis for a given scenario
+#'
+#' Processes baseline and counterfactual configs, computes deltas, and writes outputs.
 #'
 #' @param scenario Scenario name (corresponds to {config_dir}/{scenario}/ directory)
 #' @param config_dir Base directory for scenario configs (default: 'config')
@@ -279,7 +351,7 @@ calc_etrs_for_config <- function(config, hs10_by_country, usmca_shares, country_
 #' @param import_data_path Path to Census Bureau import data files
 #' @param use_cache Use cached HS10 data if available (default: TRUE)
 #'
-#' @return Returns ETR data invisibly
+#' @return Returns results invisibly
 do_scenario <- function(scenario, config_dir = 'config', output_dir = 'output',
                         import_data_path = 'C:/Users/jar335/Downloads', use_cache = TRUE) {
 
@@ -305,9 +377,6 @@ do_scenario <- function(scenario, config_dir = 'config', output_dir = 'output',
 
   # Read GTAP crosswalk (HS10 -> GTAP)
   crosswalk <- read_csv('resources/hs10_gtap_crosswalk.csv', show_col_types = FALSE)
-
-  # Load MFN baseline tariff rates (HS8 level)
-  mfn_rates <- load_mfn_rates()
 
   # Define cache path for processed data
   cache_dir <- 'cache'
@@ -368,36 +437,68 @@ do_scenario <- function(scenario, config_dir = 'config', output_dir = 'output',
   }
 
   #---------------------------
-  # Detect scenario type and dispatch
+  # Detect scenario structure and dispatch
   #---------------------------
 
   scenario_path <- file.path(config_dir, scenario)
-  scenario_dates <- detect_scenario_type(scenario_path)
+  structure <- detect_scenario_structure(scenario_path)
 
-  if (is.null(scenario_dates)) {
-    # Static scenario (original behavior)
+  if (!structure$has_baseline) {
+    stop(sprintf('Scenario "%s" requires a baseline/ subdirectory in %s', scenario, scenario_path))
+  }
+
+  #---------------------------
+  # Process baseline
+  #---------------------------
+
+  message('\n--- Processing baseline ---')
+  baseline_results <- list()
+
+  if (is.null(structure$baseline_dates)) {
+    # Static baseline: config files directly in baseline/
+    baseline_path <- file.path(scenario_path, 'baseline')
+    baseline_config <- load_scenario_config(baseline_path)
+    baseline_etrs <- calc_etrs_for_config(baseline_config, hs10_by_country, usmca_shares, country_mapping)
+    baseline_results[['static']] <- baseline_etrs$hs10_country_etrs
+  } else {
+    # Time-varying baseline
+    for (date_str in structure$baseline_dates) {
+      message(sprintf('\n--- Processing baseline date: %s ---', date_str))
+      baseline_path <- file.path(scenario_path, 'baseline', date_str)
+      baseline_config <- load_scenario_config(baseline_path)
+      baseline_etrs <- calc_etrs_for_config(baseline_config, hs10_by_country, usmca_shares, country_mapping)
+      baseline_results[[date_str]] <- baseline_etrs$hs10_country_etrs
+    }
+  }
+
+  #---------------------------
+  # Dispatch to static or time-varying counterfactual
+  #---------------------------
+
+  if (is.null(structure$counter_dates)) {
+    # Static counterfactual (config files at scenario root)
     result <- do_scenario_static(
-      scenario        = scenario,
-      config_dir      = config_dir,
-      output_dir      = output_dir,
-      hs10_by_country = hs10_by_country,
-      usmca_shares    = usmca_shares,
-      country_mapping = country_mapping,
-      mfn_rates       = mfn_rates
+      scenario          = scenario,
+      scenario_path     = scenario_path,
+      output_dir        = output_dir,
+      hs10_by_country   = hs10_by_country,
+      usmca_shares      = usmca_shares,
+      country_mapping   = country_mapping,
+      baseline_results  = baseline_results
     )
   } else {
-    # Time-varying scenario
-    message(sprintf('Detected time-varying scenario with %d dates: %s',
-                    length(scenario_dates), paste(scenario_dates, collapse = ', ')))
+    # Time-varying counterfactual
+    message(sprintf('\nDetected time-varying counterfactual with %d dates: %s',
+                    length(structure$counter_dates), paste(structure$counter_dates, collapse = ', ')))
     result <- do_scenario_time_varying(
-      scenario        = scenario,
-      config_dir      = config_dir,
-      output_dir      = output_dir,
-      scenario_dates  = scenario_dates,
-      hs10_by_country = hs10_by_country,
-      usmca_shares    = usmca_shares,
-      country_mapping = country_mapping,
-      mfn_rates       = mfn_rates
+      scenario          = scenario,
+      scenario_path     = scenario_path,
+      output_dir        = output_dir,
+      counter_dates     = structure$counter_dates,
+      hs10_by_country   = hs10_by_country,
+      usmca_shares      = usmca_shares,
+      country_mapping   = country_mapping,
+      baseline_results  = baseline_results
     )
   }
 
@@ -406,100 +507,135 @@ do_scenario <- function(scenario, config_dir = 'config', output_dir = 'output',
 }
 
 
-#' Run a static (non-time-varying) scenario
+#' Match a counterfactual date to the appropriate baseline result
+#'
+#' For static baselines (single entry keyed 'static'), always returns that entry.
+#' For time-varying baselines, finds the most recent baseline date <= counter_date.
+#'
+#' @param counter_date Date string (YYYY-MM-DD) or 'static'
+#' @param baseline_results Named list of baseline HS10×country results
+#'
+#' @return Baseline HS10×country result for this counterfactual date
+match_baseline <- function(counter_date, baseline_results) {
+  if ('static' %in% names(baseline_results)) {
+    return(baseline_results[['static']])
+  }
+
+  # Time-varying baseline: find most recent date <= counter_date
+  baseline_dates <- sort(names(baseline_results))
+  eligible <- baseline_dates[baseline_dates <= counter_date]
+  if (length(eligible) == 0) {
+    stop(sprintf('No baseline date found on or before counterfactual date %s (available: %s)',
+                 counter_date, paste(baseline_dates, collapse = ', ')))
+  }
+  baseline_results[[eligible[length(eligible)]]]
+}
+
+
+#' Run a static (non-time-varying) counterfactual scenario
 #'
 #' @param scenario Scenario name
-#' @param config_dir Base config directory
+#' @param scenario_path Full path to scenario config directory
 #' @param output_dir Base output directory
 #' @param hs10_by_country Pre-loaded import data
 #' @param usmca_shares Pre-loaded USMCA shares
 #' @param country_mapping Pre-loaded country mapping
-#' @param mfn_rates Pre-loaded MFN rates (hs8, mfn_rate)
+#' @param baseline_results Named list of baseline HS10×country results
 #'
 #' @return partner_etrs invisibly
-do_scenario_static <- function(scenario, config_dir, output_dir,
+do_scenario_static <- function(scenario, scenario_path, output_dir,
                                 hs10_by_country, usmca_shares, country_mapping,
-                                mfn_rates) {
+                                baseline_results) {
 
-  config <- load_scenario_config(file.path(config_dir, scenario))
-  etrs <- calc_etrs_for_config(config, hs10_by_country, usmca_shares, country_mapping, mfn_rates)
+  config <- load_scenario_config(scenario_path)
+  etrs <- calc_etrs_for_config(config, hs10_by_country, usmca_shares, country_mapping)
+
+  # Compute delta (counterfactual - baseline)
+  baseline_hs10 <- match_baseline('static', baseline_results)
+  hs10_country_etrs <- calc_delta(baseline_hs10, etrs$hs10_country_etrs)
+
+  # Re-aggregate with delta-adjusted etr
+  partner_etrs <- aggregate_countries_to_partners(
+    hs10_country_etrs = hs10_country_etrs,
+    country_mapping   = country_mapping
+  )
 
   message('Writing outputs...')
 
   write_shock_commands(
-    etr_data    = etrs$partner_etrs,
+    etr_data    = partner_etrs,
     output_file = 'shocks.txt',
     scenario    = scenario,
     output_base = output_dir
   )
 
-  write_sector_country_etrs(
-    etr_data    = etrs$partner_etrs,
-    output_file = 'etrs_by_sector_country.csv',
+  write_sector_country_deltas(
+    etr_data    = partner_etrs,
+    output_file = 'deltas_by_sector_country.csv',
     scenario    = scenario,
     output_base = output_dir
   )
 
-  write_country_level_etrs(
-    hs10_country_etrs = etrs$hs10_country_etrs,
-    output_file       = 'etrs_by_census_country.csv',
+  write_country_level_deltas(
+    hs10_country_etrs = hs10_country_etrs,
+    output_file       = 'deltas_by_census_country.csv',
     scenario          = scenario,
     output_base       = output_dir
   )
 
-  write_country_hts2_etrs(
-    hs10_country_etrs = etrs$hs10_country_etrs,
-    output_file       = 'etrs_by_census_country_hts2.csv',
+  write_country_hts2_deltas(
+    hs10_country_etrs = hs10_country_etrs,
+    output_file       = 'deltas_by_census_country_hts2.csv',
     scenario          = scenario,
     output_base       = output_dir
   )
 
-  calc_overall_etrs(
-    etr_data          = etrs$partner_etrs,
-    hs10_country_etrs = etrs$hs10_country_etrs,
+  calc_overall_deltas(
+    etr_data          = partner_etrs,
+    hs10_country_etrs = hs10_country_etrs,
     country_mapping   = country_mapping,
     scenario          = scenario,
     output_base       = output_dir
   )
 
   write_levels_by_sector_country(
-    etr_data    = etrs$partner_etrs,
+    etr_data    = partner_etrs,
     output_file = 'levels_by_sector_country.csv',
     scenario    = scenario,
     output_base = output_dir
   )
 
   write_overall_levels(
-    etr_data          = etrs$partner_etrs,
-    hs10_country_etrs = etrs$hs10_country_etrs,
+    etr_data          = partner_etrs,
+    hs10_country_etrs = hs10_country_etrs,
     country_mapping   = country_mapping,
     scenario          = scenario,
     output_base       = output_dir
   )
 
-  etrs$partner_etrs
+  partner_etrs
 }
 
 
-#' Run a time-varying scenario (dated subfolders)
+#' Run a time-varying counterfactual scenario (dated subfolders)
 #'
 #' Each date subfolder must contain a complete set of config files.
 #' Shock files are written per-date; CSVs are stacked with a date column.
 #'
 #' @param scenario Scenario name
-#' @param config_dir Base config directory
+#' @param scenario_path Full path to scenario config directory
 #' @param output_dir Base output directory
-#' @param scenario_dates Sorted character vector of date strings (YYYY-MM-DD)
+#' @param counter_dates Sorted character vector of date strings (YYYY-MM-DD)
 #' @param hs10_by_country Pre-loaded import data
 #' @param usmca_shares Pre-loaded USMCA shares
 #' @param country_mapping Pre-loaded country mapping
-#' @param mfn_rates Pre-loaded MFN rates (hs8, mfn_rate)
+#' @param baseline_results Named list of baseline HS10×country results
 #'
 #' @return Named list of per-date partner_etrs
-do_scenario_time_varying <- function(scenario, config_dir, output_dir,
-                                      scenario_dates, hs10_by_country,
+do_scenario_time_varying <- function(scenario, scenario_path, output_dir,
+                                      counter_dates, hs10_by_country,
                                       usmca_shares, country_mapping,
-                                      mfn_rates) {
+                                      baseline_results) {
 
   # Collect per-date results
   all_partner_etrs      <- list()
@@ -507,35 +643,45 @@ do_scenario_time_varying <- function(scenario, config_dir, output_dir,
   all_overall_data      <- list()
   all_levels_data       <- list()
 
-  for (date_str in scenario_dates) {
-    message(sprintf('\n--- Processing date: %s ---', date_str))
+  for (date_str in counter_dates) {
+    message(sprintf('\n--- Processing counterfactual date: %s ---', date_str))
 
-    config_path <- file.path(config_dir, scenario, date_str)
+    config_path <- file.path(scenario_path, date_str)
     config <- load_scenario_config(config_path)
-    etrs <- calc_etrs_for_config(config, hs10_by_country, usmca_shares, country_mapping, mfn_rates)
+    etrs <- calc_etrs_for_config(config, hs10_by_country, usmca_shares, country_mapping)
+
+    # Compute delta (counterfactual - baseline)
+    baseline_hs10 <- match_baseline(date_str, baseline_results)
+    hs10_country_etrs <- calc_delta(baseline_hs10, etrs$hs10_country_etrs)
+
+    # Re-aggregate with delta-adjusted etr
+    partner_etrs <- aggregate_countries_to_partners(
+      hs10_country_etrs = hs10_country_etrs,
+      country_mapping   = country_mapping
+    )
 
     # Write per-date shock commands (into output/scenario/date/shocks.txt)
     write_shock_commands(
-      etr_data    = etrs$partner_etrs,
+      etr_data    = partner_etrs,
       output_file = 'shocks.txt',
       scenario    = file.path(scenario, date_str),
       output_base = output_dir
     )
 
-    all_partner_etrs[[date_str]]      <- etrs$partner_etrs
-    all_hs10_country_etrs[[date_str]] <- etrs$hs10_country_etrs
+    all_partner_etrs[[date_str]]      <- partner_etrs
+    all_hs10_country_etrs[[date_str]] <- hs10_country_etrs
 
-    # Compute overall ETR data for this date (no I/O)
-    all_overall_data[[date_str]] <- calc_overall_etrs_data(
-      etr_data        = etrs$partner_etrs,
-      hs10_country_etrs = etrs$hs10_country_etrs,
-      country_mapping = country_mapping
+    # Compute overall delta data for this date (no I/O)
+    all_overall_data[[date_str]] <- calc_overall_deltas_data(
+      etr_data          = partner_etrs,
+      hs10_country_etrs = hs10_country_etrs,
+      country_mapping   = country_mapping
     )
 
     # Compute overall tariff level data for this date (no I/O)
     all_levels_data[[date_str]] <- calc_overall_levels_data(
-      etr_data          = etrs$partner_etrs,
-      hs10_country_etrs = etrs$hs10_country_etrs,
+      etr_data          = partner_etrs,
+      hs10_country_etrs = hs10_country_etrs,
       country_mapping   = country_mapping
     )
   }
@@ -543,28 +689,28 @@ do_scenario_time_varying <- function(scenario, config_dir, output_dir,
   # Write stacked outputs
   message('\nWriting stacked outputs...')
 
-  write_sector_country_etrs_stacked(
+  write_sector_country_deltas_stacked(
     all_partner_etrs = all_partner_etrs,
-    output_file      = 'etrs_by_sector_country.csv',
+    output_file      = 'deltas_by_sector_country.csv',
     scenario         = scenario,
     output_base      = output_dir
   )
 
-  write_country_level_etrs_stacked(
+  write_country_level_deltas_stacked(
     all_hs10_country_etrs = all_hs10_country_etrs,
-    output_file           = 'etrs_by_census_country.csv',
+    output_file           = 'deltas_by_census_country.csv',
     scenario              = scenario,
     output_base           = output_dir
   )
 
-  write_country_hts2_etrs_stacked(
+  write_country_hts2_deltas_stacked(
     all_hs10_country_etrs = all_hs10_country_etrs,
-    output_file           = 'etrs_by_census_country_hts2.csv',
+    output_file           = 'deltas_by_census_country_hts2.csv',
     scenario              = scenario,
     output_base           = output_dir
   )
 
-  write_overall_etrs_combined(
+  write_overall_deltas_combined(
     all_overall_data = all_overall_data,
     scenario         = scenario,
     output_base      = output_dir
@@ -631,13 +777,35 @@ calc_weighted_etr <- function(rates_232,
   # =============================================================================
   # Build complete rate matrix by joining config tables with import data
   # Config tables are now sparse (only non-zero rates), so NAs from joins = 0
+  # NULL inputs (missing config files) produce zero-rate columns
   # =============================================================================
 
   rate_matrix <- import_data %>%
-    select(hs10, cty_code, gtap_code, imports) %>%
-    left_join(rates_232, by = c('hs10', 'cty_code')) %>%
-    left_join(rates_ieepa_reciprocal, by = c('hs10', 'cty_code')) %>%
-    left_join(rates_ieepa_fentanyl, by = c('hs10', 'cty_code'))
+    select(hs10, cty_code, gtap_code, imports)
+
+  # Join 232 rates if provided
+  if (!is.null(rates_232)) {
+    rate_matrix <- rate_matrix %>%
+      left_join(rates_232, by = c('hs10', 'cty_code'))
+  }
+
+  # Join IEEPA reciprocal rates if provided, otherwise add zero column
+  if (!is.null(rates_ieepa_reciprocal)) {
+    rate_matrix <- rate_matrix %>%
+      left_join(rates_ieepa_reciprocal, by = c('hs10', 'cty_code'))
+  } else {
+    rate_matrix <- rate_matrix %>%
+      mutate(ieepa_reciprocal_rate = 0)
+  }
+
+  # Join IEEPA fentanyl rates if provided, otherwise add zero column
+  if (!is.null(rates_ieepa_fentanyl)) {
+    rate_matrix <- rate_matrix %>%
+      left_join(rates_ieepa_fentanyl, by = c('hs10', 'cty_code'))
+  } else {
+    rate_matrix <- rate_matrix %>%
+      mutate(ieepa_fentanyl_rate = 0)
+  }
 
   # Join Section 122 rates if provided
   if (!is.null(rates_s122)) {
@@ -652,10 +820,11 @@ calc_weighted_etr <- function(rates_232,
   rate_232_cols <- names(rate_matrix)[str_detect(names(rate_matrix), '^s232_.*_rate$')]
 
   # Replace NAs (indicates no tariff) with 0 for all rate columns
+  all_rate_cols <- c(rate_232_cols, 'ieepa_reciprocal_rate', 'ieepa_fentanyl_rate', 's122_rate')
   rate_matrix <- rate_matrix %>%
     mutate(
       across(
-        .cols = all_of(c(rate_232_cols, 'ieepa_reciprocal_rate', 'ieepa_fentanyl_rate', 's122_rate')),
+        .cols = all_of(all_rate_cols),
         .fns  = ~ if_else(is.na(.), 0, .)
       )
     )
@@ -1125,12 +1294,12 @@ write_shock_commands <- function(etr_data, output_file = 'shocks.txt', scenario,
 }
 
 
-#' Prepare sector × country ETR data in wide format (percentage points)
+#' Prepare sector × country delta data in wide format (percentage points)
 #'
 #' @param etr_data Data frame with columns: partner, gtap_code, etr
 #'
 #' @return Tibble with gtap_code column and one column per partner (in pp)
-prepare_sector_country_etrs <- function(etr_data) {
+prepare_sector_country_deltas <- function(etr_data) {
 
   sector_order <- c(
     'pdr', 'wht', 'gro', 'v_f', 'osd', 'c_b', 'pfb', 'ocr', 'ctl', 'oap',
@@ -1154,35 +1323,35 @@ prepare_sector_country_etrs <- function(etr_data) {
 }
 
 
-#' Write ETRs to CSV in sector (rows) x country (columns) format
+#' Write deltas to CSV in sector (rows) x country (columns) format
 #'
 #' Values are written in percentage points (pp), i.e., multiplied by 100.
 #'
 #' @param etr_data Data frame with columns: partner, gtap_code, etr
-#' @param output_file Path to output file (default: 'etrs_by_sector_country.csv')
+#' @param output_file Path to output file (default: 'deltas_by_sector_country.csv')
 #' @param scenario Scenario name for output directory
 #' @param output_base Base output directory (default: 'output')
 #'
 #' @return Writes CSV file (in pp units) and returns invisibly
-write_sector_country_etrs <- function(etr_data,
-                                       output_file = 'etrs_by_sector_country.csv',
-                                       scenario = NULL,
-                                       output_base = 'output') {
+write_sector_country_deltas <- function(etr_data,
+                                         output_file = 'deltas_by_sector_country.csv',
+                                         scenario = NULL,
+                                         output_base = 'output') {
 
   output_path <- get_output_path(output_file, scenario, output_base)
-  etrs_wide <- prepare_sector_country_etrs(etr_data)
-  write_csv(etrs_wide, output_path)
-  message(sprintf('Wrote ETRs by sector and country to %s (in pp units)', output_path))
-  invisible(etrs_wide)
+  deltas_wide <- prepare_sector_country_deltas(etr_data)
+  write_csv(deltas_wide, output_path)
+  message(sprintf('Wrote deltas by sector and country to %s (in pp units)', output_path))
+  invisible(deltas_wide)
 }
 
 
-#' Prepare country-level ETRs (census country codes with overall ETRs)
+#' Prepare country-level deltas (census country codes with overall deltas)
 #'
 #' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr
 #'
 #' @return Tibble with cty_code, country_name, etr (in pp)
-prepare_country_level_etrs <- function(hs10_country_etrs) {
+prepare_country_level_deltas <- function(hs10_country_etrs) {
   census_codes <- load_census_codes()
 
   hs10_country_etrs %>%
@@ -1201,33 +1370,33 @@ prepare_country_level_etrs <- function(hs10_country_etrs) {
 }
 
 
-#' Write country-level ETRs to CSV (census country codes with overall ETRs)
+#' Write country-level deltas to CSV (census country codes with overall deltas)
 #'
 #' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr
-#' @param output_file Path to output file (default: 'etrs_by_census_country.csv')
+#' @param output_file Path to output file (default: 'deltas_by_census_country.csv')
 #' @param scenario Scenario name for output directory
 #' @param output_base Base output directory (default: 'output')
 #'
 #' @return Writes CSV file (in pp units) and returns invisibly
-write_country_level_etrs <- function(hs10_country_etrs,
-                                      output_file = 'etrs_by_census_country.csv',
-                                      scenario = NULL,
-                                      output_base = 'output') {
+write_country_level_deltas <- function(hs10_country_etrs,
+                                        output_file = 'deltas_by_census_country.csv',
+                                        scenario = NULL,
+                                        output_base = 'output') {
 
   output_path <- get_output_path(output_file, scenario, output_base)
-  country_etrs <- prepare_country_level_etrs(hs10_country_etrs)
-  write_csv(country_etrs, output_path)
-  message(sprintf('Wrote country-level ETRs to %s (in pp units)', output_path))
-  invisible(country_etrs)
+  country_deltas <- prepare_country_level_deltas(hs10_country_etrs)
+  write_csv(country_deltas, output_path)
+  message(sprintf('Wrote country-level deltas to %s (in pp units)', output_path))
+  invisible(country_deltas)
 }
 
 
-#' Prepare country × HTS2 ETR data in wide format (percentage points)
+#' Prepare country × HTS2 delta data in wide format (percentage points)
 #'
 #' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr
 #'
 #' @return Tibble with cty_code, country_name, and one column per HTS chapter (in pp)
-prepare_country_hts2_etrs <- function(hs10_country_etrs) {
+prepare_country_hts2_deltas <- function(hs10_country_etrs) {
   census_codes <- load_census_codes()
 
   country_hts2_etrs <- hs10_country_etrs %>%
@@ -1255,30 +1424,30 @@ prepare_country_hts2_etrs <- function(hs10_country_etrs) {
 }
 
 
-#' Write country-level ETRs by 2-digit HTS code to CSV
+#' Write country-level deltas by 2-digit HTS code to CSV
 #'
 #' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr
-#' @param output_file Path to output file (default: 'etrs_by_census_country_hts2.csv')
+#' @param output_file Path to output file (default: 'deltas_by_census_country_hts2.csv')
 #' @param scenario Scenario name for output directory
 #' @param output_base Base output directory (default: 'output')
 #'
 #' @return Writes CSV file (in pp units) and returns invisibly
-write_country_hts2_etrs <- function(hs10_country_etrs,
-                                     output_file = 'etrs_by_census_country_hts2.csv',
-                                     scenario = NULL,
-                                     output_base = 'output') {
+write_country_hts2_deltas <- function(hs10_country_etrs,
+                                       output_file = 'deltas_by_census_country_hts2.csv',
+                                       scenario = NULL,
+                                       output_base = 'output') {
 
   output_path <- get_output_path(output_file, scenario, output_base)
-  country_hts2_wide <- prepare_country_hts2_etrs(hs10_country_etrs)
+  country_hts2_wide <- prepare_country_hts2_deltas(hs10_country_etrs)
   write_csv(country_hts2_wide, output_path)
-  message(sprintf('Wrote country × HTS2 ETRs to %s (in pp units)', output_path))
+  message(sprintf('Wrote country × HTS2 deltas to %s (in pp units)', output_path))
   invisible(country_hts2_wide)
 }
 
 
-#' Compute overall ETR data (no I/O)
+#' Compute overall delta data (no I/O)
 #'
-#' Calculates country ETRs using GTAP and Census weights plus tariff coverage.
+#' Calculates country deltas using GTAP and Census weights plus tariff coverage.
 #' Returns all computed data as a list, ready for formatting/writing.
 #'
 #' @param etr_data Data frame with columns: partner, gtap_code, etr, base_232, base_ieepa, base_neither
@@ -1287,8 +1456,8 @@ write_country_hts2_etrs <- function(hs10_country_etrs,
 #' @param weights_file Path to GTAP import weights CSV file
 #'
 #' @return Named list: by_country (tibble), gtap_total (numeric), census_total (numeric),
-#'   coverage_stats (list or NULL), etr_lines (character), coverage_lines (character)
-calc_overall_etrs_data <- function(etr_data, hs10_country_etrs = NULL,
+#'   coverage_stats (list or NULL), delta_lines (character), coverage_lines (character)
+calc_overall_deltas_data <- function(etr_data, hs10_country_etrs = NULL,
                                    country_mapping = NULL,
                                    weights_file = 'resources/gtap_import_weights.csv') {
 
@@ -1386,7 +1555,7 @@ calc_overall_etrs_data <- function(etr_data, hs10_country_etrs = NULL,
   }
 
   # Build formatted lines
-  etr_lines <- format_etr_table(country_etrs, gtap_total_etr_value, census_total_etr_value)
+  delta_lines <- format_delta_table(country_etrs, gtap_total_etr_value, census_total_etr_value)
   coverage_lines <- if (!is.null(coverage_stats)) {
     format_coverage_table(coverage_stats$by_partner, coverage_stats$total)
   } else {
@@ -1398,37 +1567,37 @@ calc_overall_etrs_data <- function(etr_data, hs10_country_etrs = NULL,
     gtap_total     = gtap_total_etr_value,
     census_total   = census_total_etr_value,
     coverage_stats = coverage_stats,
-    etr_lines      = etr_lines,
+    delta_lines    = delta_lines,
     coverage_lines = coverage_lines
   )
 }
 
 
-#' Calculate and print overall ETR changes by country and total using both GTAP and 2024 Census weights
+#' Calculate and print overall tariff deltas by country and total using both GTAP and 2024 Census weights
 #'
-#' Calculates and prints change in effective tariff rates from early 2025 baseline.
+#' Calculates and prints tariff deltas (change from baseline scenario).
 #'
 #' @param etr_data Data frame with columns: partner, gtap_code, etr, base_232, base_ieepa, base_neither
 #' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr (for Census weights)
 #' @param country_mapping Data frame with columns: cty_code, partner (for aggregating country data to partners)
 #' @param weights_file Path to GTAP import weights CSV file
-#' @param output_file Path to output text file (default: 'overall_etrs.txt')
+#' @param output_file Path to output text file (default: 'overall_deltas.txt')
 #' @param scenario Scenario name for output directory
 #' @param output_base Base output directory (default: 'output')
 #'
-#' @return Prints overall ETR changes and returns them invisibly
-calc_overall_etrs <- function(etr_data, hs10_country_etrs = NULL,
-                              country_mapping = NULL,
-                              weights_file = 'resources/gtap_import_weights.csv',
-                              output_file = 'overall_etrs.txt',
-                              scenario = NULL,
-                              output_base = 'output') {
+#' @return Prints overall deltas and returns them invisibly
+calc_overall_deltas <- function(etr_data, hs10_country_etrs = NULL,
+                                country_mapping = NULL,
+                                weights_file = 'resources/gtap_import_weights.csv',
+                                output_file = 'overall_deltas.txt',
+                                scenario = NULL,
+                                output_base = 'output') {
 
-  result <- calc_overall_etrs_data(etr_data, hs10_country_etrs, country_mapping, weights_file)
+  result <- calc_overall_deltas_data(etr_data, hs10_country_etrs, country_mapping, weights_file)
 
   # Print to console
   cat('\n')
-  cat(paste(result$etr_lines, collapse = '\n'))
+  cat(paste(result$delta_lines, collapse = '\n'))
   cat('\n\n')
   if (length(result$coverage_lines) > 0) {
     cat(paste(result$coverage_lines, collapse = '\n'))
@@ -1437,9 +1606,9 @@ calc_overall_etrs <- function(etr_data, hs10_country_etrs = NULL,
 
   # Write to file
   output_path <- get_output_path(output_file, scenario, output_base)
-  writeLines(c(result$etr_lines, '', result$coverage_lines), output_path)
+  writeLines(c(result$delta_lines, '', result$coverage_lines), output_path)
 
-  message(sprintf('Wrote overall ETRs to %s', output_path))
+  message(sprintf('Wrote overall deltas to %s', output_path))
 
   invisible(list(
     by_country = result$by_country,
@@ -1453,93 +1622,93 @@ calc_overall_etrs <- function(etr_data, hs10_country_etrs = NULL,
 # Stacked output writers for time-varying scenarios
 # =============================================================================
 
-#' Write stacked sector × country ETR CSV with date column
+#' Write stacked sector × country delta CSV with date column
 #'
 #' @param all_partner_etrs Named list (date → partner_etrs tibble)
 #' @param output_file Output filename
 #' @param scenario Scenario name
 #' @param output_base Base output directory
-write_sector_country_etrs_stacked <- function(all_partner_etrs,
-                                               output_file = 'etrs_by_sector_country.csv',
-                                               scenario = NULL,
-                                               output_base = 'output') {
+write_sector_country_deltas_stacked <- function(all_partner_etrs,
+                                                 output_file = 'deltas_by_sector_country.csv',
+                                                 scenario = NULL,
+                                                 output_base = 'output') {
 
   output_path <- get_output_path(output_file, scenario, output_base)
 
   stacked <- names(all_partner_etrs) %>%
     map_df(function(date_str) {
-      prepare_sector_country_etrs(all_partner_etrs[[date_str]]) %>%
+      prepare_sector_country_deltas(all_partner_etrs[[date_str]]) %>%
         mutate(date = date_str, .before = 1)
     })
 
   write_csv(stacked, output_path)
-  message(sprintf('Wrote stacked sector × country ETRs to %s (in pp units)', output_path))
+  message(sprintf('Wrote stacked sector × country deltas to %s (in pp units)', output_path))
   invisible(stacked)
 }
 
 
-#' Write stacked country-level ETR CSV with date column
+#' Write stacked country-level delta CSV with date column
 #'
 #' @param all_hs10_country_etrs Named list (date → hs10_country_etrs tibble)
 #' @param output_file Output filename
 #' @param scenario Scenario name
 #' @param output_base Base output directory
-write_country_level_etrs_stacked <- function(all_hs10_country_etrs,
-                                              output_file = 'etrs_by_census_country.csv',
-                                              scenario = NULL,
-                                              output_base = 'output') {
+write_country_level_deltas_stacked <- function(all_hs10_country_etrs,
+                                                output_file = 'deltas_by_census_country.csv',
+                                                scenario = NULL,
+                                                output_base = 'output') {
 
   output_path <- get_output_path(output_file, scenario, output_base)
 
   stacked <- names(all_hs10_country_etrs) %>%
     map_df(function(date_str) {
-      prepare_country_level_etrs(all_hs10_country_etrs[[date_str]]) %>%
+      prepare_country_level_deltas(all_hs10_country_etrs[[date_str]]) %>%
         mutate(date = date_str, .before = 1)
     })
 
   write_csv(stacked, output_path)
-  message(sprintf('Wrote stacked country-level ETRs to %s (in pp units)', output_path))
+  message(sprintf('Wrote stacked country-level deltas to %s (in pp units)', output_path))
   invisible(stacked)
 }
 
 
-#' Write stacked country × HTS2 ETR CSV with date column
+#' Write stacked country × HTS2 delta CSV with date column
 #'
 #' @param all_hs10_country_etrs Named list (date → hs10_country_etrs tibble)
 #' @param output_file Output filename
 #' @param scenario Scenario name
 #' @param output_base Base output directory
-write_country_hts2_etrs_stacked <- function(all_hs10_country_etrs,
-                                             output_file = 'etrs_by_census_country_hts2.csv',
-                                             scenario = NULL,
-                                             output_base = 'output') {
+write_country_hts2_deltas_stacked <- function(all_hs10_country_etrs,
+                                               output_file = 'deltas_by_census_country_hts2.csv',
+                                               scenario = NULL,
+                                               output_base = 'output') {
 
   output_path <- get_output_path(output_file, scenario, output_base)
 
   stacked <- names(all_hs10_country_etrs) %>%
     map_df(function(date_str) {
-      prepare_country_hts2_etrs(all_hs10_country_etrs[[date_str]]) %>%
+      prepare_country_hts2_deltas(all_hs10_country_etrs[[date_str]]) %>%
         mutate(date = date_str, .before = 1)
     })
 
   write_csv(stacked, output_path)
-  message(sprintf('Wrote stacked country × HTS2 ETRs to %s (in pp units)', output_path))
+  message(sprintf('Wrote stacked country × HTS2 deltas to %s (in pp units)', output_path))
   invisible(stacked)
 }
 
 
-#' Write combined overall ETRs text file for time-varying scenarios
+#' Write combined overall deltas text file for time-varying scenarios
 #'
-#' Each date gets its own section with ETR and coverage tables.
+#' Each date gets its own section with delta and coverage tables.
 #'
-#' @param all_overall_data Named list (date → result from calc_overall_etrs_data())
+#' @param all_overall_data Named list (date → result from calc_overall_deltas_data())
 #' @param output_file Output filename
 #' @param scenario Scenario name
 #' @param output_base Base output directory
-write_overall_etrs_combined <- function(all_overall_data,
-                                         output_file = 'overall_etrs.txt',
-                                         scenario = NULL,
-                                         output_base = 'output') {
+write_overall_deltas_combined <- function(all_overall_data,
+                                           output_file = 'overall_deltas.txt',
+                                           scenario = NULL,
+                                           output_base = 'output') {
 
   output_path <- get_output_path(output_file, scenario, output_base)
 
@@ -1550,15 +1719,15 @@ write_overall_etrs_combined <- function(all_overall_data,
 
     section_header <- c(
       sprintf('Date: %s', date_str),
-      paste(rep('=', 58), collapse = ''),
+      paste(rep('=', 65), collapse = ''),
       ''
     )
 
-    all_lines <- c(all_lines, section_header, data$etr_lines, '', data$coverage_lines, '', '')
+    all_lines <- c(all_lines, section_header, data$delta_lines, '', data$coverage_lines, '', '')
 
     # Print to console
     cat('\n')
-    cat(paste(c(section_header, data$etr_lines), collapse = '\n'))
+    cat(paste(c(section_header, data$delta_lines), collapse = '\n'))
     cat('\n\n')
     if (length(data$coverage_lines) > 0) {
       cat(paste(data$coverage_lines, collapse = '\n'))
@@ -1567,7 +1736,7 @@ write_overall_etrs_combined <- function(all_overall_data,
   }
 
   writeLines(all_lines, output_path)
-  message(sprintf('Wrote combined overall ETRs to %s', output_path))
+  message(sprintf('Wrote combined overall deltas to %s', output_path))
   invisible(all_overall_data)
 }
 
