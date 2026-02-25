@@ -8,6 +8,7 @@ This project analyzes U.S. import trade data to compute tariff changes incorpora
 - **Section 232 tariffs**: Steel, aluminum, softwood lumber, furniture, automobiles, and auto parts
 - **IEEPA Reciprocal tariffs**: Broad-based tariffs (mutually exclusive with Section 232)
 - **IEEPA Fentanyl tariffs**: Targeted tariffs that stack for China, mutually exclusive otherwise
+- **Section 122 tariffs**: Balance-of-payments tariffs that stack on top of all other authorities
 - **USMCA exemptions**: Trade agreement provisions with content requirements
 - **Metal content adjustment**: Section 232 derivative products taxed on metal content share only
 - **Baseline scenarios**: Any scenario can serve as a baseline; deltas are computed as counterfactual level - baseline level
@@ -30,6 +31,7 @@ Tariff-ETRs/
 │       │   ├── 232.yaml
 │       │   ├── ieepa_reciprocal.yaml
 │       │   ├── ieepa_fentanyl.yaml
+│       │   ├── s122.yaml
 │       │   └── other_params.yaml
 │       └── 2026-02-24/
 │           └── ...
@@ -79,7 +81,7 @@ Tariff-ETRs/
 **Import Data:**
 - Source: [U.S. Census Bureau - Merchandise Trade Imports](https://www.census.gov/foreign-trade/data/IMDB.html)
 - Format: Monthly ZIP files (IMDByymm.ZIP) containing IMP_DETL.TXT fixed-width format files
-- Location: Update `import_data_path` in `main.R` (default: `C:/Users/jar335/Downloads`)
+- Location: Set `import_data_path` in `main.R` or via `--import-data-path` CLI flag (environment-specific; no universal default)
 
 **Country Codes:**
 The project uses Census Bureau country codes. Tariff rates are specified at the country level, with calculations at HTS10×country level before aggregating to 8 partner groups:
@@ -92,8 +94,8 @@ The project uses Census Bureau country codes. Tariff rates are specified at the 
 | japan | 5880 |
 | uk | 4120 |
 | eu | 27 EU member state codes |
-| ftrow | FTA partners (Australia, Korea, Singapore, etc.) |
-| row | All unmapped countries (183 total) |
+| ftrow | 18 FTA partners (Australia, Korea, Singapore, Chile, Colombia, Peru, Costa Rica, Guatemala, Honduras, Nicaragua, Panama, El Salvador, Dominican Republic, Bahrain, Israel, Jordan, Oman, Morocco) |
+| row | All unmapped countries default to this group |
 
 See `resources/country_partner_mapping.csv` for the complete mapping.
 
@@ -170,11 +172,13 @@ config/tariff-timeline/           # Scenario counterfactuals
     232.yaml
     ieepa_reciprocal.yaml
     ieepa_fentanyl.yaml
+    s122.yaml              # optional
     other_params.yaml
   2025-04-02/
     232.yaml
     ieepa_reciprocal.yaml
     ieepa_fentanyl.yaml
+    s122.yaml              # optional
     other_params.yaml
 ```
 
@@ -226,11 +230,32 @@ target_total_rules:          # Optional: reciprocal "combined duty target"
 `product_country_rates` also supports `countries` (list) to apply one HTS block to multiple countries.
 
 **Stacking Rules:**
-- **Section 232**: Takes precedence over IEEPA when applicable
-- **IEEPA Reciprocal**: Applies to imports not covered by Section 232
+- **Section 232**: Takes precedence over IEEPA when applicable. For metal derivative products, the 232 rate is scaled by `metal_share`; IEEPA applies to the non-metal portion.
+- **IEEPA Reciprocal**: Applies to imports not covered by Section 232 (or to the non-metal portion of 232 derivatives)
 - **IEEPA Fentanyl**:
-  - *China*: Stacks on top (232 or reciprocal, whichever applies, plus fentanyl)
-  - *Others*: Only applies if neither 232 nor reciprocal covers the import
+  - *China*: Stacks on top of everything (232 + reciprocal + fentanyl)
+  - *Others*: Only applies to base not covered by 232 or reciprocal (or to the non-metal portion of 232 derivatives)
+- **Section 122**: Stacks on top of all other tariffs. Stacking on 232 controlled by `s122_stacks_on_232` flag in `other_params.yaml`.
+
+### Section 122 Tariffs (`s122.yaml`, optional)
+
+Balance-of-payments tariffs that stack on top of all other authorities. Uses the same hierarchical format as IEEPA:
+
+```yaml
+headline_rates:
+  default: 0.0           # Default for all countries
+  china: 0.10            # China-specific override
+
+product_rates:
+  '8703': 0.05           # Product-specific override (all countries)
+
+product_country_rates:
+  - hts: ['87032201']
+    country: '5700'
+    rate: 0.20
+```
+
+When `s122.yaml` is absent from a scenario, Section 122 rates default to zero.
 
 ### Metal Content Shares (`other_params.yaml`)
 
@@ -330,7 +355,7 @@ Overall tariff levels by partner using both GTAP weights and 2024 Census import 
 
 ## How It Works
 
-1. **Load Config**: Parse YAML files into HTS10×country rate tables
+1. **Load Config**: Parse YAML files into HTS10×country rate tables (232, IEEPA reciprocal, IEEPA fentanyl, Section 122)
 2. **Load Imports**: Read Census IMP_DETL.TXT files, aggregate by HTS10×country
 3. **Process Baseline**: Compute tariff levels for baseline config
 4. **Process Counterfactual**: Compute tariff levels for counterfactual config(s)

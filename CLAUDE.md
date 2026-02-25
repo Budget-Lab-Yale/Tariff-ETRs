@@ -167,7 +167,7 @@ Each config directory (baseline or counterfactual date) requires `other_params.y
 
 You can mix mnemonics and Census codes in the same config file.
 
-4. **s122.yaml** (optional) - Section 122 tariffs (STACKS on everything):
+4. **s122.yaml** (optional) - Section 122 balance-of-payments tariffs:
    ```yaml
    headline_rates:
      default: 0.05           # Default rate for all countries
@@ -176,7 +176,14 @@ You can mix mnemonics and Census codes in the same config file.
 
    product_rates:            # Optional: HTS-specific overrides
      '8703': 0.08            # Autos get different rate
+
+   product_country_rates:    # Optional: HTS×country overrides
+     - hts: ['87032201']
+       country: '5700'
+       rate: 0.20
    ```
+   Uses the same hierarchical format and `load_ieepa_rates_yaml()` loader as IEEPA configs.
+   When absent, Section 122 rates default to zero.
 
 5. **other_params.yaml** (required) - MFN rates pointer, USMCA parameters, auto rebate rates, etc.
    Must include: `mfn_rates: 'resources/mfn_rates_2025.csv'`
@@ -190,7 +197,7 @@ The codebase uses a clean separation between config parsing and calculations:
 *Config Parsing → Tabular Data:*
 - `load_232_rates()`: Returns complete HS10×country tibble with one column per tariff (`s232_[tariff]_rate`)
 - `load_ieepa_rates_yaml()`: Generic loader - returns complete HS10×country tibble with configurable column name
-  - Used for both reciprocal and fentanyl tariffs
+  - Used for reciprocal, fentanyl, and Section 122 tariffs
   - Handles hierarchical rate structure (headline → product → product×country)
 - Both functions handle the full universe of HS10 codes × 240 countries
 - No nested lists - just clean tibbles ready for joining
