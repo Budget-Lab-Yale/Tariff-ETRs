@@ -1,0 +1,25 @@
+# Additional scenario parameters
+
+# USMCA and auto sector parameters
+us_auto_content_share: 0.4      # Share of US content in auto assembly
+us_auto_assembly_share: 0.33    # Share of US assembly in autos
+auto_rebate_rate: 0.0375        # Auto rebate rate
+
+# IEEPA parameters
+ieepa_usmca_exception: 0        # No IEEPA tariffs in this period
+
+# Section 122 parameters
+s122_usmca_exception: 1         # Apply USMCA exemption to s122 tariffs (1 = yes, 0 = no)
+
+metal_content:
+  method: 'bea'
+  bea_table: 'total'
+  bea_granularity: 'detail'
+  primary_chapters: ['72', '73', '76', '74']
+  metal_programs:
+    - steel
+    - aluminum_base_articles
+    - aluminum_derivative_9903_85_04
+    - aluminum_derivative_9903_85_07
+    - aluminum_derivative_9903_85_08
+    - copper_derivatives

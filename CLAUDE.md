@@ -26,7 +26,7 @@ This is an R-based data analysis project for processing U.S. import trade data. 
 - **IEEPA Fentanyl**:
   - China: STACKS on top of 232 + reciprocal
   - Others: Only applies to base not covered by 232 or reciprocal
-- **Section 122** (optional): STACKS on top of everything (all countries)
+- **Section 122** (optional): Excluded to the extent 232 applies (scales by `nonmetal_share` on 232-covered products; full rate on non-232 products)
 
 **Country Code Mappings:**
 The project uses Census Bureau country codes (not ISO codes). Country-to-partner mapping used for final aggregation:
@@ -177,8 +177,8 @@ The codebase uses a clean separation between config parsing and calculations:
 - Current rules:
   - **China (5700)**: `final_rate = max(232, reciprocal) + fentanyl + s122` (fentanyl always stacks)
   - **Others**: `final_rate = (232 > 0 ? 232 : reciprocal + fentanyl) + s122`
-  - Section 122 stacks on IEEPA always; stacking on 232 controlled by `s122_stacks_on_232` flag
-  - **Metal 232 derivatives**: 232 rate scaled by `metal_share`; IEEPA applies to non-metal portion (`nonmetal_share = 1 - metal_share`)
+  - Section 122: excluded "to the extent the 232 tariff applies" — on 232-covered products, S122 applies only to `nonmetal_share` (same as IEEPA); on non-232 products, full S122 rate
+  - **Metal 232 derivatives**: 232 rate scaled by `metal_share`; IEEPA and S122 apply to non-metal portion (`nonmetal_share = 1 - metal_share`)
 - Easy to modify for new tariff types or stacking logic
 
 **Core Functions:**
@@ -188,7 +188,7 @@ The codebase uses a clean separation between config parsing and calculations:
 - `resolve_country_mnemonics()`: Expands mnemonics (e.g., 'eu') to individual Census country codes in rates config
 - `load_232_rates()`: Loads 232 YAML, expands to complete HS10×country tibble with coverage and country-specific rates
 - `load_ieepa_rates_yaml()`: Generic IEEPA loader with configurable column name - applies hierarchical rate logic (headline → product → product×country)
-- `load_metal_content()`: Loads metal content shares (flat, BEA, or CBO method) for Section 232 derivative adjustment. BEA method supports `bea_granularity: 'gtap'` (sector-level) or `'naics'` (HS10-level via NAICS chaining)
+- `load_metal_content()`: Loads metal content shares (flat, BEA, or CBO method) for Section 232 derivative adjustment. BEA method supports `bea_granularity: 'gtap'` (sector-level), `'naics'` (HS10-level via NAICS chaining), or `'detail'` (per-metal-type shares via 2017 BEA Detail IO table)
 
 *src/data_processing.R:*
 - `load_imports_hs10_country()`: Reads Census ZIP files, extracts IMP_DETL.TXT, returns HS10×country×month data

@@ -41,7 +41,8 @@ Tariff-ETRs/
 │   ├── usmca_shares.csv              # USMCA-qualifying trade shares
 │   ├── gtap_import_weights.csv       # Import weights for aggregation
 │   ├── gtap_bea_crosswalk.csv        # GTAP → BEA industry mapping (for metal content)
-│   ├── metal_content_shares.csv      # Pre-computed metal content shares by GTAP sector
+│   ├── metal_content_shares_*.csv    # Pre-computed metal content shares (GTAP/NAICS/detail)
+│   ├── naics_bea_*_crosswalk.csv     # NAICS → BEA crosswalks (summary and detail)
 │   ├── bea/                          # BEA I-O source data
 │   └── cbo/                          # CBO HTS derivative product lists
 ├── cache/
@@ -198,12 +199,17 @@ metal_content:
   flat_share: 1.0                     # Used when method = 'flat'
   primary_chapters: ['72', '73', '76'] # Forced to share = 1.0
   bea_table: 'domestic'               # BEA: 'domestic' or 'total'
-  bea_granularity: 'gtap'             # BEA: 'gtap' (sector) or 'naics' (HS10-level)
+  bea_granularity: 'gtap'             # BEA: 'gtap', 'naics', or 'detail'
   metal_programs:                     # 232 tariff names that are metal programs
     - steel
-    - steel_derivative
-    - aluminum
-    - aluminum_derivative
+    - aluminum_base_articles
+    - aluminum_derivative_9903_85_04
+    - copper_derivatives
+  program_metal_types:                # Per-metal-type scaling (detail mode)
+    steel: 'steel'
+    aluminum_base_articles: 'aluminum'
+    aluminum_derivative_9903_85_04: 'aluminum'
+    copper_derivatives: 'copper'
   # CBO-specific parameters (optional, defaults match CBO's config):
   cbo_high_share: 0.75               # Used when method = 'cbo'
   cbo_low_share: 0.25                # Used when method = 'cbo'
@@ -212,8 +218,13 @@ metal_content:
 
 **Methods:**
 - `flat`: Uniform metal share for all derivative products (e.g., 1.0 = full value, 0.5 = TPC assumption, 0.0 = lower bound)
-- `bea`: Industry-varying shares computed from BEA Input-Output direct requirements (primary metals inputs / total industry output). Two granularity levels: `gtap` assigns shares at the GTAP sector level (~45 sectors); `naics` assigns shares at the HS10 level via HS10 → NAICS → BEA chaining (~20K products), falling back to GTAP-level for unmatched codes.
+- `bea`: Industry-varying shares computed from BEA Input-Output requirements (primary metals inputs / total industry output). Three granularity levels:
+  - `gtap`: Shares at the GTAP sector level (~45 sectors)
+  - `naics`: Shares at the HS10 level via HS10 → NAICS → BEA summary chaining (~20K products), falling back to GTAP-level for unmatched codes
+  - `detail`: Per-metal-type shares (steel, aluminum, copper, other) via the 2017 BEA Detail IO table (~402 commodities, 10 metal sub-industries). When combined with `program_metal_types`, each 232 program is scaled by its own metal type's share rather than the aggregate. Falls back to GTAP-level aggregate for unmatched codes.
 - `cbo`: Product-level shares from the [CBO conventional tariff analysis model](https://github.com/US-CBO/conventional-tariff-analysis-model). Classifies Section 232 derivatives into three buckets: high metal content (75%, 168 products), low metal content (25%, 735 products), and copper derivatives (90%, 118 products). Products not in any CBO list default to 100%. HTS lists are stored in `resources/cbo/`.
+
+**Per-Metal-Type Scaling (`program_metal_types`):** When `bea_granularity: 'detail'` is used with `program_metal_types`, each 232 program is scaled by the share of its specific metal type (e.g., a steel program uses `steel_share`, an aluminum program uses `aluminum_share`). Valid types: `steel`, `aluminum`, `copper`, `other`. Programs not in `program_metal_types` fall back to aggregate `metal_share`. Without `program_metal_types`, all programs use aggregate `metal_share` (backward compatible).
 
 **When `metal_content` is absent** from `other_params.yaml`, defaults to `flat` with `share = 1.0` (identical to pre-metal-content behavior).
 

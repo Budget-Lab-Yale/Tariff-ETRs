@@ -1,0 +1,77 @@
+# IEEPA rates configuration - Country-level format with census codes
+# Based on Reed Smith tariff tracker (Nov 14, 2025)
+# Only includes countries tracked in country_partner_mapping.csv
+# All other countries use the default rate
+
+headline_rates:
+  default: 0.10  # Default reciprocal tariff for unmapped countries
+
+  # China
+  '5700': 0.20  # 10% baseline + 10% fentanyl (34% reciprocal delayed to 2026)
+
+  # Canada & Mexico
+  '1220': 0.35  # Canada - "all other products" rate (USMCA goods: 0%, energy: 0.10)
+  '2010': 0.25  # Mexico - "all other products" rate (USMCA goods: 0%, potash: 0.10)
+
+  # UK & Japan
+  '4120': 0.10  # United Kingdom
+  '5880': 0.15  # Japan - approximation of "15% minus Column 1 Duty Rate" formula
+
+  # EU Members (individual countries)
+  # Using 0.15 as approximation of "15% minus Column 1 Duty Rate" formula
+  '4330': 0.15  # Austria
+  '4231': 0.15  # Belgium
+  '4870': 0.15  # Bulgaria
+  '4791': 0.15  # Croatia
+  '4910': 0.15  # Cyprus
+  '4351': 0.15  # Czech Republic
+  '4099': 0.15  # Denmark
+  '4470': 0.15  # Estonia
+  '4050': 0.15  # Finland
+  '4279': 0.15  # France
+  '4280': 0.15  # Germany
+  '4840': 0.15  # Greece
+  '4370': 0.15  # Hungary
+  '4190': 0.15  # Ireland
+  '4759': 0.15  # Italy
+  '4490': 0.15  # Latvia
+  '4510': 0.15  # Lithuania
+  '4239': 0.15  # Luxembourg
+  '4730': 0.15  # Malta
+  '4210': 0.15  # Netherlands
+  '4550': 0.15  # Poland
+  '4710': 0.15  # Portugal
+  '4850': 0.15  # Romania
+  '4359': 0.15  # Slovakia
+  '4792': 0.15  # Slovenia
+  '4700': 0.15  # Spain
+  '4010': 0.15  # Sweden
+
+  # Free Trade ROW countries
+  '6021': 0.10  # Australia
+  '5800': 0.15  # South Korea
+  '5590': 0.10  # Singapore
+  '3370': 0.10  # Chile
+  '3010': 0.10  # Colombia
+  '3330': 0.10  # Peru
+  '2230': 0.15  # Costa Rica
+  '2050': 0.10  # Guatemala
+  '2150': 0.10  # Honduras
+  '2190': 0.18  # Nicaragua
+  '2250': 0.10  # Panama
+  '2110': 0.10  # El Salvador
+  '2470': 0.25  # Dominican Republic
+  '5250': 0.10  # Bahrain
+  '5081': 0.15  # Israel
+  '5110': 0.15  # Jordan
+  '5230': 0.10  # Oman
+  '7140': 0.10  # Morocco
+
+# Note: This configuration only includes countries tracked in our model
+# Countries like Afghanistan, Algeria, India, Vietnam, etc. are part of the
+# "row" (Rest of World) partner group and will use the default rate
+# Exempt countries (Belarus, Cuba, North Korea, Russia) are not included
+
+product_rates: []
+
+product_country_rates: []
