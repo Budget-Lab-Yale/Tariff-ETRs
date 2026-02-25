@@ -932,6 +932,44 @@ calc_weighted_etr <- function(rates_232,
   rate_matrix <- rate_matrix %>%
     select(-usmca_share)
 
+  # Join MFN rates early so reciprocal target-total rules can use Column 1.
+  if (!is.null(mfn_rates)) {
+    rate_matrix <- rate_matrix %>%
+      mutate(hs8 = substr(hs10, 1, 8)) %>%
+      left_join(mfn_rates, by = 'hs8')
+
+    n_missing <- sum(is.na(rate_matrix$mfn_rate))
+    n_total <- nrow(rate_matrix)
+    if (n_missing > 0) {
+      n_hs8_missing <- length(unique(rate_matrix$hs8[is.na(rate_matrix$mfn_rate)]))
+      message(sprintf('MFN join: %d of %d rows (%d unique HS8 codes) have no MFN rate, defaulting to 0',
+                      n_missing, n_total, n_hs8_missing))
+    }
+
+    rate_matrix <- rate_matrix %>%
+      mutate(
+        mfn_rate = if_else(is.na(mfn_rate), 0, mfn_rate)
+      ) %>%
+      select(-hs8)
+  } else {
+    rate_matrix <- rate_matrix %>%
+      mutate(mfn_rate = 0)
+  }
+
+  # Optional reciprocal target-total rule:
+  # effective reciprocal add-on = max(target_total_rate - mfn_rate, 0)
+  # applied only where reciprocal coverage is active (>0).
+  if ('target_total_rate' %in% names(rate_matrix)) {
+    rate_matrix <- rate_matrix %>%
+      mutate(
+        ieepa_reciprocal_rate = if_else(
+          !is.na(target_total_rate) & ieepa_reciprocal_rate > 0,
+          pmax(target_total_rate - mfn_rate, 0),
+          ieepa_reciprocal_rate
+        )
+      )
+  }
+
 
   # =============================================================================
   # Apply metal content shares to Section 232 metal program rates
@@ -1157,34 +1195,8 @@ calc_weighted_etr <- function(rates_232,
       base_neither = if_else(rate_232_max == 0 & ieepa_reciprocal_rate == 0 & ieepa_fentanyl_rate == 0, imports, 0)
     )
 
-  # =============================================================================
-  # Join MFN baseline rates and compute total tariff level
-  # =============================================================================
-
-  if (!is.null(mfn_rates)) {
-    hs10_country_etrs <- hs10_country_etrs %>%
-      mutate(hs8 = substr(hs10, 1, 8)) %>%
-      left_join(mfn_rates, by = 'hs8')
-
-    # Log coverage of MFN join (missing = HS8 codes not in MFN file)
-    n_missing <- sum(is.na(hs10_country_etrs$mfn_rate))
-    n_total <- nrow(hs10_country_etrs)
-    if (n_missing > 0) {
-      n_hs8_missing <- length(unique(hs10_country_etrs$hs8[is.na(hs10_country_etrs$mfn_rate)]))
-      message(sprintf('MFN join: %d of %d rows (%d unique HS8 codes) have no MFN rate, defaulting to 0',
-                       n_missing, n_total, n_hs8_missing))
-    }
-
-    hs10_country_etrs <- hs10_country_etrs %>%
-      mutate(
-        mfn_rate = if_else(is.na(mfn_rate), 0, mfn_rate),
-        level = mfn_rate + etr
-      ) %>%
-      select(-hs8)
-  } else {
-    hs10_country_etrs <- hs10_country_etrs %>%
-      mutate(mfn_rate = 0, level = etr)
-  }
+  hs10_country_etrs <- hs10_country_etrs %>%
+    mutate(level = mfn_rate + etr)
 
   hs10_country_etrs <- hs10_country_etrs %>%
     select(hs10, cty_code, gtap_code, imports, etr, mfn_rate, level, base_232, base_ieepa, base_neither)

@@ -215,7 +215,13 @@ product_country_rates:
   - hts: ['87032201', '87032301']
     country: '5700'
     rate: 0.50
+
+target_total_rules:          # Optional: reciprocal "combined duty target"
+  uk: 0.10                   # Effective add-on = max(target - MFN, 0)
+  eu: 0.15
 ```
+
+`product_country_rates` also supports `countries` (list) to apply one HTS block to multiple countries.
 
 **Stacking Rules:**
 - **Section 232**: Takes precedence over IEEPA when applicable
