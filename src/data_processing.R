@@ -56,6 +56,52 @@ load_imports_hs10_country <- function(import_data_path, year, type = c('con', 'g
   }
 
   message(sprintf('Found %d ZIP file(s) for year %d', length(zip_files), year))
+  # Enforce complete annual coverage: exactly one ZIP for each month.
+  zip_file_info <- tibble(
+    zip_path = zip_files,
+    file_name = basename(zip_files)
+  ) %>%
+    mutate(
+      month = str_match(
+        str_to_upper(file_name),
+        sprintf('^IMDB%s(\\d{2})\\.ZIP$', yy)
+      )[, 2],
+      month = as.integer(month)
+    )
+
+  if (any(is.na(zip_file_info$month))) {
+    bad_files <- zip_file_info %>%
+      filter(is.na(month)) %>%
+      pull(file_name)
+    stop(sprintf('Could not parse month from import file name(s): %s',
+                 paste(bad_files, collapse = ', ')))
+  }
+
+  invalid_months <- sort(setdiff(unique(zip_file_info$month), 1:12))
+  if (length(invalid_months) > 0) {
+    stop(sprintf('Found invalid month(s) in import file names: %s',
+                 paste(sprintf('%02d', invalid_months), collapse = ', ')))
+  }
+
+  duplicate_months <- zip_file_info %>%
+    count(month) %>%
+    filter(n > 1)
+  if (nrow(duplicate_months) > 0) {
+    stop(sprintf('Multiple import ZIP files found for year %d month(s): %s',
+                 year, paste(sprintf('%02d', duplicate_months$month), collapse = ', ')))
+  }
+
+  missing_months <- setdiff(1:12, sort(unique(zip_file_info$month)))
+  if (length(missing_months) > 0) {
+    stop(sprintf('Missing import ZIP files for year %d month(s): %s',
+                 year, paste(sprintf('%02d', missing_months), collapse = ', ')))
+  }
+
+  # Process files in month order for deterministic behavior.
+  zip_files <- zip_file_info %>%
+    arrange(month) %>%
+    pull(zip_path)
+
 
   # Column positions for IMP_DETL.TXT (1-based, inclusive)
   col_positions <- fwf_positions(
@@ -76,13 +122,11 @@ load_imports_hs10_country <- function(import_data_path, year, type = c('con', 'g
     detl_file <- zip_contents$Name[grepl('IMP_DETL\\.TXT$', zip_contents$Name, ignore.case = TRUE)]
 
     if (length(detl_file) == 0) {
-      warning(sprintf('No IMP_DETL.TXT found in %s, skipping', basename(zip_path)))
-      return(tibble())
+      stop(sprintf('No IMP_DETL.TXT found in %s', basename(zip_path)))
     }
 
     if (length(detl_file) > 1) {
-      warning(sprintf('Multiple IMP_DETL.TXT files found in %s, using first', basename(zip_path)))
-      detl_file <- detl_file[1]
+      stop(sprintf('Multiple IMP_DETL.TXT files found in %s', basename(zip_path)))
     }
 
     # Create temporary directory for extraction

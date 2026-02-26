@@ -326,13 +326,42 @@ load_ieepa_rates_yaml <- function(yaml_file,
         matching_hs10 <- hs10_codes[str_starts(hs10_codes, hts_code)]
         tibble(
           hs10 = matching_hs10,
-          product_rate = config$product_rates[[hts_code]]
+          product_rate = config$product_rates[[hts_code]],
+          product_rate_prefix = hts_code
         )
       })
 
+    # Guardrail: overlapping prefixes (e.g., 84 and 8407) would duplicate rows
+    # in the join below and silently distort weighted calculations.
+    dupes <- product_rates_expanded %>%
+      group_by(hs10) %>%
+      summarise(
+        n = n(),
+        prefixes = paste(sort(unique(product_rate_prefix)), collapse = ', '),
+        .groups = 'drop'
+      ) %>%
+      filter(n > 1)
+    if (nrow(dupes) > 0) {
+      examples <- dupes %>%
+        slice_head(n = 5) %>%
+        transmute(example = sprintf('%s -> [%s]', hs10, prefixes)) %>%
+        pull(example) %>%
+        paste(collapse = '; ')
+      stop(
+        'Overlapping prefixes in product_rates produced duplicate HS10 matches for ',
+        nrow(dupes), ' HS10 codes. ',
+        'This would duplicate rows during joins. ',
+        'Fix product_rates so each HS10 matches at most one prefix. ',
+        'Examples: ', examples
+      )
+    }
+
     # Apply product rate overrides
     rate_matrix <- rate_matrix %>%
-      left_join(product_rates_expanded, by = 'hs10') %>%
+      left_join(
+        product_rates_expanded %>% select(hs10, product_rate),
+        by = 'hs10'
+      ) %>%
       mutate(rate = if_else(!is.na(product_rate), product_rate, rate)) %>%
       select(-product_rate)
   }
