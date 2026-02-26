@@ -367,6 +367,15 @@ load_ieepa_rates_yaml <- function(yaml_file,
         }
       })
 
+    # Check for duplicate HS10 x country pairs in product_country_rates
+    dupes <- product_country_overrides %>%
+      group_by(hs10, cty_code) %>%
+      filter(n() > 1)
+    if (nrow(dupes) > 0) {
+      stop(sprintf('Duplicate HS10 x country entries in product_country_rates: %d duplicates found',
+                   nrow(dupes)))
+    }
+
     # Apply product×country rate overrides
     rate_matrix <- rate_matrix %>%
       left_join(product_country_overrides, by = c('hs10', 'cty_code')) %>%

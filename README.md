@@ -9,6 +9,7 @@ This project analyzes U.S. import trade data to compute effective tariff rate ch
 - **IEEPA Reciprocal tariffs**: Broad-based tariffs (mutually exclusive with Section 232)
 - **IEEPA Fentanyl tariffs**: Targeted tariffs that stack for China, mutually exclusive otherwise
 - **Section 122 tariffs**: Balance-of-payments tariffs that stack on top of all other authorities
+- **Section 301 tariffs**: Product-specific tariffs (primarily China) that stack unconditionally on full customs value
 - **USMCA exemptions**: Trade agreement provisions with content requirements
 - **Metal content adjustment**: Section 232 derivative products taxed on metal content share only
 
@@ -32,6 +33,7 @@ Tariff-ETRs/
 │   │   ├── ieepa_reciprocal.yaml # IEEPA reciprocal tariffs
 │   │   ├── ieepa_fentanyl.yaml   # IEEPA fentanyl tariffs
 │   │   ├── s122.yaml             # Section 122 tariffs (optional)
+│   │   ├── s301.yaml             # Section 301 tariffs (optional)
 │   │   └── other_params.yaml     # USMCA, auto rebate, metal content parameters
 │   └── {scenario}/         # Time-varying scenario (dated subfolders)
 │       ├── 2025-02-04/           # Each date has a complete config set
@@ -39,6 +41,7 @@ Tariff-ETRs/
 │       │   ├── ieepa_reciprocal.yaml
 │       │   ├── ieepa_fentanyl.yaml
 │       │   ├── s122.yaml
+│       │   ├── s301.yaml
 │       │   └── other_params.yaml
 │       └── 2025-04-02/
 │           └── ...
@@ -143,12 +146,14 @@ config/tariff-timeline/
     ieepa_reciprocal.yaml
     ieepa_fentanyl.yaml
     s122.yaml              # optional
+    s301.yaml              # optional
     other_params.yaml
   2025-04-02/
     232.yaml
     ieepa_reciprocal.yaml
     ieepa_fentanyl.yaml
     s122.yaml              # optional
+    s301.yaml              # optional
     other_params.yaml
 ```
 
@@ -200,6 +205,7 @@ product_country_rates:
   - *China*: Stacks on top of everything (232 + reciprocal + fentanyl)
   - *Others*: Only applies to base not covered by 232 or reciprocal (or to the non-metal portion of 232 derivatives)
 - **Section 122**: Stacks on top of all other tariffs. Stacking on 232 controlled by `s122_stacks_on_232` flag in `other_params.yaml`.
+- **Section 301**: Unconditionally cumulative with all other authorities. Applies to full customs value (no metal content scaling).
 
 ### Section 122 Tariffs (`s122.yaml`, optional)
 
@@ -220,6 +226,26 @@ product_country_rates:
 ```
 
 When `s122.yaml` is absent from a scenario, Section 122 rates default to zero.
+
+### Section 301 Tariffs (`s301.yaml`, optional)
+
+Product-specific tariffs (Trade Act of 1974, administered by USTR) that stack unconditionally on full customs value. Uses the same hierarchical format as IEEPA:
+
+```yaml
+headline_rates:
+  default: 0.0           # Default for all countries
+  china: 0.25            # China-specific rate
+
+product_rates:
+  '8541': 0.50           # Product-specific override (all countries)
+
+product_country_rates:
+  - hts: ['85414000']
+    country: '5700'
+    rate: 1.00
+```
+
+When `s301.yaml` is absent from a scenario, Section 301 rates default to zero.
 
 ### Metal Content Shares (`other_params.yaml`)
 
@@ -311,7 +337,7 @@ Overall ETRs by partner using both GTAP weights and 2024 Census import weights, 
 
 ## How It Works
 
-1. **Load Config**: Parse YAML files into HTS10×country rate tables (232, IEEPA reciprocal, IEEPA fentanyl, Section 122)
+1. **Load Config**: Parse YAML files into HTS10×country rate tables (232, IEEPA reciprocal, IEEPA fentanyl, Section 122, Section 301)
 2. **Load Imports**: Read Census IMP_DETL.TXT files, aggregate by HTS10×country
 3. **Build Rate Matrix**: Join config tables with import data
 4. **Apply Adjustments**: USMCA exemptions, auto rebates, and metal content scaling for 232 derivatives

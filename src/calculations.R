@@ -197,6 +197,13 @@ load_scenario_config <- function(config_path) {
     NULL
   }
 
+  s301_path <- file.path(config_path, 's301.yaml')
+  rates_s301 <- if (file.exists(s301_path)) {
+    load_ieepa_rates_yaml(s301_path, rate_col_name = 's301_rate')
+  } else {
+    NULL
+  }
+
   other_params <- read_yaml(file.path(config_path, 'other_params.yaml'))
 
   list(
@@ -204,6 +211,7 @@ load_scenario_config <- function(config_path) {
     rates_ieepa_reciprocal = rates_ieepa_reciprocal,
     rates_ieepa_fentanyl   = rates_ieepa_fentanyl,
     rates_s122             = rates_s122,
+    rates_s301             = rates_s301,
     other_params           = other_params
   )
 }
@@ -236,6 +244,7 @@ calc_etrs_for_config <- function(config, hs10_by_country, usmca_shares, country_
     rates_ieepa_reciprocal = config$rates_ieepa_reciprocal,
     rates_ieepa_fentanyl   = config$rates_ieepa_fentanyl,
     rates_s122             = config$rates_s122,
+    rates_s301             = config$rates_s301,
     import_data            = hs10_by_country,
     usmca_data             = usmca_shares,
     us_auto_content_share  = config$other_params$us_auto_content_share,
@@ -243,6 +252,7 @@ calc_etrs_for_config <- function(config, hs10_by_country, usmca_shares, country_
     us_assembly_share      = config$other_params$us_auto_assembly_share,
     ieepa_usmca_exempt     = config$other_params$ieepa_usmca_exception,
     s122_usmca_exempt      = config$other_params$s122_usmca_exception %||% 0,
+    s301_usmca_exempt      = config$other_params$s301_usmca_exception %||% 0,
     metal_content          = metal_content,
     metal_programs         = config$other_params$metal_content$metal_programs %||% character(0),
     program_metal_types    = config$other_params$metal_content$program_metal_types %||% NULL
@@ -542,6 +552,7 @@ do_scenario_time_varying <- function(scenario, config_dir, output_dir,
 #' @param rates_ieepa_reciprocal Tibble with columns: hs10, cty_code, ieepa_reciprocal_rate
 #' @param rates_ieepa_fentanyl Tibble with columns: hs10, cty_code, ieepa_fentanyl_rate
 #' @param rates_s122 Tibble with columns: hs10, cty_code, s122_rate (or NULL if no s122.yaml)
+#' @param rates_s301 Tibble with columns: hs10, cty_code, s301_rate (or NULL if no s301.yaml)
 #' @param import_data Data frame with hs10, cty_code, gtap_code, imports
 #' @param usmca_data Data frame with USMCA shares by partner and GTAP sector
 #' @param us_auto_content_share Share of US content in auto assembly
@@ -560,6 +571,7 @@ calc_weighted_etr <- function(rates_232,
                               rates_ieepa_reciprocal,
                               rates_ieepa_fentanyl,
                               rates_s122 = NULL,
+                              rates_s301 = NULL,
                               import_data,
                               usmca_data,
                               us_auto_content_share,
@@ -567,6 +579,7 @@ calc_weighted_etr <- function(rates_232,
                               us_assembly_share,
                               ieepa_usmca_exempt,
                               s122_usmca_exempt = 0,
+                              s301_usmca_exempt = 0,
                               metal_content = NULL,
                               metal_programs = character(0),
                               program_metal_types = NULL) {
@@ -591,6 +604,15 @@ calc_weighted_etr <- function(rates_232,
       mutate(s122_rate = 0)
   }
 
+  # Join Section 301 rates if provided
+  if (!is.null(rates_s301)) {
+    rate_matrix <- rate_matrix %>%
+      left_join(rates_s301, by = c('hs10', 'cty_code'))
+  } else {
+    rate_matrix <- rate_matrix %>%
+      mutate(s301_rate = 0)
+  }
+
   # Get all 232 rate column names
   rate_232_cols <- names(rate_matrix)[str_detect(names(rate_matrix), '^s232_.*_rate$')]
 
@@ -598,7 +620,7 @@ calc_weighted_etr <- function(rates_232,
   rate_matrix <- rate_matrix %>%
     mutate(
       across(
-        .cols = all_of(c(rate_232_cols, 'ieepa_reciprocal_rate', 'ieepa_fentanyl_rate', 's122_rate')),
+        .cols = all_of(c(rate_232_cols, 'ieepa_reciprocal_rate', 'ieepa_fentanyl_rate', 's122_rate', 's301_rate')),
         .fns  = ~ if_else(is.na(.), 0, .)
       )
     )
@@ -698,6 +720,18 @@ calc_weighted_etr <- function(rates_232,
           cty_code %in% USMCA_COUNTRIES,
           s122_rate * (1 - usmca_share),
           s122_rate
+        )
+      )
+  }
+
+  # Apply USMCA exemption to Section 301 tariffs if enabled
+  if (s301_usmca_exempt == 1) {
+    rate_matrix <- rate_matrix %>%
+      mutate(
+        s301_rate = if_else(
+          cty_code %in% USMCA_COUNTRIES,
+          s301_rate * (1 - usmca_share),
+          s301_rate
         )
       )
   }
@@ -895,24 +929,28 @@ calc_weighted_etr <- function(rates_232,
       # 3. Section 122: Excluded "to the extent the 232 tariff applies," meaning
       #    S122 applies only to the nonmetal_share of 232-covered products (same as IEEPA).
       #    For non-232 products, S122 applies in full.
+      # 4. Section 301: Unconditionally cumulative with all other authorities.
+      #    Applies to full customs value (no metal content scaling).
 
       final_rate = case_when(
         # China: Fentanyl stacks on top of normal 232-reciprocal logic
         # For metal 232 derivatives: reciprocal and s122 apply to non-metal portion
+        # Section 301 always applies to full customs value
         cty_code == CTY_CHINA ~ if_else(
           rate_232_max > 0,
           rate_232_max + ieepa_reciprocal_rate * nonmetal_share
-            + ieepa_fentanyl_rate + s122_rate * nonmetal_share,
-          ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate
+            + ieepa_fentanyl_rate + s122_rate * nonmetal_share + s301_rate,
+          ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate + s301_rate
         ),
 
         # Everyone else: 232 takes precedence, then reciprocal + fentanyl + s122
         # For metal 232 derivatives: IEEPA and s122 apply to non-metal portion
+        # Section 301 always applies to full customs value
         rate_232_max > 0 ~
-          rate_232_max + (ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate) * nonmetal_share,
+          rate_232_max + (ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate) * nonmetal_share + s301_rate,
 
-        # Otherwise use all IEEPA + s122
-        TRUE ~ ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate
+        # Otherwise use all IEEPA + s122 + s301
+        TRUE ~ ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate + s301_rate
       )
     )
 
