@@ -1,0 +1,159 @@
+# =============================================================================
+# Section 232 Tariffs — Pre-2025 Baseline (January 2025 policy)
+# =============================================================================
+#
+# Original 2018 Proclamations 9705 (steel) and 9704 (aluminum), plus 2020
+# Proclamation 9980 (derivative products), at rates and country exemptions
+# in effect as of January 2025.
+#
+# Country exemptions modeled:
+#   - Canada, Mexico: USMCA-related exemption (rate = 0)
+#   - EU, UK, Japan: TRQ agreements (modeled as exempt, rate = 0)
+#   - South Korea (5800): Quota agreement (modeled as exempt, rate = 0)
+#   - Australia (6021): Full exemption (rate = 0)
+#   - Brazil (3510), Argentina (3570): Quota agreements (modeled as exempt, rate = 0)
+#   - Ukraine (4623): Exemption (rate = 0)
+#   - Russia (4621): 200% rate per 2023 proclamation
+#
+# Products NOT included in baseline (did not exist until March 2025):
+#   - Expanded aluminum derivatives (9903.85.07, 9903.85.08)
+#   - Copper derivatives
+#   - Automobiles, auto parts, softwood, furniture, kitchen cabinets
+# =============================================================================
+
+steel:
+  base:
+  # Fully covered headings (Proclamation 9705: 7206.10 through 7216.50)
+  - '7206'
+  - '7207'
+  - '7208'
+  - '7209'
+  - '7210'
+  - '7211'
+  - '7212'
+  - '7213'
+  - '7214'
+  - '7215'
+  # Partially covered: 7216.10 through 7216.50, 7216.99
+  - '721610'
+  - '721621'
+  - '721622'
+  - '721631'
+  - '721632'
+  - '721633'
+  - '721640'
+  - '721650'
+  - '721699'
+  # Fully covered headings (7217 through 7229)
+  - '7217'
+  - '7218'
+  - '7219'
+  - '7220'
+  - '7221'
+  - '7222'
+  - '7223'
+  - '7224'
+  - '7225'
+  - '7226'
+  - '7227'
+  - '7228'
+  - '7229'
+  # Fully covered headings (7304 through 7306)
+  - '7304'
+  - '7305'
+  - '7306'
+  # Partially covered Ch. 73 subheadings (7301.10, 7302.10, 7302.40-7302.90)
+  - '730110'
+  - '730210'
+  - '730240'
+  - '730290'
+  rates:
+    default: 0.25
+    canada: 0
+    mexico: 0
+    eu: 0
+    uk: 0
+    japan: 0
+    '5800': 0       # South Korea (quota)
+    '6021': 0       # Australia (exempt)
+    '3510': 0       # Brazil (quota)
+    '3570': 0       # Argentina (quota)
+    '4623': 0       # Ukraine (exempt)
+    '4621': 2.0     # Russia (200% per 2023 proclamation)
+  usmca_exempt: 0
+
+aluminum_base_articles:
+  base:
+  # Fully covered headings (Proclamation 9704)
+  - '7601'
+  - '7604'
+  - '7605'
+  - '7606'
+  - '7607'
+  - '7608'
+  - '7609'
+  # Specific 10-digit codes
+  - '7616995160'
+  - '7616995170'
+  rates:
+    default: 0.10
+    canada: 0
+    mexico: 0
+    eu: 0
+    uk: 0
+    japan: 0
+    '5800': 0       # South Korea (quota)
+    '6021': 0       # Australia (exempt)
+    '3510': 0       # Brazil (quota)
+    '3570': 0       # Argentina (quota)
+    '4623': 0       # Ukraine (exempt)
+    '4621': 2.0     # Russia (200% per 2023 proclamation)
+  usmca_exempt: 0
+
+aluminum_derivative_9980:
+  base:
+  # Proclamation 9980 aluminum derivatives
+  - '76141050'
+  - '76149020'
+  - '76149040'
+  - '76149050'
+  - '87081030'
+  - '87082921'
+  rates:
+    default: 0.10
+    canada: 0
+    mexico: 0
+    eu: 0
+    uk: 0
+    japan: 0
+    '5800': 0       # South Korea (quota)
+    '6021': 0       # Australia (exempt)
+    '3510': 0       # Brazil (quota)
+    '3570': 0       # Argentina (quota)
+    '4623': 0       # Ukraine (exempt)
+    '4621': 2.0     # Russia (200% per 2023 proclamation)
+  usmca_exempt: 0
+
+steel_derivative_9980:
+  base:
+  # Proclamation 9980 steel derivatives
+  - '7317005503'
+  - '7317005505'
+  - '7317005507'
+  - '7317005560'
+  - '7317005580'
+  - '7317006560'
+  rates:
+    default: 0.25
+    canada: 0
+    mexico: 0
+    eu: 0
+    uk: 0
+    japan: 0
+    '5800': 0       # South Korea (quota)
+    '6021': 0       # Australia (exempt)
+    '3510': 0       # Brazil (quota)
+    '3570': 0       # Argentina (quota)
+    '4623': 0       # Ukraine (exempt)
+    '4621': 2.0     # Russia (200% per 2023 proclamation)
+  usmca_exempt: 0
