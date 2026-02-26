@@ -44,6 +44,7 @@ Tariff-ETRs/
 │   ├── usmca_shares.csv              # USMCA-qualifying trade shares
 │   ├── gtap_import_weights.csv       # Import weights for aggregation
 │   ├── mfn_rates_2025.csv            # MFN baseline tariff rates (HS8 level)
+│   ├── mfn_exemption_shares.csv     # MFN exemption shares (HS2 × country)
 │   ├── gtap_bea_crosswalk.csv        # GTAP → BEA industry mapping (for metal content)
 │   ├── metal_content_shares_*.csv    # Pre-computed metal content shares (GTAP/NAICS/detail)
 │   ├── naics_bea_*_crosswalk.csv     # NAICS → BEA crosswalks (summary and detail)
@@ -162,6 +163,18 @@ Each `other_params.yaml` must include a pointer to the MFN rates file:
 mfn_rates: 'resources/mfn_rates_2025.csv'
 ```
 
+### MFN Exemption Shares (optional)
+
+Many countries don't pay the full statutory MFN rate due to FTAs, GSP, and other duty-free provisions. To account for this, specify an MFN exemption shares file in `other_params.yaml`:
+
+```yaml
+mfn_exemption_shares: 'resources/mfn_exemption_shares.csv'
+```
+
+When present, MFN rates are adjusted: `effective_mfn = mfn_rate * (1 - exemption_share)`. This affects tariff levels and the reciprocal target-total rule. Exemption shares are at HS2 × country granularity; missing combinations default to 0 (no exemption).
+
+To regenerate: `Rscript analysis/generate_mfn_exemption_shares.R` (requires Census API access and cached import data).
+
 ### Time-Varying Scenarios
 
 To model tariff rates that change over time, create dated subfolders (YYYY-MM-DD) for the counterfactual configs. Each subfolder must contain a complete set of config files:
@@ -234,6 +247,8 @@ target_total_rules:          # Optional: reciprocal "combined duty target"
 `product_country_rates` also supports `countries` (list) to apply one HTS block to multiple countries.
 
 **Stacking Rules:**
+All tariff authorities are combined via a unified stacking formula. MFN is unconditionally additive in all branches:
+- **MFN**: Always additive — included in `final_rate` for every product×country combination
 - **Section 232**: Takes precedence over IEEPA when applicable. For metal derivative products, the 232 rate is scaled by `metal_share`; IEEPA applies to the non-metal portion.
 - **IEEPA Reciprocal**: Applies to imports not covered by Section 232 (or to the non-metal portion of 232 derivatives)
 - **IEEPA Fentanyl**:
@@ -359,7 +374,7 @@ Overall deltas by partner using both GTAP weights and 2024 Census import weights
 
 ### Tariff Levels (`levels_by_sector_country.csv`)
 
-Total tariff levels (MFN baseline + policy tariffs) in percentage points. Same format as `deltas_by_sector_country.csv` but represents absolute tariff rates. MFN rates are specified per-config via the `mfn_rates` pointer in `other_params.yaml`.
+Total tariff levels (MFN + policy tariffs) in percentage points. Same format as `deltas_by_sector_country.csv` but represents absolute tariff rates. MFN is included in the stacking formula as an unconditionally additive component; rates are specified per-config via the `mfn_rates` pointer in `other_params.yaml`.
 
 ### Overall Tariff Levels (`overall_levels.txt`)
 

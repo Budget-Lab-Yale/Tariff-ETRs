@@ -251,6 +251,12 @@ load_scenario_config <- function(config_path) {
   }
   mfn_rates <- load_mfn_rates(mfn_rates_path)
 
+  # Load MFN exemption shares if specified (optional)
+  mfn_exemption_shares <- NULL
+  if (!is.null(other_params$mfn_exemption_shares)) {
+    mfn_exemption_shares <- load_mfn_exemption_shares(other_params$mfn_exemption_shares)
+  }
+
   # Load tariff configs (all optional - missing file = NULL = zero rates)
   s232_path <- file.path(config_path, '232.yaml')
   params_232 <- if (file.exists(s232_path)) {
@@ -294,7 +300,8 @@ load_scenario_config <- function(config_path) {
     rates_s122             = rates_s122,
     rates_s301             = rates_s301,
     other_params           = other_params,
-    mfn_rates              = mfn_rates
+    mfn_rates              = mfn_rates,
+    mfn_exemption_shares   = mfn_exemption_shares
   )
 }
 
@@ -339,7 +346,8 @@ calc_etrs_for_config <- function(config, hs10_by_country, usmca_shares, country_
     metal_content          = metal_content,
     metal_programs         = config$other_params$metal_content$metal_programs %||% character(0),
     program_metal_types    = config$other_params$metal_content$program_metal_types %||% NULL,
-    mfn_rates              = config$mfn_rates
+    mfn_rates              = config$mfn_rates,
+    mfn_exemption_shares   = config$mfn_exemption_shares
   )
 
   message('Aggregating HS10×country results to partner×GTAP level...')
@@ -855,8 +863,11 @@ do_scenario_time_varying <- function(scenario, scenario_path, output_dir,
 #' @param program_metal_types Named list: program_name -> metal type string (e.g., list(steel = 'steel', aluminum_base_articles = 'aluminum')).
 #'   When provided with per-type share columns, each program is scaled by its type's share instead of aggregate metal_share.
 #' @param mfn_rates Tibble with columns: hs8, mfn_rate (MFN baseline tariff rates)
+#' @param mfn_exemption_shares Tibble with columns: hs2, cty_code, exemption_share (or NULL).
+#'   When provided, MFN rates are adjusted: effective_mfn = mfn_rate * (1 - exemption_share).
+#'   This captures FTA/GSP preferences that reduce the statutory MFN rate.
 #'
-#' @return Data frame with columns: hs10, cty_code, gtap_code, imports, etr, mfn_rate, level, base_232, base_ieepa, base_neither
+#' @return Data frame with columns: hs10, cty_code, gtap_code, imports, etr, level, base_232, base_ieepa, base_neither
 calc_weighted_etr <- function(rates_232,
                               usmca_exempt_232,
                               rates_ieepa_reciprocal,
@@ -874,7 +885,8 @@ calc_weighted_etr <- function(rates_232,
                               metal_content = NULL,
                               metal_programs = character(0),
                               program_metal_types = NULL,
-                              mfn_rates = NULL) {
+                              mfn_rates = NULL,
+                              mfn_exemption_shares = NULL) {
 
   # =============================================================================
   # Build complete rate matrix by joining config tables with import data
@@ -1074,6 +1086,18 @@ calc_weighted_etr <- function(rates_232,
         mfn_rate = if_else(is.na(mfn_rate), 0, mfn_rate)
       ) %>%
       select(-hs8)
+
+    # Apply MFN exemption shares (FTA/GSP preferences)
+    if (!is.null(mfn_exemption_shares)) {
+      rate_matrix <- rate_matrix %>%
+        mutate(hs2 = substr(hs10, 1, 2)) %>%
+        left_join(mfn_exemption_shares, by = c('hs2', 'cty_code')) %>%
+        mutate(
+          exemption_share = if_else(is.na(exemption_share), 0, exemption_share),
+          mfn_rate = mfn_rate * (1 - exemption_share)
+        ) %>%
+        select(-hs2, -exemption_share)
+    }
   } else {
     rate_matrix <- rate_matrix %>%
       mutate(mfn_rate = 0)
@@ -1285,7 +1309,7 @@ calc_weighted_etr <- function(rates_232,
       # 4. Section 301: Unconditionally cumulative with all other authorities.
       #    Applies to full customs value (no metal content scaling).
 
-      final_rate = case_when(
+      final_rate = mfn_rate + case_when(
         # China: Fentanyl stacks on top of normal 232-reciprocal logic
         # For metal 232 derivatives: reciprocal and s122 apply to non-metal portion
         # Section 301 always applies to full customs value
@@ -1330,10 +1354,10 @@ calc_weighted_etr <- function(rates_232,
     )
 
   hs10_country_etrs <- hs10_country_etrs %>%
-    mutate(level = mfn_rate + etr)
+    mutate(level = final_rate)
 
   hs10_country_etrs <- hs10_country_etrs %>%
-    select(hs10, cty_code, gtap_code, imports, etr, mfn_rate, level, base_232, base_ieepa, base_neither)
+    select(hs10, cty_code, gtap_code, imports, etr, level, base_232, base_ieepa, base_neither)
 
   return(hs10_country_etrs)
 }
@@ -1345,7 +1369,7 @@ calc_weighted_etr <- function(rates_232,
 #' using import-weighted averaging. Also aggregates coverage bases for tariff
 #' coverage reporting.
 #'
-#' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr, mfn_rate, level, base_232, base_ieepa, base_neither
+#' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr, level, base_232, base_ieepa, base_neither
 #' @param country_mapping Data frame with columns: cty_code, partner
 #'
 #' @return Data frame with columns: partner, gtap_code, etr, level, base_232, base_ieepa, base_neither
