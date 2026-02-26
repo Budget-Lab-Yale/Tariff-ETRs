@@ -230,6 +230,10 @@ load_232_rates <- function(yaml_file,
 #' 1. Headline rates: Default rate for each country
 #' 2. Product rates: Override headline for specific HTS codes
 #' 3. Product × country rates: Override everything for specific combinations
+#' Optional:
+#' - target_total_rules: Country-level "combined duty target" for reciprocal
+#'   policies. When present, downstream calculations use max(target - MFN, 0)
+#'   for rows with positive reciprocal coverage.
 #'
 #' Supported mnemonics in headline_rates: china, canada, mexico, uk, japan, eu, ftrow
 #' (based on resources/country_partner_mapping.csv)
@@ -240,7 +244,8 @@ load_232_rates <- function(yaml_file,
 #' @param census_codes_file Path to Census country codes CSV file
 #' @param country_partner_file Path to country-partner mapping CSV (for mnemonic resolution)
 #'
-#' @return Tibble with columns: hs10, cty_code, [rate_col_name]
+#' @return Tibble with columns: hs10, cty_code, [rate_col_name], and optional
+#'   target_total_rate when target_total_rules is provided.
 load_ieepa_rates_yaml <- function(yaml_file,
                                   rate_col_name = 'ieepa_rate',
                                   crosswalk_file = 'resources/hs10_gtap_crosswalk.csv',
@@ -266,6 +271,17 @@ load_ieepa_rates_yaml <- function(yaml_file,
   # Resolve mnemonics in headline_rates (e.g., 'china' → '5700', 'eu' → 27 codes)
   headline_rates <- resolve_country_mnemonics(config$headline_rates, mnemonic_map)
 
+  # Resolve optional target_total_rules using the same country-id conventions.
+  # This is used for reciprocal policies where legal text specifies a target
+  # combined rate instead of a flat add-on.
+  target_total_rules <- NULL
+  if (!is.null(config$target_total_rules) && length(config$target_total_rules) > 0) {
+    target_total_rules <- resolve_country_mnemonics(config$target_total_rules, mnemonic_map)
+    if (!is.null(target_total_rules$default)) {
+      stop('target_total_rules does not support "default"; provide explicit countries only')
+    }
+  }
+
   # Get default rate
   default_rate <- headline_rates$default
   if (is.null(default_rate)) {
@@ -286,10 +302,17 @@ load_ieepa_rates_yaml <- function(yaml_file,
         } else {
           return(default_rate)
         }
+      }),
+      target_total_rate = sapply(cty_code, function(code) {
+        if (!is.null(target_total_rules) && !is.null(target_total_rules[[code]])) {
+          return(target_total_rules[[code]])
+        } else {
+          return(NA_real_)
+        }
       })
     ) %>%
     expand_grid(hs10 = hs10_codes) %>%
-    select(hs10, cty_code, rate)
+    select(hs10, cty_code, rate, target_total_rate)
 
   # ===========================
   # Step 2: Apply product-level rates (apply to ALL countries)
@@ -323,25 +346,42 @@ load_ieepa_rates_yaml <- function(yaml_file,
     # Build product×country rate lookup by iterating through each exemption
     product_country_overrides <- config$product_country_rates %>%
       map_df(function(exemption) {
-        # Get the country identifier and rate for this exemption
-        country_id <- as.character(exemption$country)
-        exemption_rate <- exemption$rate
-
-        # Resolve mnemonic to country codes (e.g., 'canada' → '1220', 'eu' → 27 codes)
-        if (country_id %in% names(mnemonic_map)) {
-          country_codes <- mnemonic_map[[country_id]]
-        } else if (grepl('^[0-9]+$', country_id)) {
-          country_codes <- country_id
-        } else {
+        # Get one or more country identifiers and rate for this exemption.
+        # Backward compatible:
+        # - country: single string/code
+        # - countries: vector/list of strings/codes
+        country_ids <- exemption$countries
+        if (is.null(country_ids)) {
+          country_ids <- exemption$country
+        }
+        country_ids <- as.character(unlist(country_ids))
+        if (length(country_ids) == 0) {
           stop(
-            'Invalid country identifier in product_country_rates: "', country_id, '"',
-            ' (in exemption "', exemption$name, '")\n',
-            '  Must be one of:\n',
-            '    - A valid mnemonic (lowercase): ', paste(names(mnemonic_map), collapse = ', '), '\n',
-            '    - A numeric Census country code (e.g., "5700" for China)\n',
-            '  Note: Mnemonics are case-sensitive and must be lowercase.'
+            'product_country_rates entry is missing country/countries (in exemption "',
+            exemption$name, '")'
           )
         }
+        exemption_rate <- exemption$rate
+
+        # Resolve each mnemonic/code to Census country codes
+        country_codes <- map(country_ids, function(country_id) {
+          if (country_id %in% names(mnemonic_map)) {
+            mnemonic_map[[country_id]]
+          } else if (grepl('^[0-9]+$', country_id)) {
+            country_id
+          } else {
+            stop(
+              'Invalid country identifier in product_country_rates: "', country_id, '"',
+              ' (in exemption "', exemption$name, '")\n',
+              '  Must be one of:\n',
+              '    - A valid mnemonic (lowercase): ', paste(names(mnemonic_map), collapse = ', '), '\n',
+              '    - A numeric Census country code (e.g., "5700" for China)\n',
+              '  Note: Mnemonics are case-sensitive and must be lowercase.'
+            )
+          }
+        }) %>%
+          unlist() %>%
+          unique()
 
         # Expand HTS codes to matching HS10 codes
         matching_hs10 <- exemption$hts %>%
@@ -381,6 +421,11 @@ load_ieepa_rates_yaml <- function(yaml_file,
   rate_matrix <- rate_matrix %>%
     filter(rate > 0) %>%
     rename(!!rate_col_name := rate)
+
+  # Keep output compact for non-target-total policies.
+  if ('target_total_rate' %in% names(rate_matrix) && all(is.na(rate_matrix$target_total_rate))) {
+    rate_matrix <- rate_matrix %>% select(-target_total_rate)
+  }
 
   message(sprintf('Loaded %s for %s HS10 × country combinations',
                   rate_col_name, format(nrow(rate_matrix), big.mark = ',')))

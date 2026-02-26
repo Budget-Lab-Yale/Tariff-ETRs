@@ -7,6 +7,7 @@
 # Functions:
 #   - load_census_codes():          Load Census country codes with names
 #   - load_imports_hs10_country():  Load HS10 x country x year x month import data
+#   - load_mfn_rates():             Load MFN (most-favored-nation) baseline tariff rates
 #
 # =============================================================================
 
@@ -126,4 +127,26 @@ load_imports_hs10_country <- function(import_data_path, year, type = c('con', 'g
   message(sprintf('Loaded %s records for year %d', format(nrow(result), big.mark = ','), year))
 
   return(result)
+}
+
+
+#' Load MFN (most-favored-nation) baseline tariff rates at HS8 level
+#'
+#' Loads pre-built MFN rates from CSV. Specific-duty-only lines have mfn_rate = 0
+#' (ad valorem equivalent not available). Coverage is ~93% of HS8 codes by count;
+#' HS10 codes with no HS8 match will default to 0 at join time.
+#'
+#' @param file Path to MFN rates CSV file
+#'
+#' @return Tibble with columns: hs8 (character), mfn_rate (numeric)
+load_mfn_rates <- function(file = 'resources/mfn_rates_2025.csv') {
+  mfn <- read_csv(
+    file,
+    col_types = cols(hs8 = col_character(), mfn_rate = col_double()),
+    show_col_types = FALSE
+  ) %>%
+    select(hs8, mfn_rate)
+
+  message(sprintf('Loaded %s MFN rates from %s', format(nrow(mfn), big.mark = ','), file))
+  mfn
 }

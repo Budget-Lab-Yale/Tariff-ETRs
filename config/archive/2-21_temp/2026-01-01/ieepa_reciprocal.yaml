@@ -241,14 +241,6 @@ headline_rates:
   9610: 0.00
   9800: 0.00
   
-target_total_rules:
-  uk: 0.10
-  eu: 0.15
-  japan: 0.15
-  '4411': 0.15
-  '4419': 0.15
-  '5800': 0.15
-
 product_rates:
   '01061100': 0
   '01061201': 0
@@ -2444,14 +2436,8 @@ product_country_rates:
 # Effective date (Nov 14, 2025) is not enforced; scenario applies the
 # exemption "as if fully in force."
 # -----------------------------------------------------------------------------
-- name: deal_civil_aircraft_fr_2025_21940
-  countries:
-    - '5800'  # Korea
-    - uk
-    - japan
-    - eu
-    - '4411'  # Liechtenstein
-    - '4419'  # Switzerland
+- name: korea_civil_aircraft_fr_2025_21940
+  country: '5800'
   rate: 0
   hts:
     - '39172100'
