@@ -53,23 +53,32 @@ Tariff-ETRs/
 ├── cache/
 │   └── hs10_by_country_gtap_2024_con.rds  # Cached import data
 ├── output/
+│   ├── baseline/                                # Baseline tariff levels (no deltas/shocks)
+│   │   ├── gtap_levels_by_sector_country.csv    # Tariff levels (sector × partner)
+│   │   ├── levels_by_census_country.csv         # Tariff levels by census country
+│   │   ├── levels_by_census_country_hts2.csv    # Tariff levels by country × HTS chapter
+│   │   └── overall_levels.txt                   # Summary: total tariff levels
 │   ├── {static-scenario}/
-│   │   ├── shocks.txt                        # GTAP shock commands
-│   │   ├── deltas_by_sector_country.csv      # Delta matrix (sector × partner)
-│   │   ├── deltas_by_census_country.csv      # Overall deltas by census country
-│   │   ├── deltas_by_census_country_hts2.csv # Deltas by country × HTS chapter
-│   │   ├── overall_deltas.txt                # Summary: delta statistics
-│   │   ├── levels_by_sector_country.csv      # Total tariff levels
-│   │   └── overall_levels.txt                # Summary: total tariff levels
+│   │   ├── shocks.txt                           # GTAP shock commands
+│   │   ├── gtap_deltas_by_sector_country.csv         # Delta matrix (sector × partner)
+│   │   ├── deltas_by_census_country.csv         # Deltas by census country
+│   │   ├── deltas_by_census_country_hts2.csv    # Deltas by country × HTS chapter
+│   │   ├── overall_deltas.txt                   # Summary: delta statistics
+│   │   ├── gtap_levels_by_sector_country.csv         # Tariff levels (sector × partner)
+│   │   ├── levels_by_census_country.csv         # Tariff levels by census country
+│   │   ├── levels_by_census_country_hts2.csv    # Tariff levels by country × HTS chapter
+│   │   └── overall_levels.txt                   # Summary: total tariff levels
 │   └── {time-varying-scenario}/
-│       ├── 2026-01-01/shocks.txt             # Per-date shock commands
+│       ├── 2026-01-01/shocks.txt                # Per-date shock commands
 │       ├── 2026-02-24/shocks.txt
-│       ├── deltas_by_sector_country.csv      # Stacked CSV (date column first)
-│       ├── deltas_by_census_country.csv      # Stacked CSV (date column first)
-│       ├── deltas_by_census_country_hts2.csv # Stacked CSV (date column first)
-│       ├── overall_deltas.txt                # Combined with per-date sections
-│       ├── levels_by_sector_country.csv      # Stacked levels CSV (date column first)
-│       └── overall_levels.txt                # Combined levels with per-date sections
+│       ├── gtap_deltas_by_sector_country.csv         # Stacked CSV (date column first)
+│       ├── deltas_by_census_country.csv         # Stacked CSV (date column first)
+│       ├── deltas_by_census_country_hts2.csv    # Stacked CSV (date column first)
+│       ├── overall_deltas.txt                   # Combined with per-date sections
+│       ├── gtap_levels_by_sector_country.csv         # Stacked levels (date column first)
+│       ├── levels_by_census_country.csv         # Stacked levels (date column first)
+│       ├── levels_by_census_country_hts2.csv    # Stacked levels (date column first)
+│       └── overall_levels.txt                   # Combined levels with per-date sections
 └── README.md
 ```
 
@@ -348,7 +357,7 @@ Shock tms("i_s","China","USA") = 50.0;
 Shock tms("nfm","China","USA") = 50.0;
 ```
 
-### Delta Matrix (`deltas_by_sector_country.csv`)
+### Delta Matrix (`gtap_deltas_by_sector_country.csv`)
 
 Wide-format CSV with tariff deltas in percentage points. Rows are GTAP sectors, columns are partner groups. Values represent the change from baseline scenario.
 
@@ -372,9 +381,17 @@ Deltas by country and 2-digit HTS chapter. Countries as rows, chapters (01-97) a
 
 Overall deltas by partner using both GTAP weights and 2024 Census import weights, plus tariff coverage statistics.
 
-### Tariff Levels (`levels_by_sector_country.csv`)
+### Tariff Levels (`gtap_levels_by_sector_country.csv`)
 
-Total tariff levels (MFN + policy tariffs) in percentage points. Same format as `deltas_by_sector_country.csv` but represents absolute tariff rates. MFN is included in the stacking formula as an unconditionally additive component; rates are specified per-config via the `mfn_rates` pointer in `other_params.yaml`.
+Total tariff levels (MFN + policy tariffs) in percentage points. Same format as `gtap_deltas_by_sector_country.csv` but represents absolute tariff rates. MFN is included in the stacking formula as an unconditionally additive component; rates are specified per-config via the `mfn_rates` pointer in `other_params.yaml`.
+
+### Country-Level Tariff Levels (`levels_by_census_country.csv`)
+
+Total tariff level for each census country, weighted by 2024 imports. Same format as `deltas_by_census_country.csv` but represents absolute tariff rates.
+
+### Country × HTS Chapter Tariff Levels (`levels_by_census_country_hts2.csv`)
+
+Tariff levels by country and 2-digit HTS chapter. Same format as `deltas_by_census_country_hts2.csv` but represents absolute tariff rates.
 
 ### Overall Tariff Levels (`overall_levels.txt`)
 
@@ -397,7 +414,7 @@ Overall tariff levels by partner using both GTAP weights and 2024 Census import 
 
 1. **Load Config**: Parse YAML files into HTS10×country rate tables (232, IEEPA reciprocal, IEEPA fentanyl, Section 122, Section 301)
 2. **Load Imports**: Read Census IMP_DETL.TXT files, aggregate by HTS10×country
-3. **Process Baseline**: Compute tariff levels for baseline config
+3. **Process Baseline**: Compute tariff levels for baseline config and write levels to `output/baseline/`
 4. **Process Counterfactual**: Compute tariff levels for counterfactual config(s)
 5. **Compute Deltas**: Delta = counterfactual level - baseline level
 6. **Aggregate**: Roll up to partner×GTAP level using import-weighted averaging
