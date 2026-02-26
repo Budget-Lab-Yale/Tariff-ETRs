@@ -50,6 +50,27 @@ get_mnemonic_mapping <- function(country_partner_file = 'resources/country_partn
 #' @param mnemonic_map Named list from get_mnemonic_mapping()
 #'
 #' @return Named list with all mnemonics expanded to individual country codes
+#' Expand variable-length HTS codes to matching HS10 codes (vectorized)
+#'
+#' Groups HTS codes by prefix length and uses vectorized `%in%` matching
+#' instead of iterating one code at a time with str_starts. For 17K 10-digit
+#' codes, this collapses to a single `%in%` operation vs 17K individual calls.
+#'
+#' @param hts_codes Character vector of HTS codes (4, 6, 8, or 10 digits)
+#' @param hs10_universe Character vector of all valid HS10 codes
+#'
+#' @return Character vector of matching HS10 codes (deduplicated)
+expand_hts_to_hs10 <- function(hts_codes, hs10_universe) {
+  hts_codes <- as.character(hts_codes)
+  hts_by_len <- split(hts_codes, nchar(hts_codes))
+  matches <- unlist(lapply(names(hts_by_len), function(len) {
+    len_int <- as.integer(len)
+    hs10_universe[substr(hs10_universe, 1, len_int) %in% hts_by_len[[len]]]
+  }))
+  unique(matches)
+}
+
+
 resolve_country_mnemonics <- function(rates_config, mnemonic_map) {
 
   resolved <- list()
@@ -292,27 +313,38 @@ load_ieepa_rates_yaml <- function(yaml_file,
   # Step 1: Initialize with headline rates
   # ===========================
 
-  rate_matrix <- tibble(cty_code = all_country_codes) %>%
+  # Build country-level headline rates (just ~240 rows)
+  country_headline <- tibble(cty_code = all_country_codes) %>%
     mutate(
-      # Apply country-specific headline rates or default
       rate = sapply(cty_code, function(code) {
         country_rate <- headline_rates[[code]]
-        if (!is.null(country_rate)) {
-          return(country_rate)
-        } else {
-          return(default_rate)
-        }
+        if (!is.null(country_rate)) country_rate else default_rate
       }),
       target_total_rate = sapply(cty_code, function(code) {
         if (!is.null(target_total_rules) && !is.null(target_total_rules[[code]])) {
-          return(target_total_rules[[code]])
+          target_total_rules[[code]]
         } else {
-          return(NA_real_)
+          NA_real_
         }
       })
-    ) %>%
-    expand_grid(hs10 = hs10_codes) %>%
-    select(hs10, cty_code, rate, target_total_rate)
+    )
+
+  # Only build the full HS10 × country grid if there are non-zero headline rates
+  # or product_rates that apply to all countries. Otherwise, product_country_rates
+  # will build the sparse result directly (avoids creating millions of zero rows).
+  has_product_rates <- !is.null(config$product_rates) && length(config$product_rates) > 0
+  needs_full_grid <- any(country_headline$rate > 0) || has_product_rates
+
+  if (needs_full_grid) {
+    rate_matrix <- country_headline %>%
+      expand_grid(hs10 = hs10_codes) %>%
+      select(hs10, cty_code, rate, target_total_rate)
+  } else {
+    rate_matrix <- tibble(
+      hs10 = character(), cty_code = character(),
+      rate = numeric(), target_total_rate = numeric()
+    )
+  }
 
   # ===========================
   # Step 2: Apply product-level rates (apply to ALL countries)
@@ -320,19 +352,54 @@ load_ieepa_rates_yaml <- function(yaml_file,
 
   if (!is.null(config$product_rates) && length(config$product_rates) > 0) {
 
-    # Build product rate lookup
-    product_rates_expanded <- names(config$product_rates) %>%
-      map_df(function(hts_code) {
-        matching_hs10 <- hs10_codes[str_starts(hs10_codes, hts_code)]
-        tibble(
-          hs10 = matching_hs10,
-          product_rate = config$product_rates[[hts_code]]
-        )
+    # Build product rate lookup (vectorized by prefix length)
+    product_rate_lookup <- tibble(
+      product_rate_prefix = names(config$product_rates),
+      product_rate = as.numeric(config$product_rates),
+      prefix_len = nchar(product_rate_prefix)
+    )
+    product_rates_expanded <- product_rate_lookup %>%
+      split(.$prefix_len) %>%
+      map_df(function(group) {
+        len <- group$prefix_len[1]
+        tibble(hs10 = hs10_codes, prefix = substr(hs10_codes, 1, len)) %>%
+          inner_join(group %>% select(prefix = product_rate_prefix, product_rate),
+                     by = 'prefix') %>%
+          mutate(product_rate_prefix = prefix) %>%
+          select(hs10, product_rate, product_rate_prefix)
       })
+
+    # Guardrail: overlapping prefixes (e.g., 84 and 8407) would duplicate rows
+    # in the join below and silently distort weighted calculations.
+    dupes <- product_rates_expanded %>%
+      group_by(hs10) %>%
+      summarise(
+        n = n(),
+        prefixes = paste(sort(unique(product_rate_prefix)), collapse = ', '),
+        .groups = 'drop'
+      ) %>%
+      filter(n > 1)
+    if (nrow(dupes) > 0) {
+      examples <- dupes %>%
+        slice_head(n = 5) %>%
+        transmute(example = sprintf('%s -> [%s]', hs10, prefixes)) %>%
+        pull(example) %>%
+        paste(collapse = '; ')
+      stop(
+        'Overlapping prefixes in product_rates produced duplicate HS10 matches for ',
+        nrow(dupes), ' HS10 codes. ',
+        'This would duplicate rows during joins. ',
+        'Fix product_rates so each HS10 matches at most one prefix. ',
+        'Examples: ', examples
+      )
+    }
 
     # Apply product rate overrides
     rate_matrix <- rate_matrix %>%
-      left_join(product_rates_expanded, by = 'hs10') %>%
+      left_join(
+        product_rates_expanded %>% select(hs10, product_rate),
+        by = 'hs10'
+      ) %>%
       mutate(rate = if_else(!is.na(product_rate), product_rate, rate)) %>%
       select(-product_rate)
   }
@@ -383,13 +450,8 @@ load_ieepa_rates_yaml <- function(yaml_file,
           unlist() %>%
           unique()
 
-        # Expand HTS codes to matching HS10 codes
-        matching_hs10 <- exemption$hts %>%
-          map(function(hts_code) {
-            hs10_codes[str_starts(hs10_codes, hts_code)]
-          }) %>%
-          unlist() %>%
-          unique()
+        # Expand HTS codes to matching HS10 codes (vectorized)
+        matching_hs10 <- expand_hts_to_hs10(unlist(exemption$hts), hs10_codes)
 
         # Create a tibble for this exemption (expanding across all country codes)
         if (length(matching_hs10) > 0) {
@@ -407,11 +469,28 @@ load_ieepa_rates_yaml <- function(yaml_file,
         }
       })
 
-    # Apply product×country rate overrides
+    # Check for duplicate HS10 x country pairs in product_country_rates
+    dupes <- product_country_overrides %>%
+      group_by(hs10, cty_code) %>%
+      filter(n() > 1)
+    if (nrow(dupes) > 0) {
+      stop(sprintf('Duplicate HS10 x country entries in product_country_rates: %d duplicates found',
+                   nrow(dupes)))
+    }
+
+    # Apply product×country rate overrides (upsert: override existing + add new)
+    # Uses anti_join + bind_rows instead of left_join + if_else so that
+    # product_country_rates can add rows not in rate_matrix (sparse grid case).
+    pc_with_target <- product_country_overrides %>%
+      left_join(
+        country_headline %>% select(cty_code, target_total_rate),
+        by = 'cty_code'
+      ) %>%
+      rename(rate = product_country_rate)
+
     rate_matrix <- rate_matrix %>%
-      left_join(product_country_overrides, by = c('hs10', 'cty_code')) %>%
-      mutate(rate = if_else(!is.na(product_country_rate), product_country_rate, rate)) %>%
-      select(-product_country_rate)
+      anti_join(product_country_overrides, by = c('hs10', 'cty_code')) %>%
+      bind_rows(pc_with_target)
   }
 
   # ===========================

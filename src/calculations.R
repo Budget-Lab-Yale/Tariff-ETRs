@@ -18,10 +18,16 @@
 #   - write_shock_commands():             Write GTAP shock commands to output file
 #   - prepare_sector_country_deltas():    Prepare sector × country delta data (no I/O)
 #   - write_sector_country_deltas():      Write deltas to CSV in sector x country format
+#   - prepare_country_level_data():       Shared helper for country-level weighted aggregation
 #   - prepare_country_level_deltas():     Prepare country-level delta data (no I/O)
 #   - write_country_level_deltas():       Write overall country-level deltas to CSV
+#   - prepare_country_level_levels():     Prepare country-level tariff level data (no I/O)
+#   - write_country_level_levels():       Write country-level tariff levels to CSV
+#   - prepare_country_hts2_data():        Shared helper for country × HTS2 aggregation
 #   - prepare_country_hts2_deltas():      Prepare country × HTS2 delta data (no I/O)
 #   - write_country_hts2_deltas():        Write country × HTS2 deltas to CSV
+#   - prepare_country_hts2_levels():      Prepare country × HTS2 tariff level data (no I/O)
+#   - write_country_hts2_levels():        Write country × HTS2 tariff levels to CSV
 #   - format_summary_table():             Format summary table (deltas or levels) as text
 #   - calc_weighted_summary():            Shared helper for GTAP/Census weighted averages
 #   - calc_overall_deltas_data():         Compute overall delta data (no I/O)
@@ -251,6 +257,12 @@ load_scenario_config <- function(config_path) {
   }
   mfn_rates <- load_mfn_rates(mfn_rates_path)
 
+  # Load MFN exemption shares if specified (optional)
+  mfn_exemption_shares <- NULL
+  if (!is.null(other_params$mfn_exemption_shares)) {
+    mfn_exemption_shares <- load_mfn_exemption_shares(other_params$mfn_exemption_shares)
+  }
+
   # Load tariff configs (all optional - missing file = NULL = zero rates)
   s232_path <- file.path(config_path, '232.yaml')
   params_232 <- if (file.exists(s232_path)) {
@@ -280,13 +292,22 @@ load_scenario_config <- function(config_path) {
     NULL
   }
 
+  s301_path <- file.path(config_path, 's301.yaml')
+  rates_s301 <- if (file.exists(s301_path)) {
+    load_ieepa_rates_yaml(s301_path, rate_col_name = 's301_rate')
+  } else {
+    NULL
+  }
+
   list(
     params_232             = params_232,
     rates_ieepa_reciprocal = rates_ieepa_reciprocal,
     rates_ieepa_fentanyl   = rates_ieepa_fentanyl,
     rates_s122             = rates_s122,
+    rates_s301             = rates_s301,
     other_params           = other_params,
-    mfn_rates              = mfn_rates
+    mfn_rates              = mfn_rates,
+    mfn_exemption_shares   = mfn_exemption_shares
   )
 }
 
@@ -319,6 +340,7 @@ calc_etrs_for_config <- function(config, hs10_by_country, usmca_shares, country_
     rates_ieepa_reciprocal = config$rates_ieepa_reciprocal,
     rates_ieepa_fentanyl   = config$rates_ieepa_fentanyl,
     rates_s122             = config$rates_s122,
+    rates_s301             = config$rates_s301,
     import_data            = hs10_by_country,
     usmca_data             = usmca_shares,
     us_auto_content_share  = config$other_params$us_auto_content_share,
@@ -326,10 +348,12 @@ calc_etrs_for_config <- function(config, hs10_by_country, usmca_shares, country_
     us_assembly_share      = config$other_params$us_auto_assembly_share,
     ieepa_usmca_exempt     = config$other_params$ieepa_usmca_exception,
     s122_usmca_exempt      = config$other_params$s122_usmca_exception %||% 0,
+    s301_usmca_exempt      = config$other_params$s301_usmca_exception %||% 0,
     metal_content          = metal_content,
     metal_programs         = config$other_params$metal_content$metal_programs %||% character(0),
     program_metal_types    = config$other_params$metal_content$program_metal_types %||% NULL,
-    mfn_rates              = config$mfn_rates
+    mfn_rates              = config$mfn_rates,
+    mfn_exemption_shares   = config$mfn_exemption_shares
   )
 
   message('Aggregating HS10×country results to partner×GTAP level...')
@@ -479,12 +503,14 @@ do_scenario <- function(scenario, config_dir = 'config', output_dir = 'output',
 
   message('\n--- Processing baseline ---')
   baseline_results <- list()
+  baseline_partner_results <- list()
 
   if (is.null(baseline_structure$baseline_dates)) {
     # Static baseline: config files directly in baseline/
     baseline_config <- load_scenario_config(baseline_dir)
     baseline_etrs <- calc_etrs_for_config(baseline_config, hs10_by_country, usmca_shares, country_mapping)
     baseline_results[['static']] <- baseline_etrs$hs10_country_etrs
+    baseline_partner_results[['static']] <- baseline_etrs$partner_etrs
   } else {
     # Time-varying baseline
     for (date_str in baseline_structure$baseline_dates) {
@@ -493,7 +519,77 @@ do_scenario <- function(scenario, config_dir = 'config', output_dir = 'output',
       baseline_config <- load_scenario_config(baseline_path)
       baseline_etrs <- calc_etrs_for_config(baseline_config, hs10_by_country, usmca_shares, country_mapping)
       baseline_results[[date_str]] <- baseline_etrs$hs10_country_etrs
+      baseline_partner_results[[date_str]] <- baseline_etrs$partner_etrs
     }
+  }
+
+  #---------------------------
+  # Write baseline levels output
+  #---------------------------
+
+  message('\nWriting baseline levels...')
+
+  if (is.null(baseline_structure$baseline_dates)) {
+    # Static baseline: write single-date levels
+    write_levels_by_sector_country(
+      etr_data    = baseline_partner_results[['static']],
+      output_file = 'gtap_levels_by_sector_country.csv',
+      scenario    = 'baseline',
+      output_base = output_dir
+    )
+    write_country_level_levels(
+      hs10_country_etrs = baseline_results[['static']],
+      output_file       = 'levels_by_census_country.csv',
+      scenario          = 'baseline',
+      output_base       = output_dir
+    )
+    write_country_hts2_levels(
+      hs10_country_etrs = baseline_results[['static']],
+      output_file       = 'levels_by_census_country_hts2.csv',
+      scenario          = 'baseline',
+      output_base       = output_dir
+    )
+    write_overall_levels(
+      etr_data          = baseline_partner_results[['static']],
+      hs10_country_etrs = baseline_results[['static']],
+      country_mapping   = country_mapping,
+      scenario          = 'baseline',
+      output_base       = output_dir
+    )
+  } else {
+    # Time-varying baseline: write stacked levels
+    all_baseline_levels_data <- list()
+    for (date_str in baseline_structure$baseline_dates) {
+      all_baseline_levels_data[[date_str]] <- calc_overall_levels_data(
+        etr_data          = baseline_partner_results[[date_str]],
+        hs10_country_etrs = baseline_results[[date_str]],
+        country_mapping   = country_mapping
+      )
+    }
+
+    write_levels_by_sector_country_stacked(
+      all_partner_etrs = baseline_partner_results,
+      output_file      = 'gtap_levels_by_sector_country.csv',
+      scenario         = 'baseline',
+      output_base      = output_dir
+    )
+    write_country_level_levels_stacked(
+      all_hs10_country_etrs = baseline_results,
+      output_file           = 'levels_by_census_country.csv',
+      scenario              = 'baseline',
+      output_base           = output_dir
+    )
+    write_country_hts2_levels_stacked(
+      all_hs10_country_etrs = baseline_results,
+      output_file           = 'levels_by_census_country_hts2.csv',
+      scenario              = 'baseline',
+      output_base           = output_dir
+    )
+    write_overall_levels_combined(
+      all_levels_data = all_baseline_levels_data,
+      scenario        = 'baseline',
+      output_base     = output_dir
+    )
   }
 
   #---------------------------
@@ -668,7 +764,7 @@ do_scenario_static <- function(scenario, scenario_path, output_dir,
 
   write_sector_country_deltas(
     etr_data    = partner_etrs,
-    output_file = 'deltas_by_sector_country.csv',
+    output_file = 'gtap_deltas_by_sector_country.csv',
     scenario    = scenario,
     output_base = output_dir
   )
@@ -697,9 +793,23 @@ do_scenario_static <- function(scenario, scenario_path, output_dir,
 
   write_levels_by_sector_country(
     etr_data    = partner_etrs,
-    output_file = 'levels_by_sector_country.csv',
+    output_file = 'gtap_levels_by_sector_country.csv',
     scenario    = scenario,
     output_base = output_dir
+  )
+
+  write_country_level_levels(
+    hs10_country_etrs = hs10_country_etrs,
+    output_file       = 'levels_by_census_country.csv',
+    scenario          = scenario,
+    output_base       = output_dir
+  )
+
+  write_country_hts2_levels(
+    hs10_country_etrs = hs10_country_etrs,
+    output_file       = 'levels_by_census_country_hts2.csv',
+    scenario          = scenario,
+    output_base       = output_dir
   )
 
   write_overall_levels(
@@ -780,7 +890,7 @@ do_scenario_time_varying <- function(scenario, scenario_path, output_dir,
 
   write_sector_country_deltas_stacked(
     all_partner_etrs = all_partner_etrs,
-    output_file      = 'deltas_by_sector_country.csv',
+    output_file      = 'gtap_deltas_by_sector_country.csv',
     scenario         = scenario,
     output_base      = output_dir
   )
@@ -807,9 +917,23 @@ do_scenario_time_varying <- function(scenario, scenario_path, output_dir,
 
   write_levels_by_sector_country_stacked(
     all_partner_etrs = all_partner_etrs,
-    output_file      = 'levels_by_sector_country.csv',
+    output_file      = 'gtap_levels_by_sector_country.csv',
     scenario         = scenario,
     output_base      = output_dir
+  )
+
+  write_country_level_levels_stacked(
+    all_hs10_country_etrs = all_hs10_country_etrs,
+    output_file           = 'levels_by_census_country.csv',
+    scenario              = scenario,
+    output_base           = output_dir
+  )
+
+  write_country_hts2_levels_stacked(
+    all_hs10_country_etrs = all_hs10_country_etrs,
+    output_file           = 'levels_by_census_country_hts2.csv',
+    scenario              = scenario,
+    output_base           = output_dir
   )
 
   write_overall_levels_combined(
@@ -832,6 +956,7 @@ do_scenario_time_varying <- function(scenario, scenario_path, output_dir,
 #' @param rates_ieepa_reciprocal Tibble with columns: hs10, cty_code, ieepa_reciprocal_rate
 #' @param rates_ieepa_fentanyl Tibble with columns: hs10, cty_code, ieepa_fentanyl_rate
 #' @param rates_s122 Tibble with columns: hs10, cty_code, s122_rate (or NULL if no s122.yaml)
+#' @param rates_s301 Tibble with columns: hs10, cty_code, s301_rate (or NULL if no s301.yaml)
 #' @param import_data Data frame with hs10, cty_code, gtap_code, imports
 #' @param usmca_data Data frame with USMCA shares by partner and GTAP sector
 #' @param us_auto_content_share Share of US content in auto assembly
@@ -844,13 +969,17 @@ do_scenario_time_varying <- function(scenario, scenario_path, output_dir,
 #' @param program_metal_types Named list: program_name -> metal type string (e.g., list(steel = 'steel', aluminum_base_articles = 'aluminum')).
 #'   When provided with per-type share columns, each program is scaled by its type's share instead of aggregate metal_share.
 #' @param mfn_rates Tibble with columns: hs8, mfn_rate (MFN baseline tariff rates)
+#' @param mfn_exemption_shares Tibble with columns: hs2, cty_code, exemption_share (or NULL).
+#'   When provided, MFN rates are adjusted: effective_mfn = mfn_rate * (1 - exemption_share).
+#'   This captures FTA/GSP preferences that reduce the statutory MFN rate.
 #'
-#' @return Data frame with columns: hs10, cty_code, gtap_code, imports, etr, mfn_rate, level, base_232, base_ieepa, base_neither
+#' @return Data frame with columns: hs10, cty_code, gtap_code, imports, etr, level, base_232, base_ieepa, base_neither
 calc_weighted_etr <- function(rates_232,
                               usmca_exempt_232,
                               rates_ieepa_reciprocal,
                               rates_ieepa_fentanyl,
                               rates_s122 = NULL,
+                              rates_s301 = NULL,
                               import_data,
                               usmca_data,
                               us_auto_content_share,
@@ -858,10 +987,12 @@ calc_weighted_etr <- function(rates_232,
                               us_assembly_share,
                               ieepa_usmca_exempt,
                               s122_usmca_exempt = 0,
+                              s301_usmca_exempt = 0,
                               metal_content = NULL,
                               metal_programs = character(0),
                               program_metal_types = NULL,
-                              mfn_rates = NULL) {
+                              mfn_rates = NULL,
+                              mfn_exemption_shares = NULL) {
 
   # =============================================================================
   # Build complete rate matrix by joining config tables with import data
@@ -905,11 +1036,20 @@ calc_weighted_etr <- function(rates_232,
       mutate(s122_rate = 0)
   }
 
+  # Join Section 301 rates if provided
+  if (!is.null(rates_s301)) {
+    rate_matrix <- rate_matrix %>%
+      left_join(rates_s301, by = c('hs10', 'cty_code'))
+  } else {
+    rate_matrix <- rate_matrix %>%
+      mutate(s301_rate = 0)
+  }
+
   # Get all 232 rate column names
   rate_232_cols <- names(rate_matrix)[str_detect(names(rate_matrix), '^s232_.*_rate$')]
 
   # Replace NAs (indicates no tariff) with 0 for all rate columns
-  all_rate_cols <- c(rate_232_cols, 'ieepa_reciprocal_rate', 'ieepa_fentanyl_rate', 's122_rate')
+  all_rate_cols <- c(rate_232_cols, 'ieepa_reciprocal_rate', 'ieepa_fentanyl_rate', 's122_rate', 's301_rate')
   rate_matrix <- rate_matrix %>%
     mutate(
       across(
@@ -1017,6 +1157,18 @@ calc_weighted_etr <- function(rates_232,
       )
   }
 
+  # Apply USMCA exemption to Section 301 tariffs if enabled
+  if (s301_usmca_exempt == 1) {
+    rate_matrix <- rate_matrix %>%
+      mutate(
+        s301_rate = if_else(
+          cty_code %in% USMCA_COUNTRIES,
+          s301_rate * (1 - usmca_share),
+          s301_rate
+        )
+      )
+  }
+
   # Clean up USMCA share column
   rate_matrix <- rate_matrix %>%
     select(-usmca_share)
@@ -1040,6 +1192,18 @@ calc_weighted_etr <- function(rates_232,
         mfn_rate = if_else(is.na(mfn_rate), 0, mfn_rate)
       ) %>%
       select(-hs8)
+
+    # Apply MFN exemption shares (FTA/GSP preferences)
+    if (!is.null(mfn_exemption_shares)) {
+      rate_matrix <- rate_matrix %>%
+        mutate(hs2 = substr(hs10, 1, 2)) %>%
+        left_join(mfn_exemption_shares, by = c('hs2', 'cty_code')) %>%
+        mutate(
+          exemption_share = if_else(is.na(exemption_share), 0, exemption_share),
+          mfn_rate = mfn_rate * (1 - exemption_share)
+        ) %>%
+        select(-hs2, -exemption_share)
+    }
   } else {
     rate_matrix <- rate_matrix %>%
       mutate(mfn_rate = 0)
@@ -1248,24 +1412,28 @@ calc_weighted_etr <- function(rates_232,
       # 3. Section 122: Excluded "to the extent the 232 tariff applies," meaning
       #    S122 applies only to the nonmetal_share of 232-covered products (same as IEEPA).
       #    For non-232 products, S122 applies in full.
+      # 4. Section 301: Unconditionally cumulative with all other authorities.
+      #    Applies to full customs value (no metal content scaling).
 
-      final_rate = case_when(
+      final_rate = mfn_rate + case_when(
         # China: Fentanyl stacks on top of normal 232-reciprocal logic
         # For metal 232 derivatives: reciprocal and s122 apply to non-metal portion
+        # Section 301 always applies to full customs value
         cty_code == CTY_CHINA ~ if_else(
           rate_232_max > 0,
           rate_232_max + ieepa_reciprocal_rate * nonmetal_share
-            + ieepa_fentanyl_rate + s122_rate * nonmetal_share,
-          ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate
+            + ieepa_fentanyl_rate + s122_rate * nonmetal_share + s301_rate,
+          ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate + s301_rate
         ),
 
         # Everyone else: 232 takes precedence, then reciprocal + fentanyl + s122
         # For metal 232 derivatives: IEEPA and s122 apply to non-metal portion
+        # Section 301 always applies to full customs value
         rate_232_max > 0 ~
-          rate_232_max + (ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate) * nonmetal_share,
+          rate_232_max + (ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate) * nonmetal_share + s301_rate,
 
-        # Otherwise use all IEEPA + s122
-        TRUE ~ ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate
+        # Otherwise use all IEEPA + s122 + s301
+        TRUE ~ ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate + s301_rate
       )
     )
 
@@ -1292,10 +1460,10 @@ calc_weighted_etr <- function(rates_232,
     )
 
   hs10_country_etrs <- hs10_country_etrs %>%
-    mutate(level = mfn_rate + etr)
+    mutate(level = final_rate)
 
   hs10_country_etrs <- hs10_country_etrs %>%
-    select(hs10, cty_code, gtap_code, imports, etr, mfn_rate, level, base_232, base_ieepa, base_neither)
+    select(hs10, cty_code, gtap_code, imports, etr, level, base_232, base_ieepa, base_neither)
 
   return(hs10_country_etrs)
 }
@@ -1307,7 +1475,7 @@ calc_weighted_etr <- function(rates_232,
 #' using import-weighted averaging. Also aggregates coverage bases for tariff
 #' coverage reporting.
 #'
-#' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr, mfn_rate, level, base_232, base_ieepa, base_neither
+#' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr, level, base_232, base_ieepa, base_neither
 #' @param country_mapping Data frame with columns: cty_code, partner
 #'
 #' @return Data frame with columns: partner, gtap_code, etr, level, base_232, base_ieepa, base_neither
@@ -1446,13 +1614,13 @@ write_sector_country_wide <- function(etr_data, value_col,
 #' Values are written in percentage points (pp), i.e., multiplied by 100.
 #'
 #' @param etr_data Data frame with columns: partner, gtap_code, etr
-#' @param output_file Path to output file (default: 'deltas_by_sector_country.csv')
+#' @param output_file Path to output file (default: 'gtap_deltas_by_sector_country.csv')
 #' @param scenario Scenario name for output directory
 #' @param output_base Base output directory (default: 'output')
 #'
 #' @return Writes CSV file (in pp units) and returns invisibly
 write_sector_country_deltas <- function(etr_data,
-                                         output_file = 'deltas_by_sector_country.csv',
+                                         output_file = 'gtap_deltas_by_sector_country.csv',
                                          scenario = NULL,
                                          output_base = 'output') {
 
@@ -1467,27 +1635,36 @@ write_sector_country_deltas <- function(etr_data,
 }
 
 
-#' Prepare country-level deltas (census country codes with overall deltas)
+#' Prepare country-level data (census country codes with weighted average)
 #'
-#' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr
+#' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, and value_col
+#' @param value_col Name of the value column to aggregate (e.g., 'etr' or 'level')
 #'
-#' @return Tibble with cty_code, country_name, etr (in pp)
-prepare_country_level_deltas <- function(hs10_country_etrs) {
+#' @return Tibble with cty_code, country_name, value (in pp)
+prepare_country_level_data <- function(hs10_country_etrs, value_col) {
   census_codes <- load_census_codes()
 
   hs10_country_etrs %>%
     group_by(cty_code) %>%
     summarise(
       total_imports = sum(imports),
-      weighted_etr = sum(etr * imports),
+      weighted_val = sum(.data[[value_col]] * imports),
       .groups = 'drop'
     ) %>%
     mutate(
-      etr = if_else(total_imports > 0, weighted_etr / total_imports, 0) * 100
+      !!value_col := if_else(total_imports > 0, weighted_val / total_imports, 0) * 100
     ) %>%
     left_join(census_codes, by = 'cty_code') %>%
-    select(cty_code, country_name, etr) %>%
-    arrange(desc(etr))
+    select(cty_code, country_name, all_of(value_col)) %>%
+    arrange(desc(.data[[value_col]]))
+}
+
+prepare_country_level_deltas <- function(hs10_country_etrs) {
+  prepare_country_level_data(hs10_country_etrs, value_col = 'etr')
+}
+
+prepare_country_level_levels <- function(hs10_country_etrs) {
+  prepare_country_level_data(hs10_country_etrs, value_col = 'level')
 }
 
 
@@ -1512,29 +1689,51 @@ write_country_level_deltas <- function(hs10_country_etrs,
 }
 
 
-#' Prepare country × HTS2 delta data in wide format (percentage points)
+#' Write country-level tariff levels to CSV (census country codes)
 #'
-#' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr
+#' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, level
+#' @param output_file Path to output file (default: 'levels_by_census_country.csv')
+#' @param scenario Scenario name for output directory
+#' @param output_base Base output directory (default: 'output')
+#'
+#' @return Writes CSV file (in pp units) and returns invisibly
+write_country_level_levels <- function(hs10_country_etrs,
+                                       output_file = 'levels_by_census_country.csv',
+                                       scenario = NULL,
+                                       output_base = 'output') {
+
+  output_path <- get_output_path(output_file, scenario, output_base)
+  country_levels <- prepare_country_level_levels(hs10_country_etrs)
+  write_csv(country_levels, output_path)
+  message(sprintf('Wrote country-level tariff levels to %s (in pp units)', output_path))
+  invisible(country_levels)
+}
+
+
+#' Prepare country × HTS2 data in wide format (percentage points)
+#'
+#' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, and value_col
+#' @param value_col Name of the value column to aggregate (e.g., 'etr' or 'level')
 #'
 #' @return Tibble with cty_code, country_name, and one column per HTS chapter (in pp)
-prepare_country_hts2_deltas <- function(hs10_country_etrs) {
+prepare_country_hts2_data <- function(hs10_country_etrs, value_col) {
   census_codes <- load_census_codes()
 
-  country_hts2_etrs <- hs10_country_etrs %>%
+  country_hts2 <- hs10_country_etrs %>%
     mutate(hts2 = str_sub(hs10, 1, 2)) %>%
     group_by(cty_code, hts2) %>%
     summarise(
       total_imports = sum(imports),
-      weighted_etr = sum(etr * imports),
+      weighted_val = sum(.data[[value_col]] * imports),
       .groups = 'drop'
     ) %>%
     mutate(
-      etr = if_else(total_imports > 0, weighted_etr / total_imports, 0) * 100
+      value = if_else(total_imports > 0, weighted_val / total_imports, 0) * 100
     ) %>%
-    select(cty_code, hts2, etr)
+    select(cty_code, hts2, value)
 
-  country_hts2_wide <- country_hts2_etrs %>%
-    pivot_wider(names_from = hts2, values_from = etr, values_fill = 0) %>%
+  country_hts2_wide <- country_hts2 %>%
+    pivot_wider(names_from = hts2, values_from = value, values_fill = 0) %>%
     left_join(census_codes, by = 'cty_code') %>%
     relocate(cty_code, country_name)
 
@@ -1542,6 +1741,14 @@ prepare_country_hts2_deltas <- function(hs10_country_etrs) {
   hts2_cols_sorted <- hts2_cols[order(as.numeric(hts2_cols))]
   country_hts2_wide %>%
     select(cty_code, country_name, all_of(hts2_cols_sorted))
+}
+
+prepare_country_hts2_deltas <- function(hs10_country_etrs) {
+  prepare_country_hts2_data(hs10_country_etrs, value_col = 'etr')
+}
+
+prepare_country_hts2_levels <- function(hs10_country_etrs) {
+  prepare_country_hts2_data(hs10_country_etrs, value_col = 'level')
 }
 
 
@@ -1562,6 +1769,27 @@ write_country_hts2_deltas <- function(hs10_country_etrs,
   country_hts2_wide <- prepare_country_hts2_deltas(hs10_country_etrs)
   write_csv(country_hts2_wide, output_path)
   message(sprintf('Wrote country × HTS2 deltas to %s (in pp units)', output_path))
+  invisible(country_hts2_wide)
+}
+
+
+#' Write country-level tariff levels by 2-digit HTS code to CSV
+#'
+#' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, level
+#' @param output_file Path to output file (default: 'levels_by_census_country_hts2.csv')
+#' @param scenario Scenario name for output directory
+#' @param output_base Base output directory (default: 'output')
+#'
+#' @return Writes CSV file (in pp units) and returns invisibly
+write_country_hts2_levels <- function(hs10_country_etrs,
+                                      output_file = 'levels_by_census_country_hts2.csv',
+                                      scenario = NULL,
+                                      output_base = 'output') {
+
+  output_path <- get_output_path(output_file, scenario, output_base)
+  country_hts2_wide <- prepare_country_hts2_levels(hs10_country_etrs)
+  write_csv(country_hts2_wide, output_path)
+  message(sprintf('Wrote country × HTS2 tariff levels to %s (in pp units)', output_path))
   invisible(country_hts2_wide)
 }
 
@@ -1782,7 +2010,7 @@ calc_overall_deltas <- function(etr_data, hs10_country_etrs = NULL,
 #' @param scenario Scenario name
 #' @param output_base Base output directory
 write_sector_country_deltas_stacked <- function(all_partner_etrs,
-                                                 output_file = 'deltas_by_sector_country.csv',
+                                                 output_file = 'gtap_deltas_by_sector_country.csv',
                                                  scenario = NULL,
                                                  output_base = 'output') {
 
@@ -1822,6 +2050,31 @@ write_country_level_deltas_stacked <- function(all_hs10_country_etrs,
 }
 
 
+#' Write stacked country-level tariff level CSV with date column
+#'
+#' @param all_hs10_country_etrs Named list (date → hs10_country_etrs tibble)
+#' @param output_file Output filename
+#' @param scenario Scenario name
+#' @param output_base Base output directory
+write_country_level_levels_stacked <- function(all_hs10_country_etrs,
+                                                output_file = 'levels_by_census_country.csv',
+                                                scenario = NULL,
+                                                output_base = 'output') {
+
+  output_path <- get_output_path(output_file, scenario, output_base)
+
+  stacked <- names(all_hs10_country_etrs) %>%
+    map_df(function(date_str) {
+      prepare_country_level_levels(all_hs10_country_etrs[[date_str]]) %>%
+        mutate(date = date_str, .before = 1)
+    })
+
+  write_csv(stacked, output_path)
+  message(sprintf('Wrote stacked country-level tariff levels to %s (in pp units)', output_path))
+  invisible(stacked)
+}
+
+
 #' Write stacked country × HTS2 delta CSV with date column
 #'
 #' @param all_hs10_country_etrs Named list (date → hs10_country_etrs tibble)
@@ -1843,6 +2096,31 @@ write_country_hts2_deltas_stacked <- function(all_hs10_country_etrs,
 
   write_csv(stacked, output_path)
   message(sprintf('Wrote stacked country × HTS2 deltas to %s (in pp units)', output_path))
+  invisible(stacked)
+}
+
+
+#' Write stacked country × HTS2 tariff level CSV with date column
+#'
+#' @param all_hs10_country_etrs Named list (date → hs10_country_etrs tibble)
+#' @param output_file Output filename
+#' @param scenario Scenario name
+#' @param output_base Base output directory
+write_country_hts2_levels_stacked <- function(all_hs10_country_etrs,
+                                               output_file = 'levels_by_census_country_hts2.csv',
+                                               scenario = NULL,
+                                               output_base = 'output') {
+
+  output_path <- get_output_path(output_file, scenario, output_base)
+
+  stacked <- names(all_hs10_country_etrs) %>%
+    map_df(function(date_str) {
+      prepare_country_hts2_levels(all_hs10_country_etrs[[date_str]]) %>%
+        mutate(date = date_str, .before = 1)
+    })
+
+  write_csv(stacked, output_path)
+  message(sprintf('Wrote stacked country × HTS2 tariff levels to %s (in pp units)', output_path))
   invisible(stacked)
 }
 
@@ -1916,7 +2194,7 @@ prepare_levels_by_sector_country <- function(etr_data) {
 #'
 #' @return Writes CSV file (in pp units) and returns invisibly
 write_levels_by_sector_country <- function(etr_data,
-                                            output_file = 'levels_by_sector_country.csv',
+                                            output_file = 'gtap_levels_by_sector_country.csv',
                                             scenario = NULL,
                                             output_base = 'output') {
 
@@ -2039,7 +2317,7 @@ write_sector_country_wide_stacked <- function(all_partner_etrs,
 }
 
 write_levels_by_sector_country_stacked <- function(all_partner_etrs,
-                                                    output_file = 'levels_by_sector_country.csv',
+                                                    output_file = 'gtap_levels_by_sector_country.csv',
                                                     scenario = NULL,
                                                     output_base = 'output') {
 
