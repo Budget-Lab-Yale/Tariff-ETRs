@@ -26,10 +26,10 @@ Tariff-ETRs/
 ├── config/
 │   ├── baseline/                 # Shared baseline config
 │   │   ├── other_params.yaml     # Baseline parameters (MFN rates pointer, metal content)
-│   │   └── 232.yaml              # Pre-2025 Section 232 tariffs (optional)
+│   │   └── s232.yaml             # Pre-2025 Section 232 tariffs (optional)
 │   └── {scenario}/               # Counterfactual configs only
 │       ├── 2026-01-01/           # Counterfactual date (time-varying)
-│       │   ├── 232.yaml
+│       │   ├── s232.yaml
 │       │   ├── ieepa_reciprocal.yaml
 │       │   ├── ieepa_fentanyl.yaml
 │       │   ├── s122.yaml
@@ -151,14 +151,14 @@ All scenarios share a single baseline at `config/baseline/`. The baseline define
 config/
   baseline/                    # Shared baseline config
     other_params.yaml          # Must include mfn_rates pointer
-    232.yaml                   # Optional (missing = zero 232 rates)
+    s232.yaml                  # Optional (missing = zero 232 rates)
     ieepa_reciprocal.yaml      # Optional (missing = zero rates)
     ieepa_fentanyl.yaml        # Optional (missing = zero rates)
     s122.yaml                  # Optional (missing = zero rates)
   {scenario}/                  # Counterfactual configs only
     2026-01-01/                # Counterfactual date (time-varying)
       other_params.yaml
-      232.yaml
+      s232.yaml
       ...
 ```
 
@@ -193,14 +193,14 @@ config/baseline/                  # Shared baseline
   other_params.yaml
 config/tariff-timeline/           # Scenario counterfactuals
   2025-02-04/
-    232.yaml
+    s232.yaml
     ieepa_reciprocal.yaml
     ieepa_fentanyl.yaml
     s122.yaml              # optional
     s301.yaml              # optional
     other_params.yaml
   2025-04-02/
-    232.yaml
+    s232.yaml
     ieepa_reciprocal.yaml
     ieepa_fentanyl.yaml
     s122.yaml              # optional
@@ -215,9 +215,9 @@ Detection is automatic: if a scenario directory contains YYYY-MM-DD subfolders, 
 
 ## Configuration
 
-### Section 232 Tariffs (`232.yaml`)
+### Section 232 Tariffs (`s232.yaml`)
 
-Defines tariff rates and product coverage using variable-length HTS codes (4, 6, 8, or 10 digits) with prefix matching. **Optional**: if missing, all 232 rates are zero.
+Defines tariff rates and product coverage using variable-length HTS codes (4, 6, 8, or 10 digits) with prefix matching. **Optional**: if missing, all Section 232 rates are zero.
 
 ```yaml
 steel:
@@ -227,6 +227,9 @@ steel:
   rates:
     default: 0.50   # Default rate for all countries
     '4120': 0.25    # UK-specific override
+  target_total:     # Optional: country-level "combined duty floor"
+    japan: 0.15     # Effective 232 add-on = max(0.15 - MFN, 0)
+    eu: 0.15        # Expands to all 27 EU country codes
   usmca_exempt: 0   # 1 = USMCA exemption applies
 ```
 

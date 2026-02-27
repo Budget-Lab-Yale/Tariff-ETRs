@@ -5,7 +5,7 @@
 # For the 2-21_temp scenario, decompose the total census-weighted ETR into
 # contributions by country (top 10 + ROW) and by HTS section, for:
 #   - 2026-01-01 regime (IEEPA active,  ~14.5%)
-#   - 2026-02-20 regime (S122 replaces, ~12.0%)
+#   - 2026-02-24 regime (S122 replaces, ~12.0%)
 #
 # "Contribution" = country_imports / total_imports * country_etr
 # so contributions sum to the total ETR.
@@ -53,7 +53,7 @@ census_codes    <- read_csv('resources/census_codes.csv',
 hs10_by_country <- readRDS('cache/hs10_by_country_gtap_2024_con.rds') %>%
   filter(!str_detect(hs10, '^(98|99)'), !is.na(gtap_code))
 
-# ---- Helper: get hs10×country ETRs for one config date --------------------
+# ---- Helper: get hs10 x country ETRs for one config date --------------------
 get_hs10_country_etrs <- function(config_path) {
   config <- load_scenario_config(config_path)
   etrs   <- calc_etrs_for_config(config, hs10_by_country, usmca_shares, country_mapping)
@@ -150,21 +150,21 @@ print_table <- function(tbl, label_col, show_cols) {
 }
 
 
-# ---- Compute hs10×country ETRs for all three dates -------------------------
-message('\n--- Computing hs10×country ETRs for IEEPA (2026-01-01) ---')
+# ---- Compute hs10 x country ETRs for all three dates -------------------------
+message('\n--- Computing hs10 x country ETRs for IEEPA (2026-01-01) ---')
 df_ieepa <- get_hs10_country_etrs('config/2-21_temp/2026-01-01')
 
-message('\n--- Computing hs10×country ETRs for S122 (2026-02-20) ---')
-df_s122 <- get_hs10_country_etrs('config/2-21_temp/2026-02-20')
+message('\n--- Computing hs10 x country ETRs for S122 (2026-02-24) ---')
+df_s122 <- get_hs10_country_etrs('config/2-21_temp/2026-02-24')
 
-message('\n--- Computing hs10×country ETRs for 232-only baseline (2026-07-20) ---')
-df_232 <- get_hs10_country_etrs('config/2-21_temp/2026-07-20')
+message('\n--- Computing hs10 x country ETRs for 232-only baseline (2026-07-24) ---')
+df_232 <- get_hs10_country_etrs('config/2-21_temp/2026-07-24')
 
 # ---- Total ETR decompositions (as before) -----------------------------------
 all_results <- list()
 for (lbl in c('ieepa', 's122')) {
   df <- if (lbl == 'ieepa') df_ieepa else df_s122
-  date_label <- if (lbl == 'ieepa') '2026-01-01' else '2026-02-20'
+  date_label <- if (lbl == 'ieepa') '2026-01-01' else '2026-02-24'
 
   result <- decompose_contributions(df)
   result$date <- date_label
@@ -184,7 +184,7 @@ for (lbl in c('ieepa', 's122')) {
 }
 
 # ---- Net-of-232 decompositions ----------------------------------------------
-# Subtract 232-only ETR at hs10×country level to isolate IEEPA/S122 increment
+# Subtract 232-only ETR at hs10 x country level to isolate IEEPA/S122 increment
 message('\n--- Computing net-of-232 contributions ---')
 
 df_net_ieepa <- df_ieepa %>%
@@ -202,7 +202,7 @@ df_net_s122 <- df_s122 %>%
 net_results <- list()
 for (lbl in c('ieepa', 's122')) {
   df <- if (lbl == 'ieepa') df_net_ieepa else df_net_s122
-  date_label <- if (lbl == 'ieepa') '2026-01-01' else '2026-02-20'
+  date_label <- if (lbl == 'ieepa') '2026-01-01' else '2026-02-24'
   regime_name <- if (lbl == 'ieepa') 'IEEPA' else 'S122'
 
   result <- decompose_contributions(df)
@@ -228,7 +228,7 @@ message('\nGenerating charts...')
 
 library(gridExtra)
 
-# ---- Helper: aggregate hs10×country df to partner-level contributions ------
+# ---- Helper: aggregate hs10 x country df to partner-level contributions ------
 aggregate_to_partners <- function(df) {
   # Map countries to 7 partner groups: China, Canada, Mexico, UK, EU, Japan, ROW
   partner_map <- country_mapping %>%
@@ -397,8 +397,8 @@ product_wide <- all_results[['2026-01-01']]$by_section %>%
   mutate(pct_ieepa = contribution / all_results[['2026-01-01']]$total_etr * 100) %>%
   select(description, pct_ieepa) %>%
   left_join(
-    all_results[['2026-02-20']]$by_section %>%
-      mutate(pct_s122 = contribution / all_results[['2026-02-20']]$total_etr * 100) %>%
+    all_results[['2026-02-24']]$by_section %>%
+      mutate(pct_s122 = contribution / all_results[['2026-02-24']]$total_etr * 100) %>%
       select(description, pct_s122),
     by = 'description'
   ) %>%
@@ -424,8 +424,8 @@ net_product_wide <- net_results[['2026-01-01']]$by_section %>%
   mutate(pct_ieepa = contribution / net_results[['2026-01-01']]$total_etr * 100) %>%
   select(description, pct_ieepa) %>%
   left_join(
-    net_results[['2026-02-20']]$by_section %>%
-      mutate(pct_s122 = contribution / net_results[['2026-02-20']]$total_etr * 100) %>%
+    net_results[['2026-02-24']]$by_section %>%
+      mutate(pct_s122 = contribution / net_results[['2026-02-24']]$total_etr * 100) %>%
       select(description, pct_s122),
     by = 'description'
   ) %>%
@@ -446,13 +446,13 @@ p_net_product <- make_two_panel(
   title = 'ETR Contributions by Product: Net of Section 232',
   subtitle = sprintf(
     'IEEPA increment = %.1f pp, S122 increment = %.1f pp (each sums to 100%%); ranked by difference',
-    net_results[['2026-01-01']]$total_etr, net_results[['2026-02-20']]$total_etr))
+    net_results[['2026-01-01']]$total_etr, net_results[['2026-02-24']]$total_etr))
 
 # Product: net-of-232 ETR levels
 etr_product_wide <- net_results[['2026-01-01']]$by_section %>%
   select(description, etr_ieepa = etr) %>%
   left_join(
-    net_results[['2026-02-20']]$by_section %>%
+    net_results[['2026-02-24']]$by_section %>%
       select(description, etr_s122 = etr),
     by = 'description'
   ) %>%
@@ -484,7 +484,7 @@ clean_country_name <- function(x) {
     str_replace(' \\(\\d+ countries\\)', '')
 }
 
-# Helper: compute country-level ETRs (top N + ROW) from hs10×country df
+# Helper: compute country-level ETRs (top N + ROW) from hs10 x country df
 compute_country_etrs <- function(df, top_n = 20) {
   country_data <- df %>%
     group_by(cty_code) %>%
@@ -538,7 +538,7 @@ p_total_etr_country <- make_two_panel(
 total_etr_product_wide <- all_results[['2026-01-01']]$by_section %>%
   select(description, etr_ieepa = etr) %>%
   left_join(
-    all_results[['2026-02-20']]$by_section %>%
+    all_results[['2026-02-24']]$by_section %>%
       select(description, etr_s122 = etr),
     by = 'description'
   ) %>%

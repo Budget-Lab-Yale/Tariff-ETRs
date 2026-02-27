@@ -8,6 +8,7 @@
 #   - load_census_codes():          Load Census country codes with names
 #   - load_imports_hs10_country():  Load HS10 x country x year x month import data
 #   - load_mfn_rates():             Load MFN (most-favored-nation) baseline tariff rates
+#   - load_mfn_exemption_shares():  Load MFN exemption shares (FTA/GSP discounts)
 #
 # =============================================================================
 
@@ -55,7 +56,6 @@ load_imports_hs10_country <- function(import_data_path, year, type = c('con', 'g
     stop(sprintf('No import files found at %s matching pattern %s', import_data_path, file_pattern))
   }
 
-  message(sprintf('Found %d ZIP file(s) for year %d', length(zip_files), year))
   # Enforce complete annual coverage: exactly one ZIP for each month.
   zip_file_info <- tibble(
     zip_path = zip_files,
@@ -102,6 +102,7 @@ load_imports_hs10_country <- function(import_data_path, year, type = c('con', 'g
     arrange(month) %>%
     pull(zip_path)
 
+  message(sprintf('Found %d ZIP file(s) for year %d', length(zip_files), year))
 
   # Column positions for IMP_DETL.TXT (1-based, inclusive)
   col_positions <- fwf_positions(
@@ -193,4 +194,29 @@ load_mfn_rates <- function(file = 'resources/mfn_rates_2025.csv') {
 
   message(sprintf('Loaded %s MFN rates from %s', format(nrow(mfn), big.mark = ','), file))
   mfn
+}
+
+
+#' Load MFN exemption shares at HS2 × country level
+#'
+#' MFN exemption shares capture the fraction of MFN tariff waived by FTAs, GSP,
+#' and other duty-free provisions. Used to compute effective MFN rates:
+#'   effective_mfn = mfn_rate * (1 - exemption_share)
+#'
+#' The CSV is sparse: only rows with exemption_share > 0 are included.
+#' Missing HS2 × country combinations default to 0 (no exemption) at join time.
+#'
+#' @param file Path to MFN exemption shares CSV file
+#'
+#' @return Tibble with columns: hs2 (character), cty_code (character), exemption_share (numeric)
+load_mfn_exemption_shares <- function(file) {
+  shares <- read_csv(
+    file,
+    col_types = cols(hs2 = col_character(), cty_code = col_character(), exemption_share = col_double()),
+    show_col_types = FALSE
+  ) %>%
+    select(hs2, cty_code, exemption_share)
+
+  message(sprintf('Loaded %s MFN exemption shares from %s', format(nrow(shares), big.mark = ','), file))
+  shares
 }

@@ -18,7 +18,7 @@ config_dir <- 'config'
 message('Loading scenario parameters for: ', scenario)
 
 # Load 232 tariff rates
-params_232 <- load_232_rates(file.path(config_dir, scenario, '232.yaml'))
+params_s232 <- load_s232_rates(file.path(config_dir, scenario, 's232.yaml'))
 
 # Load IEEPA reciprocal rates
 rates_ieepa_reciprocal <- load_ieepa_rates_yaml(
@@ -57,8 +57,8 @@ message(sprintf('Loaded %s records', format(nrow(hs10_by_country), big.mark = ',
 # Calculate ETRs at HS10 x country level
 message('Calculating ETRs...')
 hs10_country_etrs <- calc_weighted_etr(
-  rates_232              = params_232$rate_matrix,
-  usmca_exempt_232       = params_232$usmca_exempt,
+  rates_s232              = params_s232$rate_matrix,
+  usmca_exempt_s232       = params_s232$usmca_exempt,
   rates_ieepa_reciprocal = rates_ieepa_reciprocal,
   rates_ieepa_fentanyl   = rates_ieepa_fentanyl,
   rates_s122             = rates_s122,

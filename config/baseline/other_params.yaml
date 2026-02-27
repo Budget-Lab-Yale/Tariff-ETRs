@@ -4,6 +4,7 @@
 
 # MFN baseline rates
 mfn_rates: 'resources/mfn_rates_2025.csv'
+mfn_exemption_shares: 'resources/mfn_exemption_shares.csv'
 
 # USMCA and auto sector parameters
 us_auto_content_share: 0.4

@@ -5,8 +5,8 @@
 # Recreate the Global Trade Alert "Section 122 in effect" analysis.
 # Compares three tariff regimes:
 #   1. Pre-ruling IEEPA    (2026-01-01 config)
-#   2. Post-strikedown 232  (2026-07-20 config, IEEPA struck down)
-#   3. S122 at 15%          (2026-02-20 config)
+#   2. Post-strikedown 232  (2026-07-24 config, IEEPA struck down)
+#   3. S122 at 10%          (2026-02-24 config)
 #
 # Key outputs:
 #   - Overall trade-weighted ETR for each regime
@@ -28,20 +28,20 @@ source('src/calculations.R')
 scenario <- '2-21_temp'
 config_paths <- list(
   ieepa    = sprintf('config/%s/2026-01-01', scenario),
-  s122     = sprintf('config/%s/2026-02-20', scenario),
-  baseline = sprintf('config/%s/2026-07-20', scenario)
+  s122     = sprintf('config/%s/2026-02-24', scenario),
+  baseline = sprintf('config/%s/2026-07-24', scenario)
 )
 
 regime_labels <- c(
   ieepa    = 'Pre-Ruling (IEEPA)',
   baseline = '232-Only (Post-Strikedown)',
-  s122     = 'S122 at 15%'
+  s122     = 'S122 at 10%'
 )
 
 regime_colors <- c(
   'Pre-Ruling (IEEPA)'          = '#b2182b',
   '232-Only (Post-Strikedown)'   = '#2166ac',
-  'S122 at 15%'                  = '#1b7837'
+  'S122 at 10%'                  = '#1b7837'
 )
 
 # ---- Macro product category definitions ------------------------------------
@@ -327,7 +327,7 @@ change_data <- top20_data %>%
   rename(
     etr_ieepa    = `Pre-Ruling (IEEPA)`,
     etr_baseline = `232-Only (Post-Strikedown)`,
-    etr_s122     = `S122 at 15%`
+    etr_s122     = `S122 at 10%`
   ) %>%
   mutate(
     change = etr_s122 - etr_ieepa,
@@ -348,7 +348,7 @@ p_change <- ggplot(change_data, aes(x = change, y = country_name, fill = directi
   scale_x_continuous(labels = function(x) paste0(x, ' pp'),
                      expand = expansion(mult = c(0.15, 0.15))) +
   labs(
-    title    = 'Change in ETR: S122 at 15% vs Pre-Ruling IEEPA',
+    title    = 'Change in ETR: S122 at 10% vs Pre-Ruling IEEPA',
     subtitle = 'Percentage point difference (top 20 import sources)',
     x = 'Percentage Point Change', y = NULL
   ) +
