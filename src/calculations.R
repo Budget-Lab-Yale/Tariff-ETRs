@@ -219,14 +219,14 @@ format_coverage_table <- function(coverage_by_partner, coverage_total) {
   for (i in 1:nrow(coverage_by_partner)) {
     lines <- c(lines, sprintf('%-10s  %11.1f%%  %11.1f%%  %11.1f%%',
       toupper(coverage_by_partner$partner[i]),
-      coverage_by_partner$share_232[i] * 100,
+      coverage_by_partner$share_s232[i] * 100,
       coverage_by_partner$share_ieepa[i] * 100,
       coverage_by_partner$share_neither[i] * 100))
   }
 
   lines <- c(lines, '', sprintf('%-10s  %11.1f%%  %11.1f%%  %11.1f%%',
     'TOTAL',
-    coverage_total$share_232 * 100,
+    coverage_total$share_s232 * 100,
     coverage_total$share_ieepa * 100,
     coverage_total$share_neither * 100))
 
@@ -236,13 +236,13 @@ format_coverage_table <- function(coverage_by_partner, coverage_total) {
 
 #' Load all config for a scenario from a single config directory
 #'
-#' Parses other_params.yaml (required), 232.yaml, ieepa_reciprocal.yaml,
+#' Parses other_params.yaml (required), s232.yaml, ieepa_reciprocal.yaml,
 #' ieepa_fentanyl.yaml, and s122.yaml (all optional) from the given directory.
 #' Also loads MFN rates from the path specified in other_params$mfn_rates.
 #'
 #' @param config_path Path to directory containing the config YAML files
 #'
-#' @return Named list with: params_232, rates_ieepa_reciprocal, rates_ieepa_fentanyl,
+#' @return Named list with: params_s232, rates_ieepa_reciprocal, rates_ieepa_fentanyl,
 #'   rates_s122, other_params, mfn_rates (all tariff components NULL if file missing)
 load_scenario_config <- function(config_path) {
 
@@ -264,9 +264,9 @@ load_scenario_config <- function(config_path) {
   }
 
   # Load tariff configs (all optional - missing file = NULL = zero rates)
-  s232_path <- file.path(config_path, '232.yaml')
-  params_232 <- if (file.exists(s232_path)) {
-    load_232_rates(s232_path)
+  s232_path <- file.path(config_path, 's232.yaml')
+  params_s232 <- if (file.exists(s232_path)) {
+    load_s232_rates(s232_path)
   } else {
     NULL
   }
@@ -300,7 +300,7 @@ load_scenario_config <- function(config_path) {
   }
 
   list(
-    params_232             = params_232,
+    params_s232             = params_s232,
     rates_ieepa_reciprocal = rates_ieepa_reciprocal,
     rates_ieepa_fentanyl   = rates_ieepa_fentanyl,
     rates_s122             = rates_s122,
@@ -335,8 +335,9 @@ calc_etrs_for_config <- function(config, hs10_by_country, usmca_shares, country_
   )
 
   hs10_country_etrs <- calc_weighted_etr(
-    rates_232              = if (!is.null(config$params_232)) config$params_232$rate_matrix else NULL,
-    usmca_exempt_232       = if (!is.null(config$params_232)) config$params_232$usmca_exempt else NULL,
+    rates_s232              = if (!is.null(config$params_s232)) config$params_s232$rate_matrix else NULL,
+    usmca_exempt_s232       = if (!is.null(config$params_s232)) config$params_s232$usmca_exempt else NULL,
+    s232_target_total_rules = if (!is.null(config$params_s232)) config$params_s232$target_total_rules else NULL,
     rates_ieepa_reciprocal = config$rates_ieepa_reciprocal,
     rates_ieepa_fentanyl   = config$rates_ieepa_fentanyl,
     rates_s122             = config$rates_s122,
@@ -951,8 +952,8 @@ do_scenario_time_varying <- function(scenario, scenario_path, output_dir,
 #' Takes clean tabular rate data from config parsing and applies USMCA exemptions,
 #' auto rebates, and stacking rules to produce final ETRs.
 #'
-#' @param rates_232 Tibble with columns: hs10, cty_code, s232_[tariff]_rate (one per tariff)
-#' @param usmca_exempt_232 Named vector of USMCA exempt flags by tariff name
+#' @param rates_s232 Tibble with columns: hs10, cty_code, s232_[tariff]_rate (one per tariff)
+#' @param usmca_exempt_s232 Named vector of USMCA exempt flags by tariff name
 #' @param rates_ieepa_reciprocal Tibble with columns: hs10, cty_code, ieepa_reciprocal_rate
 #' @param rates_ieepa_fentanyl Tibble with columns: hs10, cty_code, ieepa_fentanyl_rate
 #' @param rates_s122 Tibble with columns: hs10, cty_code, s122_rate (or NULL if no s122.yaml)
@@ -973,9 +974,10 @@ do_scenario_time_varying <- function(scenario, scenario_path, output_dir,
 #'   When provided, MFN rates are adjusted: effective_mfn = mfn_rate * (1 - exemption_share).
 #'   This captures FTA/GSP preferences that reduce the statutory MFN rate.
 #'
-#' @return Data frame with columns: hs10, cty_code, gtap_code, imports, etr, level, base_232, base_ieepa, base_neither
-calc_weighted_etr <- function(rates_232,
-                              usmca_exempt_232,
+#' @return Data frame with columns: hs10, cty_code, gtap_code, imports, etr, level, base_s232, base_ieepa, base_neither
+calc_weighted_etr <- function(rates_s232,
+                              usmca_exempt_s232,
+                              s232_target_total_rules = NULL,
                               rates_ieepa_reciprocal,
                               rates_ieepa_fentanyl,
                               rates_s122 = NULL,
@@ -1004,9 +1006,9 @@ calc_weighted_etr <- function(rates_232,
     select(hs10, cty_code, gtap_code, imports)
 
   # Join 232 rates if provided
-  if (!is.null(rates_232)) {
+  if (!is.null(rates_s232)) {
     rate_matrix <- rate_matrix %>%
-      left_join(rates_232, by = c('hs10', 'cty_code'))
+      left_join(rates_s232, by = c('hs10', 'cty_code'))
   }
 
   # Join IEEPA reciprocal rates if provided, otherwise add zero column
@@ -1046,10 +1048,10 @@ calc_weighted_etr <- function(rates_232,
   }
 
   # Get all 232 rate column names
-  rate_232_cols <- names(rate_matrix)[str_detect(names(rate_matrix), '^s232_.*_rate$')]
+  rate_s232_cols <- names(rate_matrix)[str_detect(names(rate_matrix), '^s232_.*_rate$')]
 
   # Replace NAs (indicates no tariff) with 0 for all rate columns
-  all_rate_cols <- c(rate_232_cols, 'ieepa_reciprocal_rate', 'ieepa_fentanyl_rate', 's122_rate', 's301_rate')
+  all_rate_cols <- c(rate_s232_cols, 'ieepa_reciprocal_rate', 'ieepa_fentanyl_rate', 's122_rate', 's301_rate')
   rate_matrix <- rate_matrix %>%
     mutate(
       across(
@@ -1084,7 +1086,7 @@ calc_weighted_etr <- function(rates_232,
   auto_tariffs <- c('automobiles_passenger_and_light_trucks', 'automobile_parts', 'vehicles_completed_mhd')
 
   # Get tariff names from rate column names
-  tariff_names <- str_replace(rate_232_cols, '^s232_(.*)_rate$', '\\1')
+  tariff_names <- str_replace(rate_s232_cols, '^s232_(.*)_rate$', '\\1')
 
   # Apply auto rebate and USMCA exemptions to each 232 tariff
   for (tariff_name in tariff_names) {
@@ -1099,7 +1101,7 @@ calc_weighted_etr <- function(rates_232,
     }
 
     # Apply USMCA exemption if enabled for this tariff
-    if (usmca_exempt_232[[tariff_name]] == 1) {
+    if (usmca_exempt_s232[[tariff_name]] == 1) {
       
       # Auto tariffs use adjusted USMCA share
       if (tariff_name %in% auto_tariffs) {
@@ -1223,6 +1225,29 @@ calc_weighted_etr <- function(rates_232,
       )
   }
 
+  # Optional 232 target-total floor logic (auto deal rates):
+  # For each 232 program with target_total rules, the effective 232 add-on is
+  # max(target_total - MFN, 0) for countries with a deal. Same mechanism as
+  # IEEPA reciprocal target-total but applied per-program within 232.
+  if (!is.null(s232_target_total_rules)) {
+    for (program_name in names(s232_target_total_rules)) {
+      col_name <- paste0('s232_', program_name, '_rate')
+      if (col_name %in% names(rate_matrix)) {
+        target_tibble <- s232_target_total_rules[[program_name]] %>%
+          rename(s232_tt_rate = target_total_rate)
+        rate_matrix <- rate_matrix %>%
+          left_join(target_tibble, by = 'cty_code') %>%
+          mutate(
+            !!col_name := if_else(
+              !is.na(s232_tt_rate) & !!sym(col_name) > 0,
+              pmax(s232_tt_rate - mfn_rate, 0),
+              !!sym(col_name)
+            )
+          ) %>%
+          select(-s232_tt_rate)
+      }
+    }
+  }
 
   # =============================================================================
   # Apply metal content shares to Section 232 metal program rates
@@ -1321,9 +1346,9 @@ calc_weighted_etr <- function(rates_232,
       # type, pmax dedupes overlapping programs (e.g., aluminum_base vs
       # aluminum_derivative). Non-metal 232 programs (autos) cover the full
       # product, so they dominate via pmax against the metal sum.
-      nonmetal_232_programs <- setdiff(tariff_names, metal_programs)
-      nonmetal_232_cols <- paste0('s232_', nonmetal_232_programs, '_rate')
-      nonmetal_232_cols <- nonmetal_232_cols[nonmetal_232_cols %in% names(rate_matrix)]
+      nonmetal_s232_programs <- setdiff(tariff_names, metal_programs)
+      nonmetal_s232_cols <- paste0('s232_', nonmetal_s232_programs, '_rate')
+      nonmetal_s232_cols <- nonmetal_s232_cols[nonmetal_s232_cols %in% names(rate_matrix)]
 
       # Group metal programs by type and take pmax within each type
       type_to_programs <- split(names(program_metal_types), unlist(program_metal_types))
@@ -1345,27 +1370,27 @@ calc_weighted_etr <- function(rates_232,
       }
 
       # pmax of non-metal 232 (full-product) vs metal sum (partial fractions)
-      if (length(nonmetal_232_cols) > 0) {
-        nonmetal_max_expr <- rlang::expr(pmax(!!!syms(nonmetal_232_cols)))
+      if (length(nonmetal_s232_cols) > 0) {
+        nonmetal_max_expr <- rlang::expr(pmax(!!!syms(nonmetal_s232_cols)))
         final_expr <- rlang::expr(pmax(!!nonmetal_max_expr, !!metal_sum_expr))
       } else {
         final_expr <- metal_sum_expr
       }
 
       rate_matrix <- rate_matrix %>%
-        mutate(rate_232_max = !!final_expr)
+        mutate(rate_s232_max = !!final_expr)
 
     } else {
       # Aggregate mode: single metal_share applied to all metal programs,
       # so pmax across all 232 columns is correct
       rate_matrix <- rate_matrix %>%
-        mutate(rate_232_max = pmax(!!!syms(rate_232_cols)))
+        mutate(rate_s232_max = pmax(!!!syms(rate_s232_cols)))
     }
 
   # No 232 tariffs - set max to 0
   } else {
     rate_matrix <- rate_matrix %>%
-      mutate(rate_232_max = 0)
+      mutate(rate_s232_max = 0)
   }
 
   # Compute non-metal share for IEEPA application on the non-metal portion of derivatives.
@@ -1373,21 +1398,21 @@ calc_weighted_etr <- function(rates_232,
   # Per-type mode: nonmetal_share = 1 - sum(active type shares), so IEEPA fills
   # everything not claimed by the specific 232 programs covering each product.
   # Aggregate mode: nonmetal_share = 1 - metal_share (unchanged).
-  metal_232_cols <- paste0('s232_', intersect(tariff_names, metal_programs), '_rate')
-  metal_232_cols <- metal_232_cols[metal_232_cols %in% names(rate_matrix)]
+  metal_s232_cols <- paste0('s232_', intersect(tariff_names, metal_programs), '_rate')
+  metal_s232_cols <- metal_s232_cols[metal_s232_cols %in% names(rate_matrix)]
 
-  if (length(metal_232_cols) > 0) {
+  if (length(metal_s232_cols) > 0) {
     if (use_per_type_nonmetal) {
       # Per-type mode: IEEPA covers everything active 232 programs don't claim
       rate_matrix <- rate_matrix %>%
         mutate(
-          nonmetal_share = if_else(pmax(!!!syms(metal_232_cols)) > 0, 1 - .active_type_share, 0)
+          nonmetal_share = if_else(pmax(!!!syms(metal_s232_cols)) > 0, 1 - .active_type_share, 0)
         )
     } else {
       # Aggregate mode: IEEPA covers the non-metal portion
       rate_matrix <- rate_matrix %>%
         mutate(
-          nonmetal_share = if_else(pmax(!!!syms(metal_232_cols)) > 0, 1 - metal_share, 0)
+          nonmetal_share = if_else(pmax(!!!syms(metal_s232_cols)) > 0, 1 - metal_share, 0)
         )
     }
   } else {
@@ -1420,8 +1445,8 @@ calc_weighted_etr <- function(rates_232,
         # For metal 232 derivatives: reciprocal and s122 apply to non-metal portion
         # Section 301 always applies to full customs value
         cty_code == CTY_CHINA ~ if_else(
-          rate_232_max > 0,
-          rate_232_max + ieepa_reciprocal_rate * nonmetal_share
+          rate_s232_max > 0,
+          rate_s232_max + ieepa_reciprocal_rate * nonmetal_share
             + ieepa_fentanyl_rate + s122_rate * nonmetal_share + s301_rate,
           ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate + s301_rate
         ),
@@ -1429,8 +1454,8 @@ calc_weighted_etr <- function(rates_232,
         # Everyone else: 232 takes precedence, then reciprocal + fentanyl + s122
         # For metal 232 derivatives: IEEPA and s122 apply to non-metal portion
         # Section 301 always applies to full customs value
-        rate_232_max > 0 ~
-          rate_232_max + (ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate) * nonmetal_share + s301_rate,
+        rate_s232_max > 0 ~
+          rate_s232_max + (ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate) * nonmetal_share + s301_rate,
 
         # Otherwise use all IEEPA + s122 + s301
         TRUE ~ ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate + s301_rate
@@ -1448,13 +1473,13 @@ calc_weighted_etr <- function(rates_232,
       # Coverage tracking (mutually exclusive categories for reporting)
       # Note: For China, fentanyl stacks on top, but for coverage we track primary authority.
       # The non-232 bucket includes IEEPA and Section 122.
-      base_232     = if_else(rate_232_max > 0, imports, 0),
+      base_s232     = if_else(rate_s232_max > 0, imports, 0),
       base_ieepa   = if_else(
-        rate_232_max == 0 & (ieepa_reciprocal_rate > 0 | ieepa_fentanyl_rate > 0 | s122_rate > 0),
+        rate_s232_max == 0 & (ieepa_reciprocal_rate > 0 | ieepa_fentanyl_rate > 0 | s122_rate > 0),
         imports, 0
       ),
       base_neither = if_else(
-        rate_232_max == 0 & ieepa_reciprocal_rate == 0 & ieepa_fentanyl_rate == 0 & s122_rate == 0,
+        rate_s232_max == 0 & ieepa_reciprocal_rate == 0 & ieepa_fentanyl_rate == 0 & s122_rate == 0,
         imports, 0
       )
     )
@@ -1463,7 +1488,7 @@ calc_weighted_etr <- function(rates_232,
     mutate(level = final_rate)
 
   hs10_country_etrs <- hs10_country_etrs %>%
-    select(hs10, cty_code, gtap_code, imports, etr, level, base_232, base_ieepa, base_neither)
+    select(hs10, cty_code, gtap_code, imports, etr, level, base_s232, base_ieepa, base_neither)
 
   return(hs10_country_etrs)
 }
@@ -1475,10 +1500,10 @@ calc_weighted_etr <- function(rates_232,
 #' using import-weighted averaging. Also aggregates coverage bases for tariff
 #' coverage reporting.
 #'
-#' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr, level, base_232, base_ieepa, base_neither
+#' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr, level, base_s232, base_ieepa, base_neither
 #' @param country_mapping Data frame with columns: cty_code, partner
 #'
-#' @return Data frame with columns: partner, gtap_code, etr, level, base_232, base_ieepa, base_neither
+#' @return Data frame with columns: partner, gtap_code, etr, level, base_s232, base_ieepa, base_neither
 aggregate_countries_to_partners <- function(hs10_country_etrs, country_mapping) {
 
   # Map countries to partners
@@ -1499,7 +1524,7 @@ aggregate_countries_to_partners <- function(hs10_country_etrs, country_mapping) 
       total_imports = sum(imports),
       weighted_etr = sum(etr * imports),
       weighted_level = sum(level * imports),
-      base_232 = sum(base_232),
+      base_s232 = sum(base_s232),
       base_ieepa = sum(base_ieepa),
       base_neither = sum(base_neither),
       .groups = 'drop'
@@ -1508,7 +1533,7 @@ aggregate_countries_to_partners <- function(hs10_country_etrs, country_mapping) 
       etr = if_else(total_imports > 0, weighted_etr / total_imports, 0),
       level = if_else(total_imports > 0, weighted_level / total_imports, 0)
     ) %>%
-    select(partner, gtap_code, etr, level, base_232, base_ieepa, base_neither)
+    select(partner, gtap_code, etr, level, base_s232, base_ieepa, base_neither)
 
   return(partner_etrs)
 }
@@ -1882,7 +1907,7 @@ calc_weighted_summary <- function(etr_data, value_col, gtap_col, census_col,
 #' Calculates country deltas using GTAP and Census weights plus tariff coverage.
 #' Returns all computed data as a list, ready for formatting/writing.
 #'
-#' @param etr_data Data frame with columns: partner, gtap_code, etr, base_232, base_ieepa, base_neither
+#' @param etr_data Data frame with columns: partner, gtap_code, etr, base_s232, base_ieepa, base_neither
 #' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr (for Census weights)
 #' @param country_mapping Data frame with columns: cty_code, partner
 #' @param weights_file Path to GTAP import weights CSV file
@@ -1903,31 +1928,31 @@ calc_overall_deltas_data <- function(etr_data, hs10_country_etrs = NULL,
 
   # Calculate tariff coverage
   coverage_stats <- NULL
-  if ('base_232' %in% names(etr_data)) {
+  if ('base_s232' %in% names(etr_data)) {
     coverage_by_partner <- etr_data %>%
       group_by(partner) %>%
       summarise(
-        imports_232 = sum(base_232),
+        imports_s232 = sum(base_s232),
         imports_ieepa = sum(base_ieepa),
         imports_neither = sum(base_neither),
         .groups = 'drop'
       ) %>%
       mutate(
-        total_imports = imports_232 + imports_ieepa + imports_neither,
-        share_232 = imports_232 / total_imports,
+        total_imports = imports_s232 + imports_ieepa + imports_neither,
+        share_s232 = imports_s232 / total_imports,
         share_ieepa = imports_ieepa / total_imports,
         share_neither = imports_neither / total_imports
       )
 
     coverage_total <- etr_data %>%
       summarise(
-        imports_232 = sum(base_232),
+        imports_s232 = sum(base_s232),
         imports_ieepa = sum(base_ieepa),
         imports_neither = sum(base_neither)
       ) %>%
       mutate(
-        total_imports = imports_232 + imports_ieepa + imports_neither,
-        share_232 = imports_232 / total_imports,
+        total_imports = imports_s232 + imports_ieepa + imports_neither,
+        share_s232 = imports_s232 / total_imports,
         share_ieepa = imports_ieepa / total_imports,
         share_neither = imports_neither / total_imports
       )
@@ -1958,7 +1983,7 @@ calc_overall_deltas_data <- function(etr_data, hs10_country_etrs = NULL,
 #'
 #' Calculates and prints tariff deltas (change from baseline scenario).
 #'
-#' @param etr_data Data frame with columns: partner, gtap_code, etr, base_232, base_ieepa, base_neither
+#' @param etr_data Data frame with columns: partner, gtap_code, etr, base_s232, base_ieepa, base_neither
 #' @param hs10_country_etrs Data frame with columns: hs10, cty_code, gtap_code, imports, etr (for Census weights)
 #' @param country_mapping Data frame with columns: cty_code, partner (for aggregating country data to partners)
 #' @param weights_file Path to GTAP import weights CSV file

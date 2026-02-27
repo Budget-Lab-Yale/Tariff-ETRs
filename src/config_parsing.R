@@ -7,7 +7,7 @@
 # Functions:
 #   - get_mnemonic_mapping():     Get mnemonic → country code mapping
 #   - resolve_country_mnemonics(): Resolve mnemonics in rates config
-#   - load_232_rates():           Load Section 232 rates at country level with defaults
+#   - load_s232_rates():           Load Section 232 rates at country level with defaults
 #   - load_ieepa_rates_yaml():    Load IEEPA rates at country level with hierarchical config
 #   - load_metal_content():       Load metal content shares for 232 derivative adjustment
 #
@@ -128,7 +128,7 @@ resolve_country_mnemonics <- function(rates_config, mnemonic_map) {
 #' Supported mnemonics: china, canada, mexico, uk, japan, eu, ftrow
 #' (based on resources/country_partner_mapping.csv)
 #'
-#' @param yaml_file Path to 232 YAML configuration file
+#' @param yaml_file Path to s232 YAML configuration file
 #' @param crosswalk_file Path to HS10-GTAP crosswalk CSV (for HS10 universe)
 #' @param census_codes_file Path to Census country codes CSV (for country universe)
 #' @param country_partner_file Path to country-partner mapping CSV (for mnemonic resolution)
@@ -136,7 +136,7 @@ resolve_country_mnemonics <- function(rates_config, mnemonic_map) {
 #' @return List with two elements:
 #'   - rate_matrix: Tibble with columns hs10, cty_code, s232_[tariff]_rate (one per tariff)
 #'   - usmca_exempt: Named vector of usmca_exempt flags by tariff name
-load_232_rates <- function(yaml_file,
+load_s232_rates <- function(yaml_file,
                            crosswalk_file = 'resources/hs10_gtap_crosswalk.csv',
                            census_codes_file = 'resources/census_codes.csv',
                            country_partner_file = 'resources/country_partner_mapping.csv') {
@@ -144,7 +144,7 @@ load_232_rates <- function(yaml_file,
   message('Loading Section 232 rates from YAML...')
 
   # Read YAML configuration
-  params_232 <- read_yaml(yaml_file)
+  params_s232 <- read_yaml(yaml_file)
 
   # Load mnemonic mapping for resolving friendly country names
 
@@ -159,21 +159,35 @@ load_232_rates <- function(yaml_file,
   all_country_codes <- load_census_codes(census_codes_file)$cty_code
 
   # Extract USMCA exempt flags
-  usmca_exempt_flags <- sapply(names(params_232), function(t) params_232[[t]]$usmca_exempt)
+  usmca_exempt_flags <- sapply(names(params_s232), function(t) params_s232[[t]]$usmca_exempt)
 
   # For each tariff, build a sparse rate matrix (only non-zero rates)
   tariff_matrices <- list()
+  target_total_rules <- list()
 
-  for (tariff_name in names(params_232)) {
+  for (tariff_name in names(params_s232)) {
 
     # Get HTS codes that define coverage
-    hts_codes <- params_232[[tariff_name]]$base
+    hts_codes <- params_s232[[tariff_name]]$base
 
     # Get rates config and resolve mnemonics (e.g., 'china' → '5700', 'eu' → 27 codes)
-    rates_config <- resolve_country_mnemonics(params_232[[tariff_name]]$rates, mnemonic_map)
+    rates_config <- resolve_country_mnemonics(params_s232[[tariff_name]]$rates, mnemonic_map)
     default_rate <- rates_config$default
     if (is.null(default_rate)) {
       stop(sprintf('Tariff %s is missing required "default" rate', tariff_name))
+    }
+
+    # Extract optional target_total block (country-level floor rules)
+    tt_config <- params_s232[[tariff_name]]$target_total
+    if (!is.null(tt_config) && length(tt_config) > 0) {
+      tt_resolved <- resolve_country_mnemonics(tt_config, mnemonic_map)
+      tt_resolved[['default']] <- NULL  # target_total should not have a default
+      if (length(tt_resolved) > 0) {
+        target_total_rules[[tariff_name]] <- tibble(
+          cty_code = names(tt_resolved),
+          target_total_rate = as.numeric(tt_resolved)
+        )
+      }
     }
 
     # Build regex pattern for coverage matching
@@ -233,12 +247,18 @@ load_232_rates <- function(yaml_file,
     )
   }
 
-  message(sprintf('Loaded 232 rates for %d tariffs across %s HS10 × country combinations',
-                  length(params_232), format(nrow(rate_matrix), big.mark = ',')))
+  # Only include target_total_rules if any programs have them
+  if (length(target_total_rules) == 0) {
+    target_total_rules <- NULL
+  }
+
+  message(sprintf('Loaded s232 rates for %d tariffs across %s HS10 × country combinations',
+                  length(params_s232), format(nrow(rate_matrix), big.mark = ',')))
 
   return(list(
     rate_matrix = rate_matrix,
-    usmca_exempt = usmca_exempt_flags
+    usmca_exempt = usmca_exempt_flags,
+    target_total_rules = target_total_rules
   ))
 }
 

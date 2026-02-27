@@ -1,33 +1,30 @@
 # =============================================================================
-# Section 232 Tariffs with Korea Deal Updates (12-4 scenario)
+# Section 232 Tariffs with Auto Deal Rates (HTS 2026 Revision 3)
 # =============================================================================
 #
-# U.S.-Korea Strategic Trade and Investment Deal (FR Doc. 2025-21940):
+# AUTO DEALS (HTS notes 33(h)-(k)):
+# - EU (note 33(h)):   15% floor (target_total) for passenger vehicles & parts
+# - Japan (note 33(i)):15% floor (target_total) for passenger vehicles & parts
+# - Korea (note 33(j)):15% floor (target_total) for passenger vehicles & parts
+# - UK (note 33(k)):   Vehicles +7.5% additive, parts 10% floor (target_total)
 #
-# IMPLEMENTED:
-# - Autos/auto parts: Korea (5800) rate set to 0.15 (effective Nov 1, 2025)
-# - Wood products (upholstered furniture, kitchen cabinets): Korea rate 0.15
-#   (effective Nov 14, 2025)
+# target_total mechanism: effective 232 add-on = max(target - MFN, 0).
+# For cars (MFN 2.5%): add-on = 12.5%, total = 15%.
+# For trucks (MFN 25%): add-on = 0%, total = 25% (MFN alone exceeds target).
+#
+# WOOD PRODUCT DEALS:
+# - Korea (5800): upholstered furniture & kitchen cabinets at 0.15
+# - Other deals: various country-specific rates on furniture/cabinets
+#
+# MHD VEHICLES/PARTS: No deal rates (note 38, not note 33).
 #
 # MODELING CAVEATS:
 #
-# 1. EFFECTIVE DATES NOT MODELED:
-#    The deal has staggered effective dates (Nov 1 for autos, Nov 14 for others).
-#    This scenario applies the deal "as if fully in force" - no date logic.
-#
-# 2. 232 CIVIL AIRCRAFT LIMITATION (schema constraint):
-#    The deal exempts Korean civil aircraft from 232 steel/aluminum/copper.
+# 1. 232 CIVIL AIRCRAFT LIMITATION (schema constraint):
+#    The Korea deal exempts Korean civil aircraft from 232 steel/aluminum/copper.
 #    HTS 8807300060 (aluminum aircraft parts) falls under this exemption.
-#    However, the current 232 schema uses max-of-232 stacking and does not
-#    support product×country overrides within a tariff program. Cannot express
-#    a within-program, within-country exception in config alone.
-#    Impact: Small upward bias for Korean aircraft parts in aluminum.
-#
-# 3. BASELINE-FREE APPROXIMATION:
-#    Korea's true 232 auto policy is "15% combined with Column 1" (if Column 1
-#    < 15%, combined = 15%; if >= 15%, 232 add-on = 0%). We approximate with
-#    flat 0.15. This may overstate the effective 232 rate for HTS lines where
-#    Column 1 duty >= 15%.
+#    However, the current 232 schema does not support product×country overrides
+#    within a tariff program. Impact: Small upward bias for Korean aircraft parts.
 # =============================================================================
 
 softwood:
@@ -810,7 +807,11 @@ automobiles_passenger_and_light_trucks:
   - '87045100'
   rates:
     default: 0.25
-    '5800': 0.15    # Korea deal - total combined 15% (effective Nov 1, 2025)
+    '4120': 0.075   # UK deal - additive 7.5% (note 33(k))
+  target_total:
+    '5800': 0.15    # Korea deal - 15% floor (note 33(j))
+    '5880': 0.15    # Japan deal - 15% floor (note 33(i))
+    eu: 0.15        # EU deal - 15% floor (note 33(h))
   usmca_exempt: 1
 automobile_parts:
   base:
@@ -952,5 +953,9 @@ automobile_parts:
   - '94012000'
   rates:
     default: 0.25
-    '5800': 0.15    # Korea deal - total combined 15% (effective Nov 1, 2025)
+  target_total:
+    '4120': 0.10    # UK deal - 10% floor (note 33(k))
+    '5800': 0.15    # Korea deal - 15% floor (note 33(j))
+    '5880': 0.15    # Japan deal - 15% floor (note 33(i))
+    eu: 0.15        # EU deal - 15% floor (note 33(h))
   usmca_exempt: 1

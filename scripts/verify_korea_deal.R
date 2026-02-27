@@ -72,7 +72,7 @@ if (!found_aircraft_exemption) {
 # -----------------------------------------------------------------------------
 message('\n3. Checking 232 wood products rates...')
 
-s232 <- read_yaml(file.path(config_path, '232.yaml'))
+s232 <- read_yaml(file.path(config_path, 's232.yaml'))
 
 # Check upholstered furniture
 uph_rate <- s232$upholstered_wooden_furniture$rates[[korea_code]]

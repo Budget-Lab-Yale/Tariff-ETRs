@@ -60,7 +60,7 @@ compute_food_etrs <- function(config_path) {
 }
 
 ieepa_food <- compute_food_etrs('config/2-21_temp/2026-01-01')
-s122_food  <- compute_food_etrs('config/2-21_temp/2026-02-20')
+s122_food  <- compute_food_etrs('config/2-21_temp/2026-02-24')
 
 # ---- Compute OVERALL row -----------------------------------------------------
 overall_ieepa <- ieepa_food %>%

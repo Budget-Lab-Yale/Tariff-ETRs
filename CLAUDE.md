@@ -53,16 +53,26 @@ The project uses Census Bureau country codes (not ISO codes). Country-to-partner
 
 **Output (static scenarios):**
 - GTAP shock commands (output/{scenario}/shocks.txt)
-- Sector×country delta matrix (output/{scenario}/deltas_by_sector_country.csv)
+- Sector×partner delta matrix (output/{scenario}/gtap_deltas_by_sector_country.csv)
+- Census country deltas (output/{scenario}/deltas_by_census_country.csv)
+- Census country×HTS2 deltas (output/{scenario}/deltas_by_census_country_hts2.csv)
 - Overall deltas by country (output/{scenario}/overall_deltas.txt)
-- Sector×country tariff levels (output/{scenario}/levels_by_sector_country.csv)
+- Sector×partner tariff levels (output/{scenario}/gtap_levels_by_sector_country.csv)
+- Census country tariff levels (output/{scenario}/levels_by_census_country.csv)
+- Census country×HTS2 tariff levels (output/{scenario}/levels_by_census_country_hts2.csv)
 - Overall tariff levels by country (output/{scenario}/overall_levels.txt)
 
 **Output (time-varying scenarios):**
 - Per-date shock commands (output/{scenario}/{date}/shocks.txt)
-- Stacked CSVs with `date` as first column (output/{scenario}/deltas_by_sector_country.csv)
+- Stacked deltas CSVs with `date` as first column:
+  - output/{scenario}/gtap_deltas_by_sector_country.csv
+  - output/{scenario}/deltas_by_census_country.csv
+  - output/{scenario}/deltas_by_census_country_hts2.csv
 - Combined overall deltas with per-date sections (output/{scenario}/overall_deltas.txt)
-- Stacked levels CSV with `date` as first column (output/{scenario}/levels_by_sector_country.csv)
+- Stacked levels CSVs with `date` as first column:
+  - output/{scenario}/gtap_levels_by_sector_country.csv
+  - output/{scenario}/levels_by_census_country.csv
+  - output/{scenario}/levels_by_census_country_hts2.csv
 - Combined overall tariff levels with per-date sections (output/{scenario}/overall_levels.txt)
 
 **MFN Rates:**
@@ -77,7 +87,7 @@ The project uses Census Bureau country codes (not ISO codes). Country-to-partner
 **Baseline Architecture:**
 - A single shared baseline lives at `config/baseline/` (not per-scenario)
 - Baseline requires at least `other_params.yaml`
-- Tariff YAML files (232.yaml, ieepa_*.yaml, s122.yaml) are optional; missing = zero rates
+- Tariff YAML files (s232.yaml, ieepa_*.yaml, s122.yaml) are optional; missing = zero rates
 - Deltas are computed as: counterfactual tariff level - baseline tariff level
 - For MFN-only baseline: omit all tariff YAMLs → all policy rates = 0 → delta = policy rate
 - Baseline can be static (files in baseline/) or time-varying (YYYY-MM-DD subfolders within baseline/)
@@ -103,13 +113,13 @@ All scenarios share a single baseline at `config/baseline/`. Counterfactual conf
 config/
   baseline/                    # Shared baseline config (required)
     other_params.yaml          # Must include mfn_rates pointer
-    232.yaml                   # Optional (missing = zero rates)
+    s232.yaml                  # Optional (missing = zero rates)
     ieepa_reciprocal.yaml      # Optional
     ieepa_fentanyl.yaml        # Optional
   {scenario}/                  # Counterfactual configs only
     2026-01-01/                # Counterfactual date (time-varying)
       other_params.yaml
-      232.yaml
+      s232.yaml
       ieepa_reciprocal.yaml
       ...
 ```
@@ -122,7 +132,7 @@ The baseline itself can be static (files directly in `baseline/`) or time-varyin
 
 Each config directory (baseline or counterfactual date) requires `other_params.yaml`. Tariff YAMLs are optional (missing = zero rates):
 
-1. **232.yaml** (optional) - Section 232 tariffs with country-level rates and defaults:
+1. **s232.yaml** (optional) - Section 232 tariffs with country-level rates and defaults:
    ```yaml
    tariff_name:
      base: [list of variable-length HTS codes: 4, 6, 8, or 10 digits]
@@ -133,6 +143,9 @@ Each config directory (baseline or counterfactual date) requires `other_params.y
        # Or use Census codes directly:
        '4120': 0.25          # UK (Census code)
        '5700': 0.3           # China (Census code)
+     target_total:            # Optional: country-level "combined duty floor"
+       japan: 0.15            # effective 232 add-on = max(0.15 - MFN, 0)
+       eu: 0.15              # Expands to all 27 EU codes
      usmca_exempt: 0         # 1 = apply USMCA exemptions, 0 = no exemption
    ```
 
@@ -242,7 +255,7 @@ The codebase uses a clean separation between config parsing and calculations:
 *src/config_parsing.R:*
 - `get_mnemonic_mapping()`: Loads country_partner_mapping.csv and returns mnemonic → country codes mapping
 - `resolve_country_mnemonics()`: Expands mnemonics (e.g., 'eu') to individual Census country codes in rates config
-- `load_232_rates()`: Loads 232 YAML, expands to complete HS10×country tibble with coverage and country-specific rates
+- `load_s232_rates()`: Loads s232 YAML, expands to complete HS10×country tibble with coverage and country-specific rates. Returns `list(rate_matrix, usmca_exempt, target_total_rules)` where `target_total_rules` is a named list of per-program tibbles (cty_code, target_total_rate) for countries with floor rules, or NULL if none.
 - `load_ieepa_rates_yaml()`: Generic IEEPA loader with configurable column name - applies hierarchical rate logic (headline → product → product×country)
 - `load_metal_content()`: Loads metal content shares (flat, BEA, or CBO method) for Section 232 derivative adjustment. BEA method supports `bea_granularity: 'gtap'` (sector-level), `'naics'` (HS10-level via NAICS chaining), or `'detail'` (per-metal-type shares via 2017 BEA Detail IO table)
 
@@ -254,7 +267,7 @@ The codebase uses a clean separation between config parsing and calculations:
 *src/calculations.R:*
 - `detect_baseline_structure()`: Detects shared baseline structure (static or time-varying)
 - `detect_scenario_structure()`: Detects counterfactual structure (counter dates)
-- `load_scenario_config()`: Loads all config YAMLs from a single directory into a named list. Tariff files (232, IEEPA, s122, s301) are optional; missing = NULL = zero rates. MFN rates loaded from `other_params$mfn_rates` path. MFN exemption shares loaded from optional `other_params$mfn_exemption_shares` path.
+- `load_scenario_config()`: Loads all config YAMLs from a single directory into a named list. Tariff files (s232, IEEPA, s122, s301) are optional; missing = NULL = zero rates. MFN rates loaded from `other_params$mfn_rates` path. MFN exemption shares loaded from optional `other_params$mfn_exemption_shares` path.
 - `calc_etrs_for_config()`: Runs calc_weighted_etr() + aggregate_countries_to_partners() for one config set. MFN rates come from config (no separate parameter).
 - `calc_delta()`: Computes delta = counterfactual level - baseline level at HS10×country level
 - `do_scenario()`: Main orchestrator - loads shared data, detects structure, processes baseline, processes counterfactual, computes deltas
@@ -263,12 +276,11 @@ The codebase uses a clean separation between config parsing and calculations:
 - `match_baseline()`: Matches a counterfactual date to the appropriate baseline result (static or carry-forward)
 - `calc_weighted_etr()`: Joins tabular config data, applies USMCA exemptions/auto rebates, metal content adjustment, MFN exemption shares, and stacking rules. Handles NULL tariff inputs (missing config = zero rates). MFN (adjusted by exemption shares if provided) is folded into the stacking formula as an unconditionally additive component.
 - `aggregate_countries_to_partners()`: Aggregates country-level results to 8 partner groups using import-weighted averaging
-- `prepare_*_deltas()` functions: Pure computation (no I/O) for sector_country, country_level, country_hts2, and overall delta data
-- `write_*_deltas()` functions: Delegate to prepare_* then write delta files
-- `write_*_deltas_stacked()` functions: Stack per-date prepare_* results with date column for time-varying scenarios
-- `prepare_levels_by_sector_country()`, `write_levels_by_sector_country()`: Tariff level outputs
+- `prepare_*_deltas()` / `prepare_*_levels()` functions: Pure computation (no I/O) for sector_country, country_level, country_hts2, and overall data
+- `write_*_deltas()` / `write_*_levels()` functions: Delegate to prepare_* then write files
+- `write_*_deltas_stacked()` / `write_*_levels_stacked()` functions: Stack per-date results with date column for time-varying scenarios
 - `calc_overall_levels_data()`, `format_level_table()`, `write_overall_levels()`: Overall tariff level summaries
-- `write_levels_by_sector_country_stacked()`, `write_overall_levels_combined()`: Stacked/combined level outputs for time-varying scenarios
+- `write_overall_levels_combined()`, `write_overall_deltas_combined()`: Combined text outputs for time-varying scenarios
 
 **Variable-Length HTS Matching:**
 - Both 232 and IEEPA tariffs use prefix matching: '8703' matches all HS10 codes starting with 8703
