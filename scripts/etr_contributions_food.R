@@ -1,16 +1,17 @@
 # =============================================================================
-# etr_contributions.R
+# etr_contributions_food.R
 # =============================================================================
 #
-# Compare ETR levels by country and product category across the IEEPA and S122
-# tariff regimes.
+# Food-specific version of etr_contributions.R. Filters to HTS chapters 01-24
+# (Agriculture & Food) and breaks down by food sub-category. The "overall" row
+# is the food-total ETR rather than all-imports.
 #
 # Outputs:
-#   - Console tables: country ETRs, product ETRs, overall summary
-#   - Charts: output/2-21_temp/etr_levels_by_country.png
-#             output/2-21_temp/etr_levels_by_product.png
+#   - Console tables: food sub-category ETRs, country ETRs (food only)
+#   - Charts: output/2-21_temp/etr_levels_by_food_product.png
+#             output/2-21_temp/etr_levels_by_food_country.png
 #
-# Usage: Rscript scripts/etr_contributions.R
+# Usage: Rscript scripts/etr_contributions_food.R
 # =============================================================================
 
 library(tidyverse)
@@ -22,23 +23,24 @@ source('src/config_parsing.R')
 source('src/data_processing.R')
 source('src/calculations.R')
 
-# ---- Macro product category definitions --------------------------------------
-macro_categories <- tribble(
-  ~macro, ~chapters,                                          ~description,
-  '1',    sprintf('%02d', c(1:5, 6:14, 15, 16:24)),          'Agriculture & Food',
-  '2',    sprintf('%02d', 25:27),                             'Energy & Minerals',
-  '3',    sprintf('%02d', c(28:38, 39:40)),                   'Chemicals & Plastics',
-  '4',    c('71', sprintf('%02d', 72:83)),                    'Metals',
-  '5',    sprintf('%02d', c(50:63, 64:67)),                   'Textiles & Apparel',
-  '6',    sprintf('%02d', 84:85),                             'Machinery & Electronics',
-  '7',    sprintf('%02d', 86:89),                             'Vehicles & Transport',
-  '8',    sprintf('%02d', c(41:43, 44:46, 47:49, 68:70,
-                            90:92, 93, 94:96, 97)),           'Other Manufactured'
+# ---- Food sub-category definitions ------------------------------------------
+food_categories <- tribble(
+  ~food_cat, ~chapters,                               ~description,
+  '1',       sprintf('%02d', 1:2),                     'Live Animals & Meat',
+  '2',       c('03'),                                  'Fish & Seafood',
+  '3',       c('04', '05'),                            'Dairy, Eggs & Animal Products',
+  '4',       sprintf('%02d', 6:8),                     'Plants, Vegetables & Fruit',
+  '5',       sprintf('%02d', 9:14),                    'Coffee, Tea, Cereals & Seeds',
+  '6',       c('15'),                                  'Fats & Oils',
+  '7',       sprintf('%02d', 16:21),                   'Prepared Foods & Beverages',
+  '8',       c('22'),                                  'Beverages & Spirits'
 )
 
-chapter_to_macro <- macro_categories %>%
+chapter_to_food <- food_categories %>%
   unnest(chapters) %>%
-  select(hts2 = chapters, macro, description)
+  select(hts2 = chapters, food_cat, description)
+
+food_chapters <- chapter_to_food$hts2
 
 # ---- Load shared data -------------------------------------------------------
 message('Loading shared data...')
@@ -61,6 +63,13 @@ get_hs10_country_etrs <- function(config_path) {
   etrs$hs10_country_etrs  # hs10, cty_code, gtap_code, imports, etr
 }
 
+# ---- Helper: filter to food only --------------------------------------------
+filter_food <- function(df) {
+  df %>%
+    mutate(hts2 = str_sub(hs10, 1, 2)) %>%
+    filter(hts2 %in% food_chapters)
+}
+
 # ---- Helper: clean country names ---------------------------------------------
 clean_country_name <- function(x) {
   x %>%
@@ -71,7 +80,6 @@ clean_country_name <- function(x) {
 
 # ---- Helper: compute partner-level ETRs (top N + ROW) -----------------------
 compute_country_etrs <- function(df, top_n = 10) {
-  # Map countries to partners, consolidating EU-27 into one group
   partner_map <- country_mapping %>%
     mutate(partner_label = case_when(
       partner == 'china'  ~ 'China',
@@ -87,7 +95,6 @@ compute_country_etrs <- function(df, top_n = 10) {
 
   partner_data <- df %>%
     left_join(partner_map, by = 'cty_code') %>%
-    # Unmapped countries: use their own name
     left_join(census_codes, by = 'cty_code') %>%
     mutate(partner_label = if_else(
       is.na(partner_label),
@@ -114,12 +121,11 @@ compute_country_etrs <- function(df, top_n = 10) {
     select(country_name = partner_label, etr)
 }
 
-# ---- Helper: compute product-level ETRs -------------------------------------
-compute_product_etrs <- function(df) {
+# ---- Helper: compute food sub-category ETRs ---------------------------------
+compute_food_etrs <- function(df) {
   df %>%
-    mutate(hts2 = str_sub(hs10, 1, 2)) %>%
-    left_join(chapter_to_macro, by = 'hts2') %>%
-    group_by(macro, description) %>%
+    left_join(chapter_to_food, by = 'hts2') %>%
+    group_by(food_cat, description) %>%
     summarise(weighted_etr = sum(etr * imports), imports = sum(imports),
               .groups = 'drop') %>%
     mutate(etr = if_else(imports > 0, weighted_etr / imports, 0) * 100) %>%
@@ -149,13 +155,13 @@ make_two_panel <- function(wide_df, long_df, title, subtitle) {
           axis.text.y = element_markdown())
 
   p_right <- ggplot(long_df, aes(x = label, y = etr, fill = regime)) +
-    geom_col(position = position_dodge(width = 0.7), width = 0.65) +
+    geom_col(position = position_dodge(width = 0.8), width = 0.75) +
     geom_text(aes(label = sprintf('%.1f%%', etr)),
-              position = position_dodge(width = 0.7), hjust = -0.1, size = 3) +
+              position = position_dodge(width = 0.8), hjust = -0.1, size = 2.5) +
     coord_flip() +
-    scale_fill_manual(values = c('#2166ac', '#b2182b')) +
+    scale_fill_manual(values = c('#2166ac', '#b2182b', '#4daf4a')) +
     scale_y_continuous(labels = function(x) paste0(x, '%'),
-                       expand = expansion(mult = c(0, 0.15))) +
+                       expand = expansion(mult = c(0, 0.18))) +
     labs(title = 'ETR by Regime', x = NULL,
          y = 'Effective Tariff Rate', fill = NULL) +
     theme_minimal(base_size = 11) +
@@ -166,8 +172,16 @@ make_two_panel <- function(wide_df, long_df, title, subtitle) {
           axis.ticks.y = element_blank(),
           plot.title = element_text(face = 'bold', size = 11))
 
-  legend_grob <- cowplot::get_legend(p_right)
-  p_right_no_legend <- p_right + theme(legend.position = 'none')
+  # Extract legend as a standalone grob via ggplotGrob
+  p_legend <- p_right +
+    guides(fill = guide_legend(nrow = 1)) +
+    theme(legend.position = 'top')
+  g_table <- ggplotGrob(p_legend)
+  legend_grob <- g_table$grobs[[
+    which(sapply(g_table$grobs, function(g) !is.null(g$name) && g$name == 'guide-box'))
+  ]]
+
+  p_right <- p_right + theme(legend.position = 'none')
 
   title_grob <- grid::textGrob(
     title, gp = grid::gpar(fontface = 'bold', fontsize = 14),
@@ -178,40 +192,45 @@ make_two_panel <- function(wide_df, long_df, title, subtitle) {
 
   gridExtra::arrangeGrob(
     title_grob, subtitle_grob, legend_grob,
-    gridExtra::arrangeGrob(p_left, p_right_no_legend, ncol = 2, widths = c(1, 1)),
+    gridExtra::arrangeGrob(p_left, p_right, ncol = 2, widths = c(1, 1)),
     ncol = 1, heights = c(0.04, 0.03, 0.04, 0.89))
 }
 
 # ---- Helper: build wide/long data for two-panel chart -----------------------
-prepare_chart_data <- function(etrs_ieepa, etrs_s122, label_col,
-                               overall_ieepa = NULL, overall_s122 = NULL) {
+prepare_chart_data <- function(etrs_ieepa, etrs_s122, etrs_jul, label_col,
+                               overall_ieepa = NULL, overall_s122 = NULL,
+                               overall_jul = NULL) {
   wide <- etrs_ieepa %>%
     rename(etr_ieepa = etr) %>%
     left_join(etrs_s122 %>% rename(etr_s122 = etr), by = label_col) %>%
+    left_join(etrs_jul %>% rename(etr_jul = etr), by = label_col) %>%
     mutate(gap = etr_s122 - etr_ieepa, label = .data[[label_col]])
 
   # Append overall row if provided
   if (!is.null(overall_ieepa)) {
     overall_row <- tibble(etr_ieepa = overall_ieepa, etr_s122 = overall_s122,
-                          gap = overall_s122 - overall_ieepa, label = 'Overall')
+                          etr_jul = overall_jul,
+                          gap = overall_s122 - overall_ieepa, label = 'All Food')
     wide <- bind_rows(wide, overall_row)
   }
 
-  # Bold the Overall label for ggtext rendering
+  # Bold the overall label for ggtext rendering
   wide <- wide %>%
-    mutate(label = if_else(label == 'Overall', '**Overall**', label))
+    mutate(label = if_else(label == 'All Food', '**All Food**', label))
 
-  # Order: ranked by gap, but Overall always at bottom (= top of flipped chart)
-  category_order <- wide %>% filter(label != '**Overall**') %>%
+  # Order: ranked by gap, but overall always at bottom (= top of flipped chart)
+  category_order <- wide %>% filter(label != '**All Food**') %>%
     arrange(desc(gap)) %>% pull(label)
-  label_order <- c(category_order, if ('**Overall**' %in% wide$label) '**Overall**')
+  label_order <- c(category_order, if ('**All Food**' %in% wide$label) '**All Food**')
   wide <- wide %>% mutate(label = factor(label, levels = label_order))
 
   long <- wide %>%
-    pivot_longer(cols = c(etr_ieepa, etr_s122),
+    pivot_longer(cols = c(etr_ieepa, etr_s122, etr_jul),
                  names_to = 'regime', values_to = 'etr') %>%
-    mutate(regime = factor(regime, levels = c('etr_ieepa', 'etr_s122'),
-                           labels = c('IEEPA Regime', 'S122 Regime')))
+    mutate(regime = factor(regime, levels = c('etr_ieepa', 'etr_s122', 'etr_jul'),
+                           labels = c('Pre-SCOTUS (IEEPA regime)',
+                                      'Post-SCOTUS (122 regime)',
+                                      'Post-SCOTUS, no 122')))
 
   list(wide = wide, long = long)
 }
@@ -230,43 +249,56 @@ print_comparison <- function(wide_df, label_col) {
   }
 }
 
-# ---- Compute ETRs for both regimes ------------------------------------------
+# ---- Compute ETRs for all three regimes -------------------------------------
 message('\n--- Computing ETRs for IEEPA regime (2026-01-01) ---')
 df_ieepa <- get_hs10_country_etrs('config/2-21_temp/2026-01-01')
 
 message('\n--- Computing ETRs for S122 regime (2026-02-24) ---')
 df_s122 <- get_hs10_country_etrs('config/2-21_temp/2026-02-24')
 
-# ---- Overall summary ---------------------------------------------------------
-total_imports <- sum(df_ieepa$imports)
-etr_ieepa_total <- sum(df_ieepa$etr * df_ieepa$imports) / total_imports * 100
-etr_s122_total  <- sum(df_s122$etr * df_s122$imports)  / total_imports * 100
+message('\n--- Computing ETRs for Jul 24 regime (2026-07-24) ---')
+df_jul <- get_hs10_country_etrs('config/2-21_temp/2026-07-24')
+
+# ---- Filter to food only ----------------------------------------------------
+df_ieepa_food <- filter_food(df_ieepa)
+df_s122_food  <- filter_food(df_s122)
+df_jul_food   <- filter_food(df_jul)
+
+# ---- Food overall summary ---------------------------------------------------
+food_imports <- sum(df_ieepa_food$imports)
+etr_ieepa_food <- sum(df_ieepa_food$etr * df_ieepa_food$imports) / food_imports * 100
+etr_s122_food  <- sum(df_s122_food$etr * df_s122_food$imports)   / food_imports * 100
+etr_jul_food   <- sum(df_jul_food$etr * df_jul_food$imports)     / food_imports * 100
 
 cat(sprintf('\n==========================================================\n'))
-cat(sprintf('  Overall Import-Weighted ETR\n'))
-cat(sprintf('  IEEPA (2026-01-01):  %5.2f%%\n', etr_ieepa_total))
-cat(sprintf('  S122  (2026-02-24):  %5.2f%%\n', etr_s122_total))
-cat(sprintf('  Difference:         %+5.2f pp\n', etr_s122_total - etr_ieepa_total))
+cat(sprintf('  Food Import-Weighted ETR (HTS Chapters 01-22)\n'))
+cat(sprintf('  IEEPA   (2026-01-01):  %5.2f%%\n', etr_ieepa_food))
+cat(sprintf('  S122    (2026-02-24):  %5.2f%%\n', etr_s122_food))
+cat(sprintf('  Jul 24  (2026-07-24):  %5.2f%%\n', etr_jul_food))
 cat(sprintf('==========================================================\n'))
 
-# ---- Country comparison (top 15 + ROW) --------------------------------------
-etr_cty_ieepa <- compute_country_etrs(df_ieepa, 15)
-etr_cty_s122  <- compute_country_etrs(df_s122, 15)
+# ---- Country comparison (food only, top 15 + ROW) ---------------------------
+etr_cty_ieepa <- compute_country_etrs(df_ieepa_food, 15)
+etr_cty_s122  <- compute_country_etrs(df_s122_food, 15)
+etr_cty_jul   <- compute_country_etrs(df_jul_food, 15)
 
-country_chart <- prepare_chart_data(etr_cty_ieepa, etr_cty_s122, 'country_name',
-                                    etr_ieepa_total, etr_s122_total)
+country_chart <- prepare_chart_data(etr_cty_ieepa, etr_cty_s122, etr_cty_jul,
+                                    'country_name',
+                                    etr_ieepa_food, etr_s122_food, etr_jul_food)
 
-cat('\n--- ETR by Country (Top 15 by Imports + ROW) ---\n\n')
+cat('\n--- Food ETR by Country (Top 15 by Food Imports + ROW) ---\n\n')
 print_comparison(country_chart$wide %>% arrange(desc(etr_ieepa)), 'label')
 
-# ---- Product comparison (8 macro categories) ---------------------------------
-etr_prod_ieepa <- compute_product_etrs(df_ieepa)
-etr_prod_s122  <- compute_product_etrs(df_s122)
+# ---- Food sub-category comparison -------------------------------------------
+etr_food_ieepa <- compute_food_etrs(df_ieepa_food)
+etr_food_s122  <- compute_food_etrs(df_s122_food)
+etr_food_jul   <- compute_food_etrs(df_jul_food)
 
-product_chart <- prepare_chart_data(etr_prod_ieepa, etr_prod_s122, 'description',
-                                    etr_ieepa_total, etr_s122_total)
+product_chart <- prepare_chart_data(etr_food_ieepa, etr_food_s122, etr_food_jul,
+                                    'description',
+                                    etr_ieepa_food, etr_s122_food, etr_jul_food)
 
-cat('\n--- ETR by Product Category ---\n\n')
+cat('\n--- ETR by Food Sub-Category ---\n\n')
 print_comparison(product_chart$wide %>% arrange(desc(etr_ieepa)), 'label')
 
 # ---- Charts ------------------------------------------------------------------
@@ -274,24 +306,51 @@ message('\nGenerating charts...')
 
 p_country <- make_two_panel(
   country_chart$wide, country_chart$long,
-  title = 'ETR by Country: IEEPA vs S122',
+  title = 'Food ETR by Country',
   subtitle = sprintf(
-    'Import-weighted average ETR (top 15 by imports + ROW, EU-27 consolidated); overall: IEEPA %.1f%%, S122 %.1f%%',
-    etr_ieepa_total, etr_s122_total))
+    'Import-weighted average ETR for food (HTS 01-22); overall food: Pre-SCOTUS %.1f%%, Post-SCOTUS (122) %.1f%%, Post-SCOTUS (no 122) %.1f%%',
+    etr_ieepa_food, etr_s122_food, etr_jul_food))
 
 p_product <- make_two_panel(
   product_chart$wide, product_chart$long,
-  title = 'ETR by Product: IEEPA vs S122',
-  subtitle = 'Import-weighted average ETR by macro product category; ranked by difference')
+  title = 'Food ETR by Sub-Category',
+  subtitle = 'Import-weighted average ETR by food sub-category; ranked by Feb 24 \u2212 Jan 1 difference')
 
 # ---- Save charts -------------------------------------------------------------
 output_dir <- 'output/2-21_temp'
 dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
 
-ggsave(file.path(output_dir, 'etr_levels_by_country.png'),
+ggsave(file.path(output_dir, 'etr_levels_by_food_country.png'),
        p_country, width = 14, height = 10, dpi = 200, bg = 'white')
-message(sprintf('Saved %s/etr_levels_by_country.png', output_dir))
+message(sprintf('Saved %s/etr_levels_by_food_country.png', output_dir))
 
-ggsave(file.path(output_dir, 'etr_levels_by_product.png'),
-       p_product, width = 14, height = 6, dpi = 200, bg = 'white')
-message(sprintf('Saved %s/etr_levels_by_product.png', output_dir))
+ggsave(file.path(output_dir, 'etr_levels_by_food_product.png'),
+       p_product, width = 14, height = 8, dpi = 200, bg = 'white')
+message(sprintf('Saved %s/etr_levels_by_food_product.png', output_dir))
+
+# ---- Write data files -------------------------------------------------------
+food_country_data <- country_chart$wide %>%
+  transmute(
+    category = str_remove_all(as.character(label), '\\*'),
+    etr_pre_scotus = etr_ieepa,
+    etr_post_scotus_122 = etr_s122,
+    etr_post_scotus_no_122 = etr_jul,
+    diff_122_vs_ieepa = gap
+  ) %>%
+  arrange(desc(etr_pre_scotus))
+
+food_product_data <- product_chart$wide %>%
+  transmute(
+    category = str_remove_all(as.character(label), '\\*'),
+    etr_pre_scotus = etr_ieepa,
+    etr_post_scotus_122 = etr_s122,
+    etr_post_scotus_no_122 = etr_jul,
+    diff_122_vs_ieepa = gap
+  ) %>%
+  arrange(desc(etr_pre_scotus))
+
+write_csv(food_country_data, file.path(output_dir, 'food_etr_by_country.csv'))
+message(sprintf('Saved %s/food_etr_by_country.csv', output_dir))
+
+write_csv(food_product_data, file.path(output_dir, 'food_etr_by_product.csv'))
+message(sprintf('Saved %s/food_etr_by_product.csv', output_dir))
