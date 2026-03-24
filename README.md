@@ -29,14 +29,17 @@ Tariff-ETRs/
 │   │   └── s232.yaml             # Pre-2025 Section 232 tariffs (optional)
 │   └── {scenario}/               # Counterfactual configs only
 │       ├── 2026-01-01/           # Counterfactual date (time-varying)
-│       │   ├── s232.yaml
+│       │   ├── s232.yaml         # Option A: YAML configs (hand-written)
 │       │   ├── ieepa_reciprocal.yaml
 │       │   ├── ieepa_fentanyl.yaml
 │       │   ├── s122.yaml
 │       │   ├── s301.yaml
 │       │   └── other_params.yaml
-│       └── 2026-02-24/
-│           └── ...
+│       ├── 2026-02-24/
+│       │   └── ...
+│       └── 2026-04-01/           # Option B: Snapshot from tracker
+│           ├── rates_snapshot.csv # Flat HTS10 × country rates (takes precedence)
+│           └── other_params.yaml  # Optional metadata
 ├── resources/
 │   ├── hs10_gtap_crosswalk.csv       # HTS10 to GTAP sector mapping
 │   ├── country_partner_mapping.csv   # Census country code → partner group
@@ -142,6 +145,79 @@ HTS10 codes map to GTAP sectors via a crosswalk derived from [Angel Aguiar's 6-d
 3. Add counterfactual config files (date subfolders for time-varying, or files at root for static)
 
 4. Add to `scenarios` in `main.R` and run
+
+### Snapshot Input from tariff-rate-tracker
+
+Instead of writing YAML config files by hand, you can generate scenarios directly from a [tariff-rate-tracker](https://github.com/your-org/tariff-rate-tracker) snapshot. This is useful when you want to model the actual tariff schedule at a specific date and then apply counterfactual adjustments.
+
+**How it works:**
+
+1. tariff-rate-tracker builds an HTS10 × country rate timeseries from USITC HTS data
+2. `export_for_etrs.R` (in tariff-rate-tracker) snapshots the rates at a given date and writes a flat CSV
+3. Tariff-ETRs detects the flat file and loads it directly, bypassing YAML config parsing
+4. All downstream processing (aggregation, deltas, output) works identically
+
+**Creating a snapshot scenario:**
+
+```r
+# In tariff-rate-tracker:
+source('src/helpers.R')
+source('src/export_for_etrs.R')
+
+ts <- readRDS('data/timeseries/rate_timeseries.rds')
+
+# Step 1: Export current-law rates at a specific date
+create_etrs_scenario(ts, '2026-04-01',
+  '../Tariff-ETRs/config/apr1_baseline')
+
+# Step 2: Export a counterfactual (e.g., drop IEEPA reciprocal tariffs)
+create_etrs_scenario(ts, '2026-04-01',
+  '../Tariff-ETRs/config/apr1_no_ieepa',
+  adjustments = list(rate_ieepa_recip = 0))
+```
+
+This produces:
+```
+config/apr1_no_ieepa/
+  tariff_etrs/
+    2026-04-01/
+      rates_snapshot.csv    # Flat HTS10 × country rates (all authorities)
+      other_params.yaml     # MFN rates pointer
+```
+
+**Available adjustments** (via `adjust_snapshot()`):
+
+| Adjustment | Example | Effect |
+|-----------|---------|--------|
+| Zero out an authority | `list(rate_ieepa_recip = 0)` | Remove IEEPA reciprocal tariffs |
+| Scale rates | `list(rate_s122 = \(x) x + 0.05)` | Increase Section 122 by 5pp |
+| Conditional change | `list(rate_232 = \(x) if_else(x > 0, 0.25, 0))` | Set 232 to flat 25% where active |
+| Product×country override | `list(rate_232 = tibble(hts10, country, rate))` | Targeted rate changes |
+
+All adjustments re-apply stacking rules automatically to ensure consistency.
+
+**Snapshot CSV format:**
+
+The `rates_snapshot.csv` contains one row per HTS10 × country pair with columns:
+
+| Column | Description |
+|--------|-------------|
+| `hts10` | 10-digit HTS code |
+| `country` | Census country code |
+| `base_rate` | MFN rate (with exemption adjustments already applied) |
+| `rate_232` | Section 232 rate (after metal content scaling, USMCA exemptions) |
+| `rate_301` | Section 301 rate |
+| `rate_ieepa_recip` | IEEPA reciprocal rate |
+| `rate_ieepa_fent` | IEEPA fentanyl rate |
+| `rate_s122` | Section 122 rate |
+| `rate_section_201` | Section 201 safeguard rate |
+| `rate_other` | Other tariff rates |
+| `metal_share` | Metal content share (for 232 derivatives) |
+| `usmca_eligible` | USMCA eligibility flag |
+| `total_additional` | Sum of all policy tariffs (after stacking rules) |
+| `total_rate` | `base_rate + total_additional` |
+
+When `rates_snapshot.csv` is present in a config directory, it takes precedence over any YAML config files. The `other_params.yaml` is still read if present (for metadata) but tariff rates come entirely from the snapshot.
 
 ### Scenario Structure
 
@@ -415,7 +491,7 @@ Overall tariff levels by partner using both GTAP weights and 2024 Census import 
 
 ## How It Works
 
-1. **Load Config**: Parse YAML files into HTS10×country rate tables (232, IEEPA reciprocal, IEEPA fentanyl, Section 122, Section 301)
+1. **Load Config**: Parse YAML files into HTS10×country rate tables (232, IEEPA reciprocal, IEEPA fentanyl, Section 122, Section 301) — or load a pre-computed `rates_snapshot.csv` from tariff-rate-tracker
 2. **Load Imports**: Read Census IMP_DETL.TXT files, aggregate by HTS10×country
 3. **Process Baseline**: Compute tariff levels for baseline config and write levels to `output/baseline/`
 4. **Process Counterfactual**: Compute tariff levels for counterfactual config(s)
