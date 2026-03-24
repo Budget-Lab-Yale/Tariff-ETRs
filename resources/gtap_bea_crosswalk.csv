@@ -9,6 +9,7 @@ PFB,311FT,Food and beverage and tobacco products
 OCR,111CA,Farms
 CTL,111CA,Farms
 OAP,111CA,Farms
+RMK,311FT,Food and beverage and tobacco products
 MIL,311FT,Food and beverage and tobacco products
 WOL,313TT,Textile mills and textile product mills
 FRS,113FF,"Forestry, fishing, and related activities"
@@ -44,3 +45,22 @@ MVH,3361MV,"Motor vehicles, bodies and trailers, and parts"
 OTN,3364OT,Other transportation equipment
 OMF,339,Miscellaneous manufacturing
 ELY,22,Utilities
+GDT,22,Utilities
+WTR,22,Utilities
+CNS,23,Construction
+TRD,42,Wholesale trade
+AFS,722,Food services and drinking places
+OTP,484,Truck transportation
+WTP,483,Water transportation
+ATP,481,Air transportation
+WHS,493,Warehousing and storage
+CMN,513,"Broadcasting and telecommunications"
+OFI,521CI,"Federal Reserve banks, credit intermediation, and related activities"
+INS,524,Insurance carriers and related activities
+RSA,ORE,Other real estate
+OBS,5412OP,"Miscellaneous professional, scientific, and technical services"
+ROS,711AS,"Performing arts, spectator sports, museums, and related activities"
+OSG,GSLG,State and local general government
+EDU,61,Educational services
+HHT,621,Ambulatory health care services
+DWE,HS,Housing

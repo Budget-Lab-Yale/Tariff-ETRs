@@ -41,6 +41,8 @@
 #   - write_overall_levels_combined():    Combined levels text for time-varying
 #   - write_overall_deltas_combined():    Combined overall deltas for time-varying scenarios
 #   - get_output_path():                  Helper to build output file paths
+#   - write_bea_commodity_deltas():       Write BEA-level ETR deltas for I-O price model
+#   - write_bea_commodity_deltas_stacked(): Stacked BEA deltas for time-varying scenarios
 #
 # =============================================================================
 
@@ -821,6 +823,12 @@ do_scenario_static <- function(scenario, scenario_path, output_dir,
     output_base       = output_dir
   )
 
+  write_bea_commodity_deltas(
+    hs10_country_etrs = hs10_country_etrs,
+    scenario          = scenario,
+    output_base       = output_dir
+  )
+
   partner_etrs
 }
 
@@ -941,6 +949,12 @@ do_scenario_time_varying <- function(scenario, scenario_path, output_dir,
     all_levels_data = all_levels_data,
     scenario        = scenario,
     output_base     = output_dir
+  )
+
+  write_bea_commodity_deltas_stacked(
+    all_hs10_country_etrs = all_hs10_country_etrs,
+    scenario              = scenario,
+    output_base           = output_dir
   )
 
   all_partner_etrs
@@ -2394,6 +2408,116 @@ write_overall_levels_combined <- function(all_levels_data,
   writeLines(all_lines, output_path)
   message(sprintf('Wrote combined overall tariff levels to %s', output_path))
   invisible(all_levels_data)
+}
+
+
+# =============================================================================
+# BEA Commodity-Level ETR Deltas (for Boston Fed I-O Price Model)
+# =============================================================================
+
+#' Write BEA commodity-level ETR deltas
+#'
+#' Aggregates HS10-level tariff deltas to BEA Summary commodity level using
+#' the HS10→NAICS→BEA crosswalk chain. Output is consumed by the Tariff-Model
+#' Boston Fed I-O price model (io_price_model_v2.R).
+#'
+#' @param hs10_country_etrs Tibble with hs10, cty_code, imports, etr columns
+#' @param output_file Output filename (default: 'bea_deltas_by_commodity.csv')
+#' @param scenario Scenario name for output directory
+#' @param output_base Base output directory (default: 'output')
+#'
+#' @return Writes CSV and returns invisibly
+write_bea_commodity_deltas <- function(hs10_country_etrs,
+                                        output_file = 'bea_deltas_by_commodity.csv',
+                                        scenario = NULL,
+                                        output_base = 'output') {
+
+  # Load HS10→BEA crosswalk (built by scripts/build_hs10_bea_crosswalk.R)
+  crosswalk_path <- 'resources/hs10_bea_crosswalk.csv'
+  if (!file.exists(crosswalk_path)) {
+    message('  HS10→BEA crosswalk not found, skipping BEA delta output')
+    return(invisible(NULL))
+  }
+  hs10_bea <- read_csv(crosswalk_path, show_col_types = FALSE,
+                        col_types = cols(hs10 = col_character(), bea_code = col_character()))
+
+  # Join HS10 ETRs with BEA codes
+  hs10_with_bea <- hs10_country_etrs %>%
+    left_join(hs10_bea, by = 'hs10')
+
+  # Coverage diagnostic
+  total_imports <- sum(hs10_with_bea$imports)
+  matched_imports <- sum(hs10_with_bea$imports[!is.na(hs10_with_bea$bea_code)])
+  message(sprintf('  BEA crosswalk coverage: %.1f%% of import value',
+                  100 * matched_imports / total_imports))
+
+  # Aggregate to BEA commodity level: import-weighted average ETR delta
+  bea_deltas <- hs10_with_bea %>%
+    filter(!is.na(bea_code)) %>%
+    group_by(bea_code) %>%
+    summarise(
+      etr_delta = sum(etr * imports) / sum(imports),
+      total_imports = sum(imports),
+      .groups = 'drop'
+    ) %>%
+    arrange(bea_code)
+
+  output_path <- get_output_path(output_file, scenario, output_base)
+  write_csv(bea_deltas, output_path)
+  message(sprintf('  Wrote BEA deltas: %d commodities to %s', nrow(bea_deltas), output_path))
+
+  invisible(bea_deltas)
+}
+
+
+#' Write stacked BEA commodity deltas for time-varying scenarios
+#'
+#' @param all_hs10_country_etrs Named list (date -> hs10_country_etrs tibble)
+#' @param output_file Output filename
+#' @param scenario Scenario name
+#' @param output_base Base output directory
+#'
+#' @return Writes stacked CSV with date column and returns invisibly
+write_bea_commodity_deltas_stacked <- function(all_hs10_country_etrs,
+                                                output_file = 'bea_deltas_by_commodity.csv',
+                                                scenario = NULL,
+                                                output_base = 'output') {
+
+  # Load crosswalk once
+  crosswalk_path <- 'resources/hs10_bea_crosswalk.csv'
+  if (!file.exists(crosswalk_path)) {
+    message('  HS10→BEA crosswalk not found, skipping BEA delta output')
+    return(invisible(NULL))
+  }
+  hs10_bea <- read_csv(crosswalk_path, show_col_types = FALSE,
+                        col_types = cols(hs10 = col_character(), bea_code = col_character()))
+
+  # Process each date
+  stacked <- map_dfr(names(all_hs10_country_etrs), function(date_str) {
+    hs10_data <- all_hs10_country_etrs[[date_str]]
+
+    hs10_data %>%
+      left_join(hs10_bea, by = 'hs10') %>%
+      filter(!is.na(bea_code)) %>%
+      group_by(bea_code) %>%
+      summarise(
+        etr_delta = sum(etr * imports) / sum(imports),
+        total_imports = sum(imports),
+        .groups = 'drop'
+      ) %>%
+      mutate(date = date_str)
+  })
+
+  # Reorder columns: date first
+  stacked <- stacked %>%
+    select(date, bea_code, etr_delta, total_imports) %>%
+    arrange(date, bea_code)
+
+  output_path <- get_output_path(output_file, scenario, output_base)
+  write_csv(stacked, output_path)
+  message(sprintf('  Wrote stacked BEA deltas: %d rows to %s', nrow(stacked), output_path))
+
+  invisible(stacked)
 }
 
 
