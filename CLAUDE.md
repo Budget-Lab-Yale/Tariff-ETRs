@@ -158,6 +158,10 @@ Each config directory (baseline or counterfactual date) requires `other_params.y
      eu: 0.15                # EU-27 (expands to all 27 country codes!)
      # ... other countries/mnemonics
 
+   exempt_products:          # Optional: HTS codes EXCLUDED from coverage
+     - '8471300000'          # Supports variable-length (4/6/8/10 digit) prefix matching
+     - '8523'                # Blanket authority minus exemption list
+
    product_rates:            # Optional: HTS-specific overrides
      '8703': 0.15            # Simple rate (applies to all countries)
    ```
@@ -236,6 +240,7 @@ The codebase uses a clean separation between config parsing and calculations:
 - `load_ieepa_rates_yaml()`: Generic loader - returns complete HS10×country tibble with configurable column name
   - Used for reciprocal, fentanyl, Section 122, and Section 301 tariffs
   - Handles hierarchical rate structure (headline → product → product×country)
+  - Supports `exempt_products` key: list of HTS codes (variable-length) excluded from coverage via prefix matching. Used for blanket authorities like IEEPA reciprocal that apply to all products except an exemption list.
 - Both functions handle the full universe of HS10 codes × 240 countries
 - No nested lists - just clean tibbles ready for joining
 

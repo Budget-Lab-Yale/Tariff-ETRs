@@ -306,6 +306,17 @@ load_ieepa_rates_yaml <- function(yaml_file,
     mutate(hs10 = as.character(hs10))
   hs10_codes <- unique(crosswalk$hs10)
 
+  # Exclude exempt products if specified (blanket authority minus exemption list).
+  # Used for authorities like IEEPA reciprocal that apply to ALL products except
+  # a specific exemption list (e.g., Annex A). Supports variable-length HTS codes.
+  if (!is.null(config$exempt_products)) {
+    exempt_pattern <- paste0('^(', paste(config$exempt_products, collapse = '|'), ')')
+    exempt_hs10 <- hs10_codes[str_detect(hs10_codes, exempt_pattern)]
+    hs10_codes <- setdiff(hs10_codes, exempt_hs10)
+    message(sprintf('  Excluded %d exempt products (%d HS10 codes)',
+                    length(config$exempt_products), length(exempt_hs10)))
+  }
+
   # Read country universe
   all_country_codes <- load_census_codes(census_codes_file)$cty_code
 

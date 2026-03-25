@@ -9,8 +9,6 @@
 #   - detect_scenario_structure():        Detect counterfactual structure
 #   - load_scenario_config():             Load all config YAMLs from a directory
 #   - calc_etrs_for_config():             Calculate tariff levels for a single config set
-#   - dispatch_etrs():                    Dispatch to snapshot or YAML-based ETR calculation
-#   - calc_etrs_from_snapshot():          Calculate ETRs from flat-file tracker snapshot
 #   - calc_delta():                       Compute delta between baseline and counterfactual
 #   - do_scenario():                      Run complete analysis (dispatcher)
 #   - do_scenario_static():               Run a static counterfactual scenario
@@ -252,27 +250,6 @@ load_scenario_config <- function(config_path) {
 
   message(sprintf('Loading scenario parameters from %s...', config_path))
 
-  # Check for flat-file snapshot from tariff-rate-tracker
-  snapshot_path <- file.path(config_path, 'rates_snapshot.csv')
-  if (file.exists(snapshot_path)) {
-    message('  Found rates_snapshot.csv — loading flat-file snapshot')
-    snapshot <- read_csv(snapshot_path, show_col_types = FALSE,
-                         col_types = cols(hts10 = col_character(), country = col_character()))
-
-    # Load other_params if present (needed for MFN rates path reference)
-    other_params_path <- file.path(config_path, 'other_params.yaml')
-    other_params <- if (file.exists(other_params_path)) {
-      read_yaml(other_params_path)
-    } else {
-      list()
-    }
-
-    return(list(
-      snapshot     = snapshot,
-      other_params = other_params
-    ))
-  }
-
   other_params <- read_yaml(file.path(config_path, 'other_params.yaml'))
 
   # Load MFN rates from path specified in config
@@ -382,100 +359,6 @@ calc_etrs_for_config <- function(config, hs10_by_country, usmca_shares, country_
     mfn_exemption_shares   = config$mfn_exemption_shares
   )
 
-  message('Aggregating HS10×country results to partner×GTAP level...')
-  partner_etrs <- aggregate_countries_to_partners(
-    hs10_country_etrs = hs10_country_etrs,
-    country_mapping   = country_mapping
-  )
-
-  list(
-    hs10_country_etrs = hs10_country_etrs,
-    partner_etrs      = partner_etrs
-  )
-}
-
-
-#' Dispatch ETR calculation based on config type
-#'
-#' If config contains a $snapshot (flat-file from tariff-rate-tracker), uses
-#' calc_etrs_from_snapshot(). Otherwise uses calc_etrs_for_config() with YAML-parsed data.
-#'
-#' @param config Named list from load_scenario_config()
-#' @param hs10_by_country Import data
-#' @param usmca_shares USMCA share data (only used for YAML path)
-#' @param country_mapping Country-to-partner mapping
-#'
-#' @return Named list with hs10_country_etrs and partner_etrs
-dispatch_etrs <- function(config, hs10_by_country, usmca_shares, country_mapping) {
-  if (!is.null(config$snapshot)) {
-    calc_etrs_from_snapshot(config, hs10_by_country, country_mapping)
-  } else {
-    calc_etrs_for_config(config, hs10_by_country, usmca_shares, country_mapping)
-  }
-}
-
-
-#' Calculate ETRs from a flat-file snapshot (tariff-rate-tracker export)
-#'
-#' Takes a pre-computed snapshot CSV from tariff-rate-tracker (with all stacking
-#' already applied) and joins it with import data to produce the same output as
-#' calc_etrs_for_config(). This bypasses YAML config parsing entirely.
-#'
-#' @param config Named list from load_scenario_config() containing $snapshot tibble
-#' @param hs10_by_country Import data (hs10, cty_code, gtap_code, imports)
-#' @param country_mapping Country-to-partner mapping
-#'
-#' @return Named list with hs10_country_etrs and partner_etrs (same structure as calc_etrs_for_config)
-calc_etrs_from_snapshot <- function(config, hs10_by_country, country_mapping) {
-
-  snapshot <- config$snapshot
-  message(sprintf('Loading snapshot with %s rate rows...', format(nrow(snapshot), big.mark = ',')))
-
-  # Rename tracker columns to match ETRs convention
-  # tracker: hts10, country, base_rate, total_rate, rate_232, rate_ieepa_recip, etc.
-  # ETRs:    hs10,  cty_code, mfn_rate, final_rate
-  snapshot <- snapshot %>%
-    rename(hs10 = hts10, cty_code = country)
-
-  # Join snapshot rates with import data (which has gtap_code and import weights)
-  hs10_country_etrs <- hs10_by_country %>%
-    select(hs10, cty_code, gtap_code, imports) %>%
-    left_join(
-      snapshot %>% select(hs10, cty_code, total_rate, rate_232,
-                          rate_ieepa_recip, rate_ieepa_fent, rate_s122),
-      by = c('hs10', 'cty_code')
-    ) %>%
-    # Products/countries in imports but not in snapshot: NA = zero tariff.
-    # This is expected — the import universe may include products the tracker
-    # doesn't cover (e.g., different HTS10 editions). These genuinely have no tariff.
-    mutate(
-      total_rate       = coalesce(total_rate, 0),
-      rate_232         = coalesce(rate_232, 0),
-      rate_ieepa_recip = coalesce(rate_ieepa_recip, 0),
-      rate_ieepa_fent  = coalesce(rate_ieepa_fent, 0),
-      rate_s122        = coalesce(rate_s122, 0)
-    ) %>%
-    mutate(
-      etr   = total_rate,
-      level = total_rate,
-
-      # Coverage tracking (same logic as calc_weighted_etr)
-      base_s232    = if_else(rate_232 > 0, imports, 0),
-      base_ieepa   = if_else(
-        rate_232 == 0 & (rate_ieepa_recip > 0 | rate_ieepa_fent > 0 | rate_s122 > 0),
-        imports, 0
-      ),
-      base_neither = if_else(
-        rate_232 == 0 & rate_ieepa_recip == 0 & rate_ieepa_fent == 0 & rate_s122 == 0,
-        imports, 0
-      )
-    ) %>%
-    select(hs10, cty_code, gtap_code, imports, etr, level, base_s232, base_ieepa, base_neither)
-
-  message(sprintf('  Matched %s import rows with snapshot rates',
-                  format(nrow(hs10_country_etrs), big.mark = ',')))
-
-  # Aggregate to partner × GTAP level
   message('Aggregating HS10×country results to partner×GTAP level...')
   partner_etrs <- aggregate_countries_to_partners(
     hs10_country_etrs = hs10_country_etrs,
@@ -628,7 +511,7 @@ do_scenario <- function(scenario, config_dir = 'config', output_dir = 'output',
   if (is.null(baseline_structure$baseline_dates)) {
     # Static baseline: config files directly in baseline/
     baseline_config <- load_scenario_config(baseline_dir)
-    baseline_etrs <- dispatch_etrs(baseline_config, hs10_by_country, usmca_shares, country_mapping)
+    baseline_etrs <- calc_etrs_for_config(baseline_config, hs10_by_country, usmca_shares, country_mapping)
     baseline_results[['static']] <- baseline_etrs$hs10_country_etrs
     baseline_partner_results[['static']] <- baseline_etrs$partner_etrs
   } else {
@@ -637,7 +520,7 @@ do_scenario <- function(scenario, config_dir = 'config', output_dir = 'output',
       message(sprintf('\n--- Processing baseline date: %s ---', date_str))
       baseline_path <- file.path(baseline_dir, date_str)
       baseline_config <- load_scenario_config(baseline_path)
-      baseline_etrs <- dispatch_etrs(baseline_config, hs10_by_country, usmca_shares, country_mapping)
+      baseline_etrs <- calc_etrs_for_config(baseline_config, hs10_by_country, usmca_shares, country_mapping)
       baseline_results[[date_str]] <- baseline_etrs$hs10_country_etrs
       baseline_partner_results[[date_str]] <- baseline_etrs$partner_etrs
     }
@@ -818,7 +701,7 @@ run_counterfactual <- function(config_path, baseline_key,
                                output_dir = 'output') {
 
   config <- load_scenario_config(config_path)
-  etrs <- dispatch_etrs(config, hs10_by_country, usmca_shares, country_mapping)
+  etrs <- calc_etrs_for_config(config, hs10_by_country, usmca_shares, country_mapping)
 
   baseline_hs10 <- match_baseline(baseline_key, baseline_results)
   hs10_country_etrs <- calc_delta(baseline_hs10, etrs$hs10_country_etrs)
