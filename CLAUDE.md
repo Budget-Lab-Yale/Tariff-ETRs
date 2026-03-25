@@ -66,16 +66,17 @@ The project uses Census Bureau country codes (not ISO codes). Country-to-partner
 
 **Output (time-varying scenarios):**
 - Per-date shock commands (output/{scenario}/{date}/shocks.txt)
-- Stacked deltas CSVs with `date` as first column:
+- Stacked deltas CSVs with `date`, `valid_from`, `valid_until` columns:
   - output/{scenario}/gtap_deltas_by_sector_country.csv
   - output/{scenario}/deltas_by_census_country.csv
   - output/{scenario}/deltas_by_census_country_hts2.csv
 - Combined overall deltas with per-date sections (output/{scenario}/overall_deltas.txt)
-- Stacked levels CSVs with `date` as first column:
+- Stacked levels CSVs with `date`, `valid_from`, `valid_until` columns:
   - output/{scenario}/gtap_levels_by_sector_country.csv
   - output/{scenario}/levels_by_census_country.csv
   - output/{scenario}/levels_by_census_country_hts2.csv
 - Combined overall tariff levels with per-date sections (output/{scenario}/overall_levels.txt)
+- Validity intervals computed from sorted counter dates; last date uses `series_horizon` from other_params.yaml
 
 **MFN Rates:**
 - MFN rates at HS8 level loaded from path specified in `other_params.yaml` (`mfn_rates` key)
@@ -229,7 +230,13 @@ You can mix mnemonics and Census codes in the same config file.
 6. **other_params.yaml** (required) - MFN rates pointer, USMCA parameters, auto rebate rates, etc.
    Must include: `mfn_rates: 'resources/mfn_rates_2025.csv'`
    Optional: `mfn_exemption_shares: 'resources/mfn_exemption_shares.csv'` (FTA/GSP exemption shares at HS2×country level)
+   Optional: `usmca_product_shares: 'resources/usmca_product_shares_2025.csv'` (product-level USMCA shares at HS10×country level; overrides GTAP-sector shares)
    Optional: `s301_usmca_exception: 0` (1 = apply USMCA exemption to s301, default 0)
+   Optional: `series_horizon: '2026-12-31'` (end date for validity intervals in time-varying output)
+
+7. **s201.yaml** (optional) - Section 201 safeguard tariffs. Same format as s122/s301.
+
+8. **other.yaml** (optional) - Miscellaneous Chapter 99 tariffs. Same format as s122/s301.
 
 ## Key Implementation Notes
 
@@ -281,7 +288,7 @@ The codebase uses a clean separation between config parsing and calculations:
 - `do_scenario_static()`: Processes a static counterfactual with baseline delta computation
 - `do_scenario_time_varying()`: Loops over counterfactual dates, matches each to baseline, computes deltas
 - `match_baseline()`: Matches a counterfactual date to the appropriate baseline result (static or carry-forward)
-- `calc_weighted_etr()`: Joins tabular config data, applies USMCA exemptions/auto rebates, metal content adjustment, MFN exemption shares, and stacking rules. Handles NULL tariff inputs (missing config = zero rates). MFN (adjusted by exemption shares if provided) is folded into the stacking formula as an unconditionally additive component.
+- `calc_weighted_etr()`: Joins tabular config data, applies USMCA exemptions/auto rebates, metal content adjustment, MFN exemption shares, generalized target_total floor logic, and stacking rules. Handles NULL tariff inputs (missing config = zero rates). Supports product-level USMCA shares via `usmca_product_shares` parameter. MFN (adjusted by exemption shares if provided) is folded into the stacking formula as an unconditionally additive component.
 - `aggregate_countries_to_partners()`: Aggregates country-level results to 8 partner groups using import-weighted averaging
 - `prepare_*_deltas()` / `prepare_*_levels()` functions: Pure computation (no I/O) for sector_country, country_level, country_hts2, and overall data
 - `write_*_deltas()` / `write_*_levels()` functions: Delegate to prepare_* then write files
