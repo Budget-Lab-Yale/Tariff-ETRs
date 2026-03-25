@@ -1045,59 +1045,27 @@ calc_weighted_etr <- function(rates_s232,
       left_join(rates_s232, by = c('hs10', 'cty_code'))
   }
 
-  # Join IEEPA reciprocal rates if provided, otherwise add zero column
-  if (!is.null(rates_ieepa_reciprocal)) {
-    rate_matrix <- rate_matrix %>%
-      left_join(rates_ieepa_reciprocal, by = c('hs10', 'cty_code'))
-  } else {
-    rate_matrix <- rate_matrix %>%
-      mutate(ieepa_reciprocal_rate = 0)
+  # Helper: join an authority rate tibble, renaming target_total_rate to avoid
+  # collisions when multiple authorities have target_total_rules.
+  join_authority_rates <- function(matrix, rates, rate_col_name) {
+    if (!is.null(rates)) {
+      if ('target_total_rate' %in% names(rates)) {
+        rates <- rates %>%
+          rename(!!paste0('target_total_rate_', rate_col_name) := target_total_rate)
+      }
+      matrix %>% left_join(rates, by = c('hs10', 'cty_code'))
+    } else {
+      matrix %>% mutate(!!rate_col_name := 0)
+    }
   }
 
-  # Join IEEPA fentanyl rates if provided, otherwise add zero column
-  if (!is.null(rates_ieepa_fentanyl)) {
-    rate_matrix <- rate_matrix %>%
-      left_join(rates_ieepa_fentanyl, by = c('hs10', 'cty_code'))
-  } else {
-    rate_matrix <- rate_matrix %>%
-      mutate(ieepa_fentanyl_rate = 0)
-  }
-
-  # Join Section 122 rates if provided
-  if (!is.null(rates_s122)) {
-    rate_matrix <- rate_matrix %>%
-      left_join(rates_s122, by = c('hs10', 'cty_code'))
-  } else {
-    rate_matrix <- rate_matrix %>%
-      mutate(s122_rate = 0)
-  }
-
-  # Join Section 301 rates if provided
-  if (!is.null(rates_s301)) {
-    rate_matrix <- rate_matrix %>%
-      left_join(rates_s301, by = c('hs10', 'cty_code'))
-  } else {
-    rate_matrix <- rate_matrix %>%
-      mutate(s301_rate = 0)
-  }
-
-  # Join Section 201 rates if provided
-  if (!is.null(rates_s201)) {
-    rate_matrix <- rate_matrix %>%
-      left_join(rates_s201, by = c('hs10', 'cty_code'))
-  } else {
-    rate_matrix <- rate_matrix %>%
-      mutate(s201_rate = 0)
-  }
-
-  # Join other tariff rates if provided
-  if (!is.null(rates_other)) {
-    rate_matrix <- rate_matrix %>%
-      left_join(rates_other, by = c('hs10', 'cty_code'))
-  } else {
-    rate_matrix <- rate_matrix %>%
-      mutate(other_rate = 0)
-  }
+  rate_matrix <- rate_matrix %>%
+    join_authority_rates(rates_ieepa_reciprocal, 'ieepa_reciprocal_rate') %>%
+    join_authority_rates(rates_ieepa_fentanyl, 'ieepa_fentanyl_rate') %>%
+    join_authority_rates(rates_s122, 's122_rate') %>%
+    join_authority_rates(rates_s301, 's301_rate') %>%
+    join_authority_rates(rates_s201, 's201_rate') %>%
+    join_authority_rates(rates_other, 'other_rate')
 
   # Get all 232 rate column names
   rate_s232_cols <- names(rate_matrix)[str_detect(names(rate_matrix), '^s232_.*_rate$')]
@@ -1263,18 +1231,24 @@ calc_weighted_etr <- function(rates_s232,
       mutate(mfn_rate = 0)
   }
 
-  # Optional reciprocal target-total rule:
-  # effective reciprocal add-on = max(target_total_rate - mfn_rate, 0)
-  # applied only where reciprocal coverage is active (>0).
-  if ('target_total_rate' %in% names(rate_matrix)) {
-    rate_matrix <- rate_matrix %>%
-      mutate(
-        ieepa_reciprocal_rate = if_else(
-          !is.na(target_total_rate) & ieepa_reciprocal_rate > 0,
-          pmax(target_total_rate - mfn_rate, 0),
-          ieepa_reciprocal_rate
+  # Generalized target-total (floor) rules:
+  # For any authority with a target_total_rate_{authority} column, the effective
+  # add-on = max(target_total - mfn_rate, 0), applied where the authority rate > 0.
+  # This implements floor-rate semantics: "combined duty must be at least X%."
+  tt_cols <- names(rate_matrix)[str_detect(names(rate_matrix), '^target_total_rate_')]
+  for (tt_col in tt_cols) {
+    # Extract the rate column name (e.g., 'target_total_rate_ieepa_reciprocal_rate' -> 'ieepa_reciprocal_rate')
+    rate_col <- str_replace(tt_col, '^target_total_rate_', '')
+    if (rate_col %in% names(rate_matrix)) {
+      rate_matrix <- rate_matrix %>%
+        mutate(
+          !!rate_col := if_else(
+            !is.na(!!sym(tt_col)) & !!sym(rate_col) > 0,
+            pmax(!!sym(tt_col) - mfn_rate, 0),
+            !!sym(rate_col)
+          )
         )
-      )
+    }
   }
 
   # Optional 232 target-total floor logic (auto deal rates):
