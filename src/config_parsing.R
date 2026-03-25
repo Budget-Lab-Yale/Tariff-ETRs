@@ -574,173 +574,58 @@ load_ieepa_rates_yaml <- function(yaml_file,
 load_metal_content <- function(metal_content_config = NULL,
                                import_data) {
 
-  method <- metal_content_config$method %||% 'flat'
-  flat_share <- metal_content_config$flat_share %||% 1.0
   primary_chapters <- metal_content_config$primary_chapters %||% c('72', '73', '76')
+  bea_table <- metal_content_config$bea_table %||% 'domestic'
 
-  if (method == 'flat') {
+  message(sprintf('Metal content: BEA Detail I-O method (%s requirements)', bea_table))
 
-    message(sprintf('Metal content: flat method (share = %.2f)', flat_share))
-    shares <- import_data %>%
-      distinct(hs10) %>%
-      mutate(metal_share = flat_share)
-
-  } else if (method == 'bea') {
-
-    bea_table <- metal_content_config$bea_table %||% 'domestic'
-    bea_granularity <- metal_content_config$bea_granularity %||% 'gtap'
-    message(sprintf('Metal content: BEA I-O method (%s requirements, %s granularity)',
-                    bea_table, bea_granularity))
-
-    if (bea_granularity == 'naics') {
-
-      # HS10-level shares via HS10 -> NAICS -> BEA summary code chain
-      naics_shares_file <- sprintf('resources/metal_content_shares_naics_%s.csv', bea_table)
-      if (!file.exists(naics_shares_file)) {
-        stop(sprintf('NAICS shares file not found: %s\n  Run: Rscript scripts/build_metal_content_shares.R', naics_shares_file))
-      }
-
-      naics_shares <- read_csv(naics_shares_file, show_col_types = FALSE,
-                               col_types = cols(hs10 = col_character())) %>%
-        select(hs10, metal_share)
-
-      # Also load GTAP-level shares as fallback for HS10 codes not in NAICS crosswalk
-      gtap_shares_file <- sprintf('resources/metal_content_shares_%s.csv', bea_table)
-      if (!file.exists(gtap_shares_file)) {
-        stop(sprintf('GTAP shares file not found: %s\n  Run: Rscript scripts/build_metal_content_shares.R', gtap_shares_file))
-      }
-
-      gtap_shares <- read_csv(gtap_shares_file, show_col_types = FALSE) %>%
-        mutate(gtap_code = tolower(gtap_code)) %>%
-        select(gtap_code, metal_share_gtap = metal_share)
-
-      shares <- import_data %>%
-        distinct(hs10, gtap_code) %>%
-        mutate(gtap_code = tolower(gtap_code)) %>%
-        left_join(naics_shares, by = 'hs10') %>%
-        left_join(gtap_shares, by = 'gtap_code') %>%
-        # Use NAICS share if available, fall back to GTAP share, then 1.0
-        mutate(metal_share = case_when(
-          !is.na(metal_share)      ~ metal_share,
-          !is.na(metal_share_gtap) ~ metal_share_gtap,
-          TRUE                     ~ 1.0
-        )) %>%
-        select(hs10, metal_share)
-
-      n_naics <- sum(!is.na(import_data %>% distinct(hs10) %>%
-                             left_join(naics_shares, by = 'hs10') %>%
-                             pull(metal_share)))
-      n_total <- import_data %>% distinct(hs10) %>% nrow()
-      message(sprintf('  NAICS coverage: %d of %d HS10 codes (%.1f%%), remainder use GTAP fallback',
-                      n_naics, n_total, 100 * n_naics / n_total))
-
-    } else if (bea_granularity == 'detail') {
-
-      # HS10-level per-metal-type shares via HS10 -> NAICS -> BEA detail code chain
-      detail_shares_file <- sprintf('resources/metal_content_shares_detail_hs10_%s.csv', bea_table)
-      if (!file.exists(detail_shares_file)) {
-        stop(sprintf('Detail shares file not found: %s\n  Run: Rscript scripts/build_metal_content_shares.R',
-                      detail_shares_file))
-      }
-
-      detail_shares <- read_csv(detail_shares_file, show_col_types = FALSE,
-                                 col_types = cols(hs10 = col_character())) %>%
-        select(hs10, bea_detail_code, steel_share, aluminum_share, copper_share, other_metal_share, metal_share)
-
-      # Also load GTAP-level aggregate shares as fallback for unmatched HS10 codes
-      gtap_shares_file <- sprintf('resources/metal_content_shares_%s.csv', bea_table)
-      if (!file.exists(gtap_shares_file)) {
-        stop(sprintf('GTAP shares file not found: %s\n  Run: Rscript scripts/build_metal_content_shares.R',
-                      gtap_shares_file))
-      }
-
-      gtap_shares <- read_csv(gtap_shares_file, show_col_types = FALSE) %>%
-        mutate(gtap_code = tolower(gtap_code)) %>%
-        select(gtap_code, metal_share_gtap = metal_share)
-
-      shares <- import_data %>%
-        distinct(hs10, gtap_code) %>%
-        mutate(gtap_code = tolower(gtap_code)) %>%
-        left_join(detail_shares, by = 'hs10') %>%
-        left_join(gtap_shares, by = 'gtap_code') %>%
-        mutate(
-          # Unmatched: per-type shares = 0, total falls back to GTAP then 1.0
-          steel_share       = if_else(is.na(steel_share), 0, steel_share),
-          aluminum_share    = if_else(is.na(aluminum_share), 0, aluminum_share),
-          copper_share      = if_else(is.na(copper_share), 0, copper_share),
-          other_metal_share = if_else(is.na(other_metal_share), 0, other_metal_share),
-          metal_share       = case_when(
-            !is.na(metal_share)      ~ metal_share,
-            !is.na(metal_share_gtap) ~ metal_share_gtap,
-            TRUE                     ~ 1.0
-          )
-        ) %>%
-        select(hs10, steel_share, aluminum_share, copper_share, other_metal_share, metal_share)
-
-      n_detail <- import_data %>% distinct(hs10) %>%
-        left_join(detail_shares %>% select(hs10, bea_detail_code), by = 'hs10') %>%
-        filter(!is.na(bea_detail_code)) %>% nrow()
-      n_total <- import_data %>% distinct(hs10) %>% nrow()
-      message(sprintf('  Detail coverage: %d of %d HS10 codes (%.1f%%), remainder use GTAP fallback',
-                      n_detail, n_total, 100 * n_detail / n_total))
-
-    } else if (bea_granularity == 'gtap') {
-
-      # Original GTAP sector-level shares
-      shares_file <- sprintf('resources/metal_content_shares_%s.csv', bea_table)
-      if (!file.exists(shares_file)) {
-        stop(sprintf('BEA shares file not found: %s\n  Run: Rscript scripts/build_metal_content_shares.R', shares_file))
-      }
-
-      bea_shares <- read_csv(shares_file, show_col_types = FALSE) %>%
-        mutate(gtap_code = tolower(gtap_code)) %>%
-        select(gtap_code, metal_share)
-
-      shares <- import_data %>%
-        distinct(hs10, gtap_code) %>%
-        mutate(gtap_code = tolower(gtap_code)) %>%
-        left_join(bea_shares, by = 'gtap_code') %>%
-        # Products with no GTAP match default to 1.0 (conservative)
-        mutate(metal_share = if_else(is.na(metal_share), 1.0, metal_share)) %>%
-        select(hs10, metal_share)
-
-    } else {
-      stop(sprintf('Unknown bea_granularity: "%s" (expected "gtap", "naics", or "detail")', bea_granularity))
-    }
-
-  } else if (method == 'cbo') {
-
-    message('Metal content: CBO bucket method')
-
-    # Read configurable share values (CBO defaults)
-    high_share   <- metal_content_config$cbo_high_share   %||% 0.75
-    low_share    <- metal_content_config$cbo_low_share     %||% 0.25
-    copper_share <- metal_content_config$cbo_copper_share  %||% 0.90
-
-    # Read CBO HTS lists
-    cbo_high   <- read_csv('resources/cbo/alst_deriv_h.csv', show_col_types = FALSE)
-    cbo_low    <- read_csv('resources/cbo/alst_deriv_l.csv', show_col_types = FALSE)
-    cbo_copper <- read_csv('resources/cbo/copper.csv', show_col_types = FALSE)
-
-    # Build HS10 -> metal_share lookup (priority: copper > high > low)
-    # CBO lists have some overlaps and duplicates, so we bind in priority order
-    # and keep the first match per hs10
-    cbo_shares <- bind_rows(
-      cbo_copper %>% transmute(hs10 = as.character(I_COMMODITY), metal_share = copper_share),
-      cbo_high   %>% transmute(hs10 = as.character(I_COMMODITY), metal_share = high_share),
-      cbo_low    %>% transmute(hs10 = as.character(I_COMMODITY), metal_share = low_share)
-    ) %>%
-      distinct(hs10, .keep_all = TRUE)
-
-    # Join with import data universe
-    shares <- import_data %>%
-      distinct(hs10) %>%
-      left_join(cbo_shares, by = 'hs10') %>%
-      mutate(metal_share = if_else(is.na(metal_share), 1.0, metal_share))
-
-  } else {
-    stop(sprintf('Unknown metal_content method: "%s" (expected "flat", "bea", or "cbo")', method))
+  # HS10-level per-metal-type shares via HS10 -> NAICS -> BEA detail code chain
+  detail_shares_file <- sprintf('resources/metal_content_shares_detail_hs10_%s.csv', bea_table)
+  if (!file.exists(detail_shares_file)) {
+    stop(sprintf('Detail shares file not found: %s\n  Run: Rscript scripts/build_metal_content_shares.R',
+                  detail_shares_file))
   }
+
+  detail_shares <- read_csv(detail_shares_file, show_col_types = FALSE,
+                             col_types = cols(hs10 = col_character())) %>%
+    select(hs10, bea_detail_code, steel_share, aluminum_share, copper_share, other_metal_share, metal_share)
+
+  # Also load GTAP-level aggregate shares as fallback for unmatched HS10 codes
+  gtap_shares_file <- sprintf('resources/metal_content_shares_%s.csv', bea_table)
+  if (!file.exists(gtap_shares_file)) {
+    stop(sprintf('GTAP shares file not found: %s\n  Run: Rscript scripts/build_metal_content_shares.R',
+                  gtap_shares_file))
+  }
+
+  gtap_shares <- read_csv(gtap_shares_file, show_col_types = FALSE) %>%
+    mutate(gtap_code = tolower(gtap_code)) %>%
+    select(gtap_code, metal_share_gtap = metal_share)
+
+  shares <- import_data %>%
+    distinct(hs10, gtap_code) %>%
+    mutate(gtap_code = tolower(gtap_code)) %>%
+    left_join(detail_shares, by = 'hs10') %>%
+    left_join(gtap_shares, by = 'gtap_code') %>%
+    mutate(
+      # Unmatched: per-type shares = 0, total falls back to GTAP then 1.0
+      steel_share       = if_else(is.na(steel_share), 0, steel_share),
+      aluminum_share    = if_else(is.na(aluminum_share), 0, aluminum_share),
+      copper_share      = if_else(is.na(copper_share), 0, copper_share),
+      other_metal_share = if_else(is.na(other_metal_share), 0, other_metal_share),
+      metal_share       = case_when(
+        !is.na(metal_share)      ~ metal_share,
+        !is.na(metal_share_gtap) ~ metal_share_gtap,
+        TRUE                     ~ 1.0
+      )
+    ) %>%
+    select(hs10, steel_share, aluminum_share, copper_share, other_metal_share, metal_share)
+
+  n_detail <- import_data %>% distinct(hs10) %>%
+    left_join(detail_shares %>% select(hs10, bea_detail_code), by = 'hs10') %>%
+    filter(!is.na(bea_detail_code)) %>% nrow()
+  n_total <- import_data %>% distinct(hs10) %>% nrow()
+  message(sprintf('  Detail coverage: %d of %d HS10 codes (%.1f%%), remainder use GTAP fallback',
+                  n_detail, n_total, 100 * n_detail / n_total))
 
   # Force primary chapters to 1.0 (tariff applies to full customs value)
   is_primary <- substr(shares$hs10, 1, 2) %in% primary_chapters
