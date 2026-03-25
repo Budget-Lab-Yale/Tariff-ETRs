@@ -574,7 +574,27 @@ load_ieepa_rates_yaml <- function(yaml_file,
 load_metal_content <- function(metal_content_config = NULL,
                                import_data) {
 
+  method <- metal_content_config$method %||% 'bea'
   primary_chapters <- metal_content_config$primary_chapters %||% c('72', '73', '76')
+
+  # Flat method: uniform share for all products (used for sensitivity analysis)
+  if (method == 'flat') {
+    flat_share <- metal_content_config$flat_share %||% 1.0
+    message(sprintf('Metal content: flat method (share = %.2f)', flat_share))
+    shares <- import_data %>%
+      distinct(hs10) %>%
+      mutate(metal_share = flat_share)
+
+    is_primary <- substr(shares$hs10, 1, 2) %in% primary_chapters
+    shares <- shares %>%
+      mutate(metal_share = if_else(is_primary, 1.0, metal_share))
+
+    message(sprintf('Metal content shares: %d products, mean = %.4f, range = [%.4f, %.4f]',
+                    nrow(shares), mean(shares$metal_share),
+                    min(shares$metal_share), max(shares$metal_share)))
+    return(shares)
+  }
+
   bea_table <- metal_content_config$bea_table %||% 'domestic'
 
   message(sprintf('Metal content: BEA Detail I-O method (%s requirements)', bea_table))

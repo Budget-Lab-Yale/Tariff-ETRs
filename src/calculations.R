@@ -1133,7 +1133,7 @@ calc_weighted_etr <- function(rates_s232,
         usmca_product_shares %>% select(hs10 = hts10, cty_code, usmca_share),
         by = c('hs10', 'cty_code')
       ) %>%
-      mutate(usmca_share = replace_na(usmca_share, 0))
+      mutate(usmca_share = if_else(is.na(usmca_share), 0, usmca_share))
     message('  Using product-level USMCA shares')
   } else {
     # GTAP-sector-level USMCA shares (legacy): pivot and join on (gtap_code, cty_code)
@@ -1151,7 +1151,7 @@ calc_weighted_etr <- function(rates_s232,
 
     rate_matrix <- rate_matrix %>%
       left_join(usmca_long, by = c('cty_code', 'gtap_code')) %>%
-      mutate(usmca_share = replace_na(usmca_share, 0))
+      mutate(usmca_share = if_else(is.na(usmca_share), 0, usmca_share))
   }
 
   # Auto tariff list
