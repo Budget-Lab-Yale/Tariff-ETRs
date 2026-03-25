@@ -28,6 +28,8 @@ This is an R-based data analysis project for processing U.S. import trade data. 
   - Others: Only applies to base not covered by 232 or reciprocal
 - **Section 122** (optional): Excluded to the extent 232 applies (scales by `nonmetal_share` on 232-covered products; full rate on non-232 products)
 - **Section 301** (optional): Product-specific tariffs (primarily China). Unconditionally cumulative with all other authorities; applies to full customs value (no metal content scaling)
+- **Section 201** (optional): Safeguard duties. Unconditionally cumulative; applies to full customs value.
+- **Other** (optional): Miscellaneous Chapter 99 duties. Unconditionally cumulative; applies to full customs value.
 
 **Country Code Mappings:**
 The project uses Census Bureau country codes (not ISO codes). Country-to-partner mapping used for final aggregation:
@@ -248,11 +250,11 @@ The codebase uses a clean separation between config parsing and calculations:
 - `calc_weighted_etr()`: Joins config tibbles with import data, applies USMCA/rebates, metal content adjustment, then stacking rules
 - Stacking rules are centralized in calculations.R
 - Current rules (MFN is unconditionally additive in all branches):
-  - **China (5700)**: `final_rate = mfn + max(232, reciprocal) + fentanyl + s122 + s301` (fentanyl always stacks)
-  - **Others**: `final_rate = mfn + (232 > 0 ? 232 : reciprocal + fentanyl) + s122 + s301`
+  - **China (5700)**: `final_rate = mfn + max(232, reciprocal) + fentanyl + s122 + s301 + s201 + other` (fentanyl always stacks)
+  - **Others**: `final_rate = mfn + (232 > 0 ? 232 : reciprocal + fentanyl) + s122 + s301 + s201 + other`
   - Section 122: excluded "to the extent the 232 tariff applies" — on 232-covered products, S122 applies only to `nonmetal_share` (same as IEEPA); on non-232 products, full S122 rate
-  - **Section 301**: Unconditionally cumulative — applies to full customs value regardless of 232/IEEPA coverage (no `nonmetal_share` scaling)
-  - **Metal 232 derivatives**: 232 rate scaled by `metal_share`; IEEPA and S122 apply to non-metal portion (`nonmetal_share = 1 - metal_share`); S301 applies to full value
+  - **Section 301, Section 201, other**: Unconditionally cumulative — apply to full customs value regardless of 232/IEEPA coverage (no `nonmetal_share` scaling)
+  - **Metal 232 derivatives**: 232 rate scaled by `metal_share`; IEEPA and S122 apply to non-metal portion (`nonmetal_share = 1 - metal_share`); S301/S201/other apply to full value
 - Easy to modify for new tariff types or stacking logic
 
 **Core Functions:**
@@ -272,7 +274,7 @@ The codebase uses a clean separation between config parsing and calculations:
 *src/calculations.R:*
 - `detect_baseline_structure()`: Detects shared baseline structure (static or time-varying)
 - `detect_scenario_structure()`: Detects counterfactual structure (counter dates)
-- `load_scenario_config()`: Loads all config YAMLs from a single directory into a named list. Tariff files (s232, IEEPA, s122, s301) are optional; missing = NULL = zero rates. MFN rates loaded from `other_params$mfn_rates` path. MFN exemption shares loaded from optional `other_params$mfn_exemption_shares` path.
+- `load_scenario_config()`: Loads all config YAMLs from a single directory into a named list. Tariff files (s232, IEEPA, s122, s301, s201, other) are optional; missing = NULL = zero rates. MFN rates loaded from `other_params$mfn_rates` path. MFN exemption shares loaded from optional `other_params$mfn_exemption_shares` path.
 - `calc_etrs_for_config()`: Runs calc_weighted_etr() + aggregate_countries_to_partners() for one config set. MFN rates come from config (no separate parameter).
 - `calc_delta()`: Computes delta = counterfactual level - baseline level at HS10×country level
 - `do_scenario()`: Main orchestrator - loads shared data, detects structure, processes baseline, processes counterfactual, computes deltas
