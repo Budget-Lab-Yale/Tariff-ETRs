@@ -265,6 +265,14 @@ load_scenario_config <- function(config_path) {
     mfn_exemption_shares <- load_mfn_exemption_shares(other_params$mfn_exemption_shares)
   }
 
+  # Load product-level USMCA shares if specified (optional, overrides GTAP-sector shares)
+  usmca_product_shares <- NULL
+  if (!is.null(other_params$usmca_product_shares)) {
+    usmca_product_shares <- read_csv(other_params$usmca_product_shares, show_col_types = FALSE,
+                                      col_types = cols(hts10 = col_character(), cty_code = col_character()))
+    message(sprintf('  Loaded product-level USMCA shares: %s rows', format(nrow(usmca_product_shares), big.mark = ',')))
+  }
+
   # Load tariff configs (all optional - missing file = NULL = zero rates)
   s232_path <- file.path(config_path, 's232.yaml')
   params_s232 <- if (file.exists(s232_path)) {
@@ -325,7 +333,8 @@ load_scenario_config <- function(config_path) {
     rates_other            = rates_other,
     other_params           = other_params,
     mfn_rates              = mfn_rates,
-    mfn_exemption_shares   = mfn_exemption_shares
+    mfn_exemption_shares   = mfn_exemption_shares,
+    usmca_product_shares   = usmca_product_shares
   )
 }
 
@@ -374,7 +383,8 @@ calc_etrs_for_config <- function(config, hs10_by_country, usmca_shares, country_
     metal_programs         = config$other_params$metal_content$metal_programs %||% character(0),
     program_metal_types    = config$other_params$metal_content$program_metal_types %||% NULL,
     mfn_rates              = config$mfn_rates,
-    mfn_exemption_shares   = config$mfn_exemption_shares
+    mfn_exemption_shares   = config$mfn_exemption_shares,
+    usmca_product_shares   = config$usmca_product_shares
   )
 
   message('Aggregating HS10×country results to partner×GTAP level...')
@@ -1028,7 +1038,8 @@ calc_weighted_etr <- function(rates_s232,
                               metal_programs = character(0),
                               program_metal_types = NULL,
                               mfn_rates = NULL,
-                              mfn_exemption_shares = NULL) {
+                              mfn_exemption_shares = NULL,
+                              usmca_product_shares = NULL) {
 
   # =============================================================================
   # Build complete rate matrix by joining config tables with import data
@@ -1084,23 +1095,34 @@ calc_weighted_etr <- function(rates_s232,
   # Apply USMCA exemptions and auto rebates
   # =============================================================================
 
-  # Reshape USMCA shares to long format for joining
-  usmca_long <- usmca_data %>%
-    pivot_longer(cols = -gtap_code, names_to = 'partner', values_to = 'usmca_share') %>%
-    mutate(
-      cty_code = case_when(
-        partner == 'canada' ~ CTY_CANADA,
-        partner == 'mexico' ~ CTY_MEXICO,
-        TRUE ~ NA
-      )
-    ) %>%
-    filter(!is.na(cty_code)) %>%
-    select(gtap_code, cty_code, usmca_share)
+  # Join USMCA shares: product-level if available, GTAP-sector fallback otherwise
+  if (!is.null(usmca_product_shares)) {
+    # Product-level USMCA shares (from tracker): join directly on (hs10, cty_code)
+    rate_matrix <- rate_matrix %>%
+      left_join(
+        usmca_product_shares %>% select(hs10 = hts10, cty_code, usmca_share),
+        by = c('hs10', 'cty_code')
+      ) %>%
+      mutate(usmca_share = replace_na(usmca_share, 0))
+    message('  Using product-level USMCA shares')
+  } else {
+    # GTAP-sector-level USMCA shares (legacy): pivot and join on (gtap_code, cty_code)
+    usmca_long <- usmca_data %>%
+      pivot_longer(cols = -gtap_code, names_to = 'partner', values_to = 'usmca_share') %>%
+      mutate(
+        cty_code = case_when(
+          partner == 'canada' ~ CTY_CANADA,
+          partner == 'mexico' ~ CTY_MEXICO,
+          TRUE ~ NA
+        )
+      ) %>%
+      filter(!is.na(cty_code)) %>%
+      select(gtap_code, cty_code, usmca_share)
 
-  # Join USMCA shares
-  rate_matrix <- rate_matrix %>%
-    left_join(usmca_long, by = c('cty_code', 'gtap_code')) %>%
-    mutate(usmca_share = replace_na(usmca_share, 0))
+    rate_matrix <- rate_matrix %>%
+      left_join(usmca_long, by = c('cty_code', 'gtap_code')) %>%
+      mutate(usmca_share = replace_na(usmca_share, 0))
+  }
 
   # Auto tariff list
   auto_tariffs <- c('automobiles_passenger_and_light_trucks', 'automobile_parts', 'vehicles_completed_mhd')
