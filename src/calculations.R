@@ -922,6 +922,29 @@ do_scenario_time_varying <- function(scenario, scenario_path, output_dir,
     )
   }
 
+  # Compute validity intervals from sorted counter_dates
+  # Each date is valid from itself until the day before the next date.
+  # The last date uses series_horizon from other_params (or defaults to +1 year).
+  series_horizon <- NULL
+  first_config_path <- file.path(scenario_path, counter_dates[1])
+  first_other_params_path <- file.path(first_config_path, 'other_params.yaml')
+  if (file.exists(first_other_params_path)) {
+    first_other_params <- read_yaml(first_other_params_path)
+    series_horizon <- first_other_params$series_horizon
+  }
+  if (is.null(series_horizon)) {
+    series_horizon <- as.character(as.Date(counter_dates[length(counter_dates)]) + 365)
+  }
+
+  date_intervals <- tibble(
+    date = counter_dates,
+    valid_from = counter_dates,
+    valid_until = c(
+      as.character(as.Date(counter_dates[-1]) - 1),
+      as.character(as.Date(series_horizon))
+    )
+  )
+
   # Write stacked outputs
   message('\nWriting stacked outputs...')
 
@@ -929,21 +952,24 @@ do_scenario_time_varying <- function(scenario, scenario_path, output_dir,
     all_partner_etrs = all_partner_etrs,
     output_file      = 'gtap_deltas_by_sector_country.csv',
     scenario         = scenario,
-    output_base      = output_dir
+    output_base      = output_dir,
+    date_intervals   = date_intervals
   )
 
   write_country_level_deltas_stacked(
     all_hs10_country_etrs = all_hs10_country_etrs,
     output_file           = 'deltas_by_census_country.csv',
     scenario              = scenario,
-    output_base           = output_dir
+    output_base           = output_dir,
+    date_intervals        = date_intervals
   )
 
   write_country_hts2_deltas_stacked(
     all_hs10_country_etrs = all_hs10_country_etrs,
     output_file           = 'deltas_by_census_country_hts2.csv',
     scenario              = scenario,
-    output_base           = output_dir
+    output_base           = output_dir,
+    date_intervals        = date_intervals
   )
 
   write_overall_deltas_combined(
@@ -956,21 +982,24 @@ do_scenario_time_varying <- function(scenario, scenario_path, output_dir,
     all_partner_etrs = all_partner_etrs,
     output_file      = 'gtap_levels_by_sector_country.csv',
     scenario         = scenario,
-    output_base      = output_dir
+    output_base      = output_dir,
+    date_intervals   = date_intervals
   )
 
   write_country_level_levels_stacked(
     all_hs10_country_etrs = all_hs10_country_etrs,
     output_file           = 'levels_by_census_country.csv',
     scenario              = scenario,
-    output_base           = output_dir
+    output_base           = output_dir,
+    date_intervals        = date_intervals
   )
 
   write_country_hts2_levels_stacked(
     all_hs10_country_etrs = all_hs10_country_etrs,
     output_file           = 'levels_by_census_country_hts2.csv',
     scenario              = scenario,
-    output_base           = output_dir
+    output_base           = output_dir,
+    date_intervals        = date_intervals
   )
 
   write_overall_levels_combined(
@@ -982,7 +1011,8 @@ do_scenario_time_varying <- function(scenario, scenario_path, output_dir,
   write_bea_commodity_deltas_stacked(
     all_hs10_country_etrs = all_hs10_country_etrs,
     scenario              = scenario,
-    output_base           = output_dir
+    output_base           = output_dir,
+    date_intervals        = date_intervals
   )
 
   all_partner_etrs
@@ -2089,7 +2119,8 @@ calc_overall_deltas <- function(etr_data, hs10_country_etrs = NULL,
 write_sector_country_deltas_stacked <- function(all_partner_etrs,
                                                  output_file = 'gtap_deltas_by_sector_country.csv',
                                                  scenario = NULL,
-                                                 output_base = 'output') {
+                                                 output_base = 'output',
+                                                 date_intervals = NULL) {
 
   write_sector_country_wide_stacked(
     all_partner_etrs = all_partner_etrs,
@@ -2097,7 +2128,8 @@ write_sector_country_deltas_stacked <- function(all_partner_etrs,
     output_file      = output_file,
     scenario         = scenario,
     output_base      = output_base,
-    label            = 'sector x country deltas'
+    label            = 'sector x country deltas',
+    date_intervals   = date_intervals
   )
 }
 
@@ -2111,7 +2143,8 @@ write_sector_country_deltas_stacked <- function(all_partner_etrs,
 write_country_level_deltas_stacked <- function(all_hs10_country_etrs,
                                                 output_file = 'deltas_by_census_country.csv',
                                                 scenario = NULL,
-                                                output_base = 'output') {
+                                                output_base = 'output',
+                                                date_intervals = NULL) {
 
   output_path <- get_output_path(output_file, scenario, output_base)
 
@@ -2120,6 +2153,12 @@ write_country_level_deltas_stacked <- function(all_hs10_country_etrs,
       prepare_country_level_deltas(all_hs10_country_etrs[[date_str]]) %>%
         mutate(date = date_str, .before = 1)
     })
+
+  if (!is.null(date_intervals)) {
+    stacked <- stacked %>%
+      left_join(date_intervals, by = 'date') %>%
+      relocate(date, valid_from, valid_until)
+  }
 
   write_csv(stacked, output_path)
   message(sprintf('Wrote stacked country-level deltas to %s (in pp units)', output_path))
@@ -2136,7 +2175,8 @@ write_country_level_deltas_stacked <- function(all_hs10_country_etrs,
 write_country_level_levels_stacked <- function(all_hs10_country_etrs,
                                                 output_file = 'levels_by_census_country.csv',
                                                 scenario = NULL,
-                                                output_base = 'output') {
+                                                output_base = 'output',
+                                                date_intervals = NULL) {
 
   output_path <- get_output_path(output_file, scenario, output_base)
 
@@ -2145,6 +2185,12 @@ write_country_level_levels_stacked <- function(all_hs10_country_etrs,
       prepare_country_level_levels(all_hs10_country_etrs[[date_str]]) %>%
         mutate(date = date_str, .before = 1)
     })
+
+  if (!is.null(date_intervals)) {
+    stacked <- stacked %>%
+      left_join(date_intervals, by = 'date') %>%
+      relocate(date, valid_from, valid_until)
+  }
 
   write_csv(stacked, output_path)
   message(sprintf('Wrote stacked country-level tariff levels to %s (in pp units)', output_path))
@@ -2161,7 +2207,8 @@ write_country_level_levels_stacked <- function(all_hs10_country_etrs,
 write_country_hts2_deltas_stacked <- function(all_hs10_country_etrs,
                                                output_file = 'deltas_by_census_country_hts2.csv',
                                                scenario = NULL,
-                                               output_base = 'output') {
+                                               output_base = 'output',
+                                               date_intervals = NULL) {
 
   output_path <- get_output_path(output_file, scenario, output_base)
 
@@ -2170,6 +2217,12 @@ write_country_hts2_deltas_stacked <- function(all_hs10_country_etrs,
       prepare_country_hts2_deltas(all_hs10_country_etrs[[date_str]]) %>%
         mutate(date = date_str, .before = 1)
     })
+
+  if (!is.null(date_intervals)) {
+    stacked <- stacked %>%
+      left_join(date_intervals, by = 'date') %>%
+      relocate(date, valid_from, valid_until)
+  }
 
   write_csv(stacked, output_path)
   message(sprintf('Wrote stacked country × HTS2 deltas to %s (in pp units)', output_path))
@@ -2183,10 +2236,12 @@ write_country_hts2_deltas_stacked <- function(all_hs10_country_etrs,
 #' @param output_file Output filename
 #' @param scenario Scenario name
 #' @param output_base Base output directory
+#' @param date_intervals Optional tibble with date, valid_from, valid_until
 write_country_hts2_levels_stacked <- function(all_hs10_country_etrs,
                                                output_file = 'levels_by_census_country_hts2.csv',
                                                scenario = NULL,
-                                               output_base = 'output') {
+                                               output_base = 'output',
+                                               date_intervals = NULL) {
 
   output_path <- get_output_path(output_file, scenario, output_base)
 
@@ -2195,6 +2250,12 @@ write_country_hts2_levels_stacked <- function(all_hs10_country_etrs,
       prepare_country_hts2_levels(all_hs10_country_etrs[[date_str]]) %>%
         mutate(date = date_str, .before = 1)
     })
+
+  if (!is.null(date_intervals)) {
+    stacked <- stacked %>%
+      left_join(date_intervals, by = 'date') %>%
+      relocate(date, valid_from, valid_until)
+  }
 
   write_csv(stacked, output_path)
   message(sprintf('Wrote stacked country × HTS2 tariff levels to %s (in pp units)', output_path))
@@ -2378,7 +2439,8 @@ write_sector_country_wide_stacked <- function(all_partner_etrs,
                                               output_file,
                                               scenario = NULL,
                                               output_base = 'output',
-                                              label = 'sector x country output') {
+                                              label = 'sector x country output',
+                                              date_intervals = NULL) {
 
   output_path <- get_output_path(output_file, scenario, output_base)
 
@@ -2388,6 +2450,12 @@ write_sector_country_wide_stacked <- function(all_partner_etrs,
         mutate(date = date_str, .before = 1)
     })
 
+  if (!is.null(date_intervals)) {
+    stacked <- stacked %>%
+      left_join(date_intervals, by = 'date') %>%
+      relocate(date, valid_from, valid_until)
+  }
+
   write_csv(stacked, output_path)
   message(sprintf('Wrote stacked %s to %s (in pp units)', label, output_path))
   invisible(stacked)
@@ -2396,7 +2464,8 @@ write_sector_country_wide_stacked <- function(all_partner_etrs,
 write_levels_by_sector_country_stacked <- function(all_partner_etrs,
                                                     output_file = 'gtap_levels_by_sector_country.csv',
                                                     scenario = NULL,
-                                                    output_base = 'output') {
+                                                    output_base = 'output',
+                                                    date_intervals = NULL) {
 
   write_sector_country_wide_stacked(
     all_partner_etrs = all_partner_etrs,
@@ -2404,7 +2473,8 @@ write_levels_by_sector_country_stacked <- function(all_partner_etrs,
     output_file      = output_file,
     scenario         = scenario,
     output_base      = output_base,
-    label            = 'sector x country tariff levels'
+    label            = 'sector x country tariff levels',
+    date_intervals   = date_intervals
   )
 }
 
@@ -2519,7 +2589,8 @@ write_bea_commodity_deltas <- function(hs10_country_etrs,
 write_bea_commodity_deltas_stacked <- function(all_hs10_country_etrs,
                                                 output_file = 'bea_deltas_by_commodity.csv',
                                                 scenario = NULL,
-                                                output_base = 'output') {
+                                                output_base = 'output',
+                                                date_intervals = NULL) {
 
   # Load crosswalk once
   crosswalk_path <- 'resources/hs10_bea_crosswalk.csv'
@@ -2550,6 +2621,12 @@ write_bea_commodity_deltas_stacked <- function(all_hs10_country_etrs,
   stacked <- stacked %>%
     select(date, bea_code, etr_delta, total_imports) %>%
     arrange(date, bea_code)
+
+  if (!is.null(date_intervals)) {
+    stacked <- stacked %>%
+      left_join(date_intervals, by = 'date') %>%
+      relocate(date, valid_from, valid_until)
+  }
 
   output_path <- get_output_path(output_file, scenario, output_base)
   write_csv(stacked, output_path)
