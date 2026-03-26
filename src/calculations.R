@@ -1531,12 +1531,12 @@ calc_weighted_etr <- function(rates_s232,
             + s301_rate + s201_rate + other_rate
         ),
 
-        # Everyone else: 232 takes precedence, then reciprocal + fentanyl + s122
-        # For metal 232 derivatives: IEEPA and s122 apply to non-metal portion
+        # Everyone else: 232 takes precedence; reciprocal and s122 apply to non-metal
+        # portion of derivatives; fentanyl stacks in full (separate authority)
         # Section 301, 201, other always apply to full customs value
         rate_s232_max > 0 ~
-          rate_s232_max + (ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate) * nonmetal_share
-            + s301_rate + s201_rate + other_rate,
+          rate_s232_max + ieepa_reciprocal_rate * nonmetal_share + ieepa_fentanyl_rate
+            + s122_rate * nonmetal_share + s301_rate + s201_rate + other_rate,
 
         # Otherwise use all IEEPA + s122 + s301 + s201 + other
         TRUE ~ ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate
