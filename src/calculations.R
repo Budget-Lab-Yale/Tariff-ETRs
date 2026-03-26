@@ -252,14 +252,19 @@ load_scenario_config <- function(config_path) {
 
   other_params <- read_yaml(file.path(config_path, 'other_params.yaml'))
 
-  # Load product-level USMCA shares (required)
+  # Load product-level USMCA shares (required for active configs, optional for archive)
   usmca_shares_path <- other_params$usmca_product_shares
-  if (is.null(usmca_shares_path)) {
-    stop(sprintf('other_params.yaml in %s must specify usmca_product_shares path', config_path))
+  usmca_product_shares <- if (!is.null(usmca_shares_path) && file.exists(usmca_shares_path)) {
+    shares <- read_csv(usmca_shares_path, show_col_types = FALSE,
+                       col_types = cols(hts10 = col_character(), cty_code = col_character()))
+    message(sprintf('  Loaded product-level USMCA shares: %s rows', format(nrow(shares), big.mark = ',')))
+    shares
+  } else if (!is.null(usmca_shares_path)) {
+    stop(sprintf('usmca_product_shares file not found: %s', usmca_shares_path))
+  } else {
+    message('  No usmca_product_shares specified — USMCA exemptions disabled')
+    tibble(hts10 = character(), cty_code = character(), usmca_share = numeric())
   }
-  usmca_product_shares <- read_csv(usmca_shares_path, show_col_types = FALSE,
-                                    col_types = cols(hts10 = col_character(), cty_code = col_character()))
-  message(sprintf('  Loaded product-level USMCA shares: %s rows', format(nrow(usmca_product_shares), big.mark = ',')))
 
   # =========================================================================
   # CSV path: statutory_rates.csv.gz from tracker
