@@ -742,8 +742,9 @@ load_statutory_csv <- function(csv_path, other_params, usmca_product_shares) {
   # Extract s232 target_total_rules (named list of per-program tibbles)
   target_total_rules <- list()
   for (tt_col in tt_s232_cols) {
-    # target_total_s232_autos_passenger → s232_autos_passenger
-    program_name <- str_replace(tt_col, '^target_total_', '')
+    # target_total_s232_autos_passenger → autos_passenger
+    # (strip both target_total_ AND s232_ so calc_weighted_etr can reconstruct s232_X_rate)
+    program_name <- str_replace(tt_col, '^target_total_s232_', '')
     rules <- csv %>%
       filter(!is.na(!!sym(tt_col))) %>%
       distinct(cty_code, target_total_rate = !!sym(tt_col))

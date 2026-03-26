@@ -459,8 +459,15 @@ merge_overlay <- function(base_config, overlay) {
   }
 
   # Merge s232 (special: has rate_matrix, usmca_exempt, target_total_rules)
+  # An overlay with an empty rate_matrix means "set all 232 to zero" (e.g., default: 0).
   if (!is.null(overlay$params_s232)) {
-    if (is.null(base_config$params_s232)) {
+    overlay_s232_empty <- is.null(overlay$params_s232$rate_matrix) ||
+      nrow(overlay$params_s232$rate_matrix) == 0
+    if (overlay_s232_empty && !is.null(base_config$params_s232)) {
+      # Overlay says "zero all 232" — suppress base entirely
+      message('  s232 overlay has no positive rates — suppressing baseline s232')
+      base_config$params_s232 <- NULL
+    } else if (is.null(base_config$params_s232)) {
       base_config$params_s232 <- overlay$params_s232
     } else {
       base_config$params_s232$rate_matrix <- merge_rate_tibble(
