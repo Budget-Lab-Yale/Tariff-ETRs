@@ -291,7 +291,8 @@ load_ieepa_rates_yaml <- function(yaml_file,
                                   rate_col_name = 'ieepa_rate',
                                   crosswalk_file = 'resources/hs10_gtap_crosswalk.csv',
                                   census_codes_file = 'resources/census_codes.csv',
-                                  country_partner_file = 'resources/country_partner_mapping.csv') {
+                                  country_partner_file = 'resources/country_partner_mapping.csv',
+                                  overlay_mode = FALSE) {
 
   message('Loading IEEPA rates from YAML...')
 
@@ -528,8 +529,14 @@ load_ieepa_rates_yaml <- function(yaml_file,
   # Filter to sparse matrix (only non-zero rates) and return
   # ===========================
 
+  # In overlay mode, keep zeros so they can suppress CSV baseline rates.
+  # In normal mode, filter to sparse (non-zero) matrix.
+  if (!overlay_mode) {
+    rate_matrix <- rate_matrix %>%
+      filter(rate > 0)
+  }
+
   rate_matrix <- rate_matrix %>%
-    filter(rate > 0) %>%
     rename(!!rate_col_name := rate)
 
   # Keep output compact for non-target-total policies.
@@ -610,33 +617,18 @@ load_metal_content <- function(metal_content_config = NULL,
                              col_types = cols(hs10 = col_character())) %>%
     select(hs10, bea_detail_code, steel_share, aluminum_share, copper_share, other_metal_share, metal_share)
 
-  # Also load GTAP-level aggregate shares as fallback for unmatched HS10 codes
-  gtap_shares_file <- sprintf('resources/metal_content_shares_%s.csv', bea_table)
-  if (!file.exists(gtap_shares_file)) {
-    stop(sprintf('GTAP shares file not found: %s\n  Run: Rscript scripts/build_metal_content_shares.R',
-                  gtap_shares_file))
-  }
-
-  gtap_shares <- read_csv(gtap_shares_file, show_col_types = FALSE) %>%
-    mutate(gtap_code = tolower(gtap_code)) %>%
-    select(gtap_code, metal_share_gtap = metal_share)
+  flat_share <- metal_content_config$flat_share %||% 0.50
 
   shares <- import_data %>%
-    distinct(hs10, gtap_code) %>%
-    mutate(gtap_code = tolower(gtap_code)) %>%
+    distinct(hs10) %>%
     left_join(detail_shares, by = 'hs10') %>%
-    left_join(gtap_shares, by = 'gtap_code') %>%
     mutate(
-      # Unmatched: per-type shares = 0, total falls back to GTAP then 1.0
+      # Unmatched: per-type shares = 0, total falls back to flat_share
       steel_share       = if_else(is.na(steel_share), 0, steel_share),
       aluminum_share    = if_else(is.na(aluminum_share), 0, aluminum_share),
       copper_share      = if_else(is.na(copper_share), 0, copper_share),
       other_metal_share = if_else(is.na(other_metal_share), 0, other_metal_share),
-      metal_share       = case_when(
-        !is.na(metal_share)      ~ metal_share,
-        !is.na(metal_share_gtap) ~ metal_share_gtap,
-        TRUE                     ~ 1.0
-      )
+      metal_share       = if_else(is.na(metal_share), flat_share, metal_share)
     ) %>%
     select(hs10, steel_share, aluminum_share, copper_share, other_metal_share, metal_share)
 
@@ -673,4 +665,178 @@ load_metal_content <- function(metal_content_config = NULL,
                   min(shares$metal_share), max(shares$metal_share)))
 
   return(shares)
+}
+
+
+#' Load statutory rates from dense CSV (tracker interface)
+#'
+#' Reads a statutory_rates.csv.gz file produced by tariff-rate-tracker and returns
+#' a config list matching the schema expected by calc_etrs_for_config().
+#'
+#' The CSV contains pre-USMCA, pre-metal-content statutory rates per authority.
+#' Section 232 programs are discovered dynamically from column names matching ^s232_.
+#' MFN rates are extracted from the mfn_rate column (tracker is source of truth).
+#' Target-total floor columns use 1:1 naming: target_total_X maps to rate column X.
+#'
+#' @param csv_path Path to statutory_rates.csv.gz
+#' @param other_params Parsed other_params.yaml list (for usmca_exempt, metal params, etc.)
+#' @param usmca_product_shares USMCA product shares tibble (loaded by caller)
+#'
+#' @return Named list matching load_scenario_config() schema
+load_statutory_csv <- function(csv_path, other_params, usmca_product_shares) {
+
+  message(sprintf('Loading statutory rates from CSV: %s', csv_path))
+
+  csv <- read_csv(csv_path, show_col_types = FALSE,
+                  col_types = cols(hts10 = col_character(), cty_code = col_character()))
+
+  message(sprintf('  CSV dimensions: %s rows × %d columns',
+                  format(nrow(csv), big.mark = ','), ncol(csv)))
+
+  # ---------------------------------------------------------------------------
+  # Discover column groups
+  # ---------------------------------------------------------------------------
+
+  all_cols <- names(csv)
+  s232_cols <- all_cols[str_detect(all_cols, '^s232_') & !str_detect(all_cols, '^target_total_')]
+  tt_s232_cols <- all_cols[str_detect(all_cols, '^target_total_s232_')]
+  authority_cols <- intersect(
+    c('ieepa_reciprocal', 'ieepa_fentanyl', 's301', 's122', 's201', 'other'),
+    all_cols
+  )
+  tt_authority_cols <- all_cols[str_detect(all_cols, '^target_total_') & !str_detect(all_cols, '^target_total_s232_')]
+
+  message(sprintf('  Discovered %d s232 programs: %s',
+                  length(s232_cols), paste(s232_cols, collapse = ', ')))
+
+  # Validate s232 columns match metal_programs from other_params
+  metal_programs <- other_params$metal_content$metal_programs %||% character(0)
+  if (length(metal_programs) > 0 && length(s232_cols) > 0) {
+    csv_programs <- str_replace(s232_cols, '^s232_', '')
+    missing_from_csv <- setdiff(metal_programs, csv_programs)
+    missing_from_metal <- setdiff(csv_programs, metal_programs)
+    if (length(missing_from_csv) > 0) {
+      warning(sprintf('metal_programs lists programs not in CSV: %s',
+                      paste(missing_from_csv, collapse = ', ')))
+    }
+    if (length(missing_from_metal) > 0) {
+      message(sprintf('  Note: CSV has s232 programs not in metal_programs (non-metal): %s',
+                      paste(missing_from_metal, collapse = ', ')))
+    }
+  }
+
+  # ---------------------------------------------------------------------------
+  # Section 232: rate_matrix + usmca_exempt + target_total_rules
+  # ---------------------------------------------------------------------------
+
+  # Rename s232_X → s232_X_rate to match ETRs convention
+  s232_rename <- setNames(s232_cols, paste0(s232_cols, '_rate'))
+
+  s232_rate_col_names <- paste0(s232_cols, '_rate')
+
+  rates_s232_matrix <- csv %>%
+    select(hs10 = hts10, cty_code, all_of(s232_cols)) %>%
+    rename(!!!s232_rename) %>%
+    filter(if_any(all_of(s232_rate_col_names), ~ . > 0))
+
+  # Extract s232 target_total_rules (named list of per-program tibbles)
+  target_total_rules <- list()
+  for (tt_col in tt_s232_cols) {
+    # target_total_s232_autos_passenger → s232_autos_passenger
+    program_name <- str_replace(tt_col, '^target_total_', '')
+    rules <- csv %>%
+      filter(!is.na(!!sym(tt_col))) %>%
+      distinct(cty_code, target_total_rate = !!sym(tt_col))
+    if (nrow(rules) > 0) {
+      target_total_rules[[program_name]] <- rules
+    }
+  }
+  if (length(target_total_rules) == 0) target_total_rules <- NULL
+
+  # usmca_exempt flags from other_params
+  usmca_exempt <- other_params$usmca_exempt
+
+  params_s232 <- if (nrow(rates_s232_matrix) > 0) {
+    list(
+      rate_matrix = rates_s232_matrix,
+      usmca_exempt = usmca_exempt,
+      target_total_rules = target_total_rules
+    )
+  } else {
+    NULL
+  }
+
+  message(sprintf('  s232: %s rows', format(nrow(rates_s232_matrix), big.mark = ',')))
+
+  # ---------------------------------------------------------------------------
+  # Other authorities: extract per-authority tibbles
+  # ---------------------------------------------------------------------------
+
+  extract_authority <- function(col_name, rate_col_name) {
+    if (!(col_name %in% all_cols)) return(NULL)
+
+    tt_col <- paste0('target_total_', col_name)
+    has_tt <- tt_col %in% all_cols
+
+    result <- csv %>%
+      select(hs10 = hts10, cty_code, rate = !!col_name)
+
+    if (has_tt) {
+      result <- result %>%
+        mutate(target_total_rate = csv[[tt_col]])
+    }
+
+    result <- result %>%
+      filter(rate > 0) %>%
+      rename(!!rate_col_name := rate)
+
+    # Drop target_total_rate if all NA
+    if (has_tt && all(is.na(result$target_total_rate))) {
+      result <- result %>% select(-target_total_rate)
+    }
+
+    if (nrow(result) == 0) return(NULL)
+
+    message(sprintf('  %s: %s rows', rate_col_name, format(nrow(result), big.mark = ',')))
+    result
+  }
+
+  rates_ieepa_reciprocal <- extract_authority('ieepa_reciprocal', 'ieepa_reciprocal_rate')
+  rates_ieepa_fentanyl   <- extract_authority('ieepa_fentanyl', 'ieepa_fentanyl_rate')
+  rates_s122             <- extract_authority('s122', 's122_rate')
+  rates_s301             <- extract_authority('s301', 's301_rate')
+  rates_s201             <- extract_authority('s201', 's201_rate')
+  rates_other            <- extract_authority('other', 'other_rate')
+
+  # ---------------------------------------------------------------------------
+  # MFN: extract at hs10 × country level (tracker is source of truth)
+  # ---------------------------------------------------------------------------
+
+  mfn_rates_by_product_country <- NULL
+  if ('mfn_rate' %in% all_cols) {
+    mfn_rates_by_product_country <- csv %>%
+      select(hs10 = hts10, cty_code, mfn_rate) %>%
+      filter(mfn_rate > 0)
+    message(sprintf('  MFN: %s rows at hs10×country level',
+                    format(nrow(mfn_rates_by_product_country), big.mark = ',')))
+  }
+
+  # ---------------------------------------------------------------------------
+  # Return config list matching load_scenario_config() schema
+  # ---------------------------------------------------------------------------
+
+  list(
+    params_s232                    = params_s232,
+    rates_ieepa_reciprocal         = rates_ieepa_reciprocal,
+    rates_ieepa_fentanyl           = rates_ieepa_fentanyl,
+    rates_s122                     = rates_s122,
+    rates_s301                     = rates_s301,
+    rates_s201                     = rates_s201,
+    rates_other                    = rates_other,
+    other_params                   = other_params,
+    mfn_rates                      = NULL,
+    mfn_rates_by_product_country   = mfn_rates_by_product_country,
+    mfn_exemption_shares           = NULL,
+    usmca_product_shares           = usmca_product_shares
+  )
 }
