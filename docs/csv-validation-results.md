@@ -97,43 +97,23 @@ For comparison, the starting point (before any fixes):
 
 **Fix**: Save/restore `load_mfn_exemption_shares` (tracker version compatible with both callers). Swap `load_metal_content` between tracker and ETRs versions at the appropriate points in the test loop.
 
-## Remaining Gap: Heading-Only 232 Programs in Exporter (rev_32)
+## Fix 8: Export post-deal s232 rates (Tracker)
 
-### Symptom
+**File**: `tariff-rate-tracker/src/06_calculate_rates.R:1330`
 
-Rev_32 has 2.2% mismatches (5,888 products) at 0.1pp tolerance. The diff distribution shows discrete clusters at +0.113 (1,790 products), +0.0876 (1,364 products), and -0.0124 (529 products, auto rebate). Products are concentrated in HTS 8708 (auto parts, 1,544), 8471 (computers, 515), 8501 (motors, 501), 8703 (passenger vehicles, 325). Countries are spread broadly (Germany, Japan, UK, India, Taiwan, etc.).
+**Bug**: The exporter captured `statutory_rate_232` at line 1178 — BEFORE deal overrides (step 4c) and auto rebate (step 4b). For deal countries (EU/Japan/Korea auto floor at 15%), the tracker replaces `rate_232` with `max(floor - MFN, 0)` ≈ 12.5%, but the CSV still had the pre-deal heading rate (25%). ETRs' target_total floor (pmax semantics) could never lower the heading rate, so ETRs got 25% while the tracker got 12.5%.
 
-### Root Cause
+**Example**: EU auto parts, heading rate 25%, floor deal at 15%, MFN at 2.5%, rebate 1.24pp:
+- Before: statutory_rate_232 = 0.25 (pre-deal). ETRs: 0.25 - 0.0124 = 0.2376. Tracker: 0.125. Diff: +11.3pp.
+- After: statutory_rate_232 = 0.125 + 0.0124 = 0.1374 (post-deal, pre-rebate). ETRs: 0.1374 - 0.0124 = 0.125. Match.
 
-The exporter writes s232 heading rates to the CSV for ALL countries, but the tracker's rate calculation only applies heading rates to countries with deals or blanket rates.
+**Fix**: Moved the `statutory_rate_232` capture to AFTER step 4c (deal overrides). For auto products, the rebate deduction (applied in step 4b) is added back so ETRs can re-apply its own rebate. Non-auto products export `rate_232` directly (no rebate to undo). No changes needed in ETRs — the target_total floor mechanism now correctly handles deal rates because the exported rate is post-deal.
 
-**How it happens:**
+### Remaining gap (rev_32)
 
-1. The tracker's `calculate_rates_for_revision()` sets up heading rates (e.g., `autos_light_trucks` at 25%) and assigns them to all matched products. The `statutory_rate_232` is captured here.
-
-2. For programs with "no blanket rate" (only country-specific deals), the heading rate is assigned to all countries at step 4, then deal overrides apply to specific countries at step 4c. Non-deal countries keep the heading rate.
-
-3. The exporter's `export_statutory_rates()` uses `statutory_rate_232` and `classify_s232_program()` to build per-program columns. It writes the heading rate (0.25) for ALL countries, including those where the tracker's final `total_rate` may not include it.
-
-4. ETRs loads the CSV and sees `s232_autos_light_trucks = 0.25` for all countries, applies the rate, and gets a higher final rate than the tracker.
-
-**Why it only appears in rev_32**: Earlier revisions have fewer active heading programs. Rev_32 (November 2025) has more heading programs active (softwood, wood_furniture, kitchen_cabinets, buses, MHD) in addition to auto_parts/autos. The exporter writes rates for all of these, but the tracker may only apply some of them for certain country subsets.
-
-### Impact
-
-- +0.70pp import-weighted divergence on rev_32
-- Max product-level diff of 0.2376 (= 0.25 - 0.0124, a rebated auto rate)
-- Concentrated on auto/vehicle products and ITA-adjacent electronics
-
-### Fix Options
-
-1. **Export post-deal `rate_232` instead of `statutory_rate_232`**: The exporter would capture the tracker's final rate after deal overrides. Products with deals get the deal rate; products without deals get the heading rate (if a blanket rate exists) or 0 (if only deals). This requires checking whether `rate_232` is available at the right point in the pipeline (post-deals but pre-USMCA/pre-MFN-exemption).
-
-2. **Export deal country masks**: Add columns or metadata indicating which countries have active deals for each heading program. ETRs would use these to decide whether to apply the heading rate. More complex but preserves the "statutory rate + ETRs applies adjustments" separation.
-
-3. **Gate heading rates on blanket availability**: In the exporter, only write non-zero s232 heading rates when the blanket rate for that program is > 0. When there's no blanket rate (deals only), write 0 for non-deal countries and the deal rate for deal countries. This requires the exporter to know the blanket rate per heading program.
-
-Option 1 is simplest but blurs the statutory/effective distinction. Option 3 is cleanest but requires threading deal-country information through the exporter.
+After Fix 8, the +0.113pp cluster (~1,790 products from auto floor deals) and the wood-deal products should be resolved. Two smaller clusters may remain and need investigation:
+- +0.0876 (1,364 products): suspected interaction with MFN-level variation across heading programs
+- -0.0124 (529 products): rebate applied in ETRs to products not rebated in tracker (classification edge case)
 
 ## What's Validated
 
@@ -158,3 +138,4 @@ Across all tested revisions, the following are confirmed correct:
 | `b2c09cf` | Tariff-ETRs | Fix target_total floor logic and fentanyl stacking (Fixes 1, 2, 5b) |
 | `5745cca` | tariff-rate-tracker | Fix auto_products, USMCA eligibility, fentanyl stacking (Fixes 3, 4, 5a) |
 | `1296d4c` | tariff-rate-tracker | Export post-recomputation IEEPA rate (Fix 6) |
+| *(pending)* | tariff-rate-tracker | Export post-deal s232 rates with rebate undo (Fix 8) |

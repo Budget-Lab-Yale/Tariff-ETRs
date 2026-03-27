@@ -1289,9 +1289,18 @@ calc_weighted_etr <- function(rates_s232,
     ) %>%
     mutate(usmca_share = if_else(is.na(usmca_share), 0, usmca_share))
 
-  # Auto tariff list (both ETRs-native and tracker program names)
-  auto_tariffs <- c('automobiles_passenger_and_light_trucks', 'automobile_parts', 'vehicles_completed_mhd',
-                     'autos_passenger', 'autos_light_trucks', 'auto_parts')
+  # Rebate-eligible tariffs: only passenger auto and light truck programs.
+  # The tracker applies the rebate only to auto_products (passenger vehicles,
+  # light trucks, auto parts), NOT to MHD, buses, or other heading programs.
+  rebate_tariffs <- c('automobiles_passenger_and_light_trucks', 'automobile_parts',
+                       'autos_passenger', 'autos_light_trucks', 'auto_parts')
+
+  # Vehicle tariffs that use adjusted USMCA share (usmca_share * us_auto_content_share).
+  # Includes all vehicle/parts programs flagged s232_usmca_eligible in the tracker:
+  # passenger autos, light trucks, auto parts, MHD vehicles, MHD parts, buses.
+  vehicle_tariffs <- c('automobiles_passenger_and_light_trucks', 'automobile_parts', 'vehicles_completed_mhd',
+                        'autos_passenger', 'autos_light_trucks', 'auto_parts',
+                        'mhd_vehicles', 'mhd_parts', 'buses')
 
   # Get tariff names from rate column names
   tariff_names <- str_replace(rate_s232_cols, '^s232_(.*)_rate$', '\\1')
@@ -1300,8 +1309,8 @@ calc_weighted_etr <- function(rates_s232,
   for (tariff_name in tariff_names) {
     rate_col <- paste0('s232_', tariff_name, '_rate')
 
-    # Apply auto rebate if this is an auto tariff
-    if (tariff_name %in% auto_tariffs) {
+    # Apply auto rebate only to rebate-eligible (passenger auto) tariffs
+    if (tariff_name %in% rebate_tariffs) {
       rate_matrix <- rate_matrix %>%
         mutate(
           !!rate_col := !!sym(rate_col) - (auto_rebate * us_assembly_share)
@@ -1310,9 +1319,9 @@ calc_weighted_etr <- function(rates_s232,
 
     # Apply USMCA exemption if enabled for this tariff
     if (usmca_exempt_s232[[tariff_name]] == 1) {
-      
-      # Auto tariffs use adjusted USMCA share
-      if (tariff_name %in% auto_tariffs) {
+
+      # Vehicle tariffs use adjusted USMCA share
+      if (tariff_name %in% vehicle_tariffs) {
         rate_matrix <- rate_matrix %>%
           mutate(
             adjusted_usmca_share = usmca_share * us_auto_content_share,
