@@ -1490,7 +1490,7 @@ calc_weighted_etr <- function(rates_s232,
         mutate(
           !!rate_col := if_else(
             !is.na(!!sym(tt_col)) & !!sym(rate_col) > 0,
-            pmax(!!sym(tt_col) - statutory_mfn, 0),
+            pmax(!!sym(rate_col), pmax(!!sym(tt_col) - statutory_mfn, 0)),
             !!sym(rate_col)
           )
         )
@@ -1512,7 +1512,7 @@ calc_weighted_etr <- function(rates_s232,
           mutate(
             !!col_name := if_else(
               !is.na(s232_tt_rate) & !!sym(col_name) > 0,
-              pmax(s232_tt_rate - statutory_mfn, 0),
+              pmax(!!sym(col_name), pmax(s232_tt_rate - statutory_mfn, 0)),
               !!sym(col_name)
             )
           ) %>%
@@ -1729,11 +1729,12 @@ calc_weighted_etr <- function(rates_s232,
             + s301_rate + s201_rate + other_rate
         ),
 
-        # Everyone else: 232 takes precedence; reciprocal and s122 apply to non-metal
-        # portion of derivatives; fentanyl stacks in full (separate authority)
-        # Section 301, 201, other always apply to full customs value
+        # Everyone else: 232 takes precedence; reciprocal, fentanyl, and s122
+        # apply to non-metal portion of derivatives (content-based split).
+        # Section 301, 201, other always apply to full customs value.
         rate_s232_max > 0 ~
-          rate_s232_max + ieepa_reciprocal_rate * nonmetal_share + ieepa_fentanyl_rate
+          rate_s232_max + ieepa_reciprocal_rate * nonmetal_share
+            + ieepa_fentanyl_rate * nonmetal_share
             + s122_rate * nonmetal_share + s301_rate + s201_rate + other_rate,
 
         # Otherwise use all IEEPA + s122 + s301 + s201 + other
