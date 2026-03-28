@@ -4,7 +4,7 @@ us_auto_content_share: 0.4
 us_auto_assembly_share: 0.33
 auto_rebate_rate: 0.0
 ieepa_usmca_exception: 1.0
-s122_usmca_exception: 0.0
+s122_usmca_exception: 1.0
 s301_usmca_exception: 0.0
 usmca_exempt:
   aluminum: 0.0
