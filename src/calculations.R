@@ -5,9 +5,11 @@
 # Functions for calculating tariff deltas (counterfactual - baseline) and levels.
 #
 # Functions:
-#   - detect_baseline_structure():         Detect baseline structure (shared config)
-#   - detect_scenario_structure():        Detect counterfactual structure
-#   - load_scenario_config():             Load all config YAMLs from a directory
+#   - load_scenario_definition():         Load scenario.yaml and normalize entries
+#   - load_scenario_config():             Load CSV config from a historical directory
+#   - load_config_with_reform():          Load historical config + optional reform overlay
+#   - merge_other_params():               Shallow-merge reform other_params over historical
+#   - merge_s232_rate_matrix():           Column-level merge for S232 rate matrix
 #   - calc_etrs_for_config():             Calculate tariff levels for a single config set
 #   - calc_delta():                       Compute delta between baseline and counterfactual
 #   - do_scenario():                      Run complete analysis (dispatcher)
@@ -100,6 +102,86 @@ detect_baseline_structure <- function(baseline_dir) {
 detect_scenario_structure <- function(scenario_dir) {
   list(
     counter_dates = find_date_subdirs(scenario_dir)
+  )
+}
+
+
+#' Load scenario definition from scenario.yaml
+#'
+#' Reads scenario.yaml and normalizes counterfactual entries to a uniform
+#' list of {date, historical, reform} structures. Validates that referenced
+#' historical dates exist.
+#'
+#' @param scenario_dir Path to scenario directory (contains scenario.yaml)
+#' @param historical_dir Path to historical configs directory
+#'
+#' @return Named list with:
+#'   - baseline_date: character string (YYYY-MM-DD)
+#'   - counterfactual: list of lists, each with date, historical, reform (or NULL)
+#'   - series_horizon: character string or NULL
+load_scenario_definition <- function(scenario_dir, historical_dir) {
+  yaml_path <- file.path(scenario_dir, 'scenario.yaml')
+  if (!file.exists(yaml_path)) {
+    stop(sprintf('scenario.yaml not found in %s', scenario_dir))
+  }
+
+  def <- read_yaml(yaml_path)
+
+  # Validate baseline
+  if (is.null(def$baseline)) {
+    stop('scenario.yaml must specify a baseline date')
+  }
+  baseline_date <- as.character(def$baseline)
+  baseline_path <- file.path(historical_dir, baseline_date)
+  if (!dir.exists(baseline_path)) {
+    stop(sprintf('Baseline historical date not found: %s (expected %s)', baseline_date, baseline_path))
+  }
+
+  # Normalize counterfactual entries
+  if (is.null(def$counterfactual)) {
+    stop('scenario.yaml must specify at least one counterfactual entry')
+  }
+
+  counterfactual <- lapply(def$counterfactual, function(entry) {
+    if (is.character(entry)) {
+      # String shorthand: date = historical date, no reform
+      list(date = entry, historical = entry, reform = NULL)
+    } else if (is.list(entry)) {
+      date_val <- as.character(entry$date)
+      if (is.null(date_val)) {
+        stop('Each counterfactual entry must have a date field')
+      }
+      historical_val <- if (!is.null(entry$historical)) as.character(entry$historical) else date_val
+      reform_val <- if (!is.null(entry$reform)) as.character(entry$reform) else NULL
+      list(date = date_val, historical = historical_val, reform = reform_val)
+    } else {
+      stop(sprintf('Invalid counterfactual entry: %s', entry))
+    }
+  })
+
+  # Validate all referenced historical dates exist
+  all_historical <- unique(c(baseline_date, vapply(counterfactual, function(e) e$historical, character(1))))
+  for (h in all_historical) {
+    h_path <- file.path(historical_dir, h)
+    if (!dir.exists(h_path)) {
+      stop(sprintf('Historical date not found: %s (expected %s)', h, h_path))
+    }
+  }
+
+  # Validate reform paths exist (if specified)
+  for (entry in counterfactual) {
+    if (!is.null(entry$reform)) {
+      reform_path <- file.path(scenario_dir, entry$reform)
+      if (!dir.exists(reform_path)) {
+        stop(sprintf('Reform directory not found: %s', reform_path))
+      }
+    }
+  }
+
+  list(
+    baseline_date   = baseline_date,
+    counterfactual  = counterfactual,
+    series_horizon  = def$series_horizon
   )
 }
 
@@ -236,16 +318,16 @@ format_coverage_table <- function(coverage_by_partner, coverage_total) {
 }
 
 
-#' Load all config for a scenario from a single config directory
+#' Load config from a directory (CSV mode required)
 #'
-#' Parses other_params.yaml (required), s232.yaml, ieepa_reciprocal.yaml,
-#' ieepa_fentanyl.yaml, and s122.yaml (all optional) from the given directory.
-#' Also loads MFN rates from the path specified in other_params$mfn_rates.
+#' Loads statutory_rates.csv.gz (required) and other_params.yaml (required)
+#' from the given directory. Optionally applies YAML overlay files co-located
+#' in the same directory.
 #'
-#' @param config_path Path to directory containing the config YAML files
+#' @param config_path Path to directory containing statutory_rates.csv.gz + other_params.yaml
 #'
 #' @return Named list with: params_s232, rates_ieepa_reciprocal, rates_ieepa_fentanyl,
-#'   rates_s122, other_params, mfn_rates (all tariff components NULL if file missing)
+#'   rates_s122, rates_s301, rates_s201, rates_other, other_params, mfn_rates, etc.
 load_scenario_config <- function(config_path) {
 
   message(sprintf('Loading scenario parameters from %s...', config_path))
@@ -271,112 +353,75 @@ load_scenario_config <- function(config_path) {
   # =========================================================================
 
   csv_path <- file.path(config_path, 'statutory_rates.csv.gz')
-  if (file.exists(csv_path)) {
-    config <- load_statutory_csv(csv_path, other_params, usmca_product_shares)
+  if (!file.exists(csv_path)) {
+    stop(sprintf('statutory_rates.csv.gz not found in %s — CSV mode is required', config_path))
+  }
 
-    # Load MFN exemption shares (CSV mfn_rate is statutory; exemptions applied by ETRs)
-    if (!is.null(other_params$mfn_exemption_shares)) {
-      config$mfn_exemption_shares <- load_mfn_exemption_shares(other_params$mfn_exemption_shares)
-    }
+  config <- load_statutory_csv(csv_path, other_params, usmca_product_shares)
 
-    # Check for YAML overlay files (counterfactual modifications)
-    yaml_overlay <- load_yaml_overlay(config_path, overlay_mode = TRUE)
-    if (!is.null(yaml_overlay)) {
-      config <- merge_overlay(config, yaml_overlay)
-    }
+  # Load MFN exemption shares (CSV mfn_rate is statutory; exemptions applied by ETRs)
+  if (!is.null(other_params$mfn_exemption_shares)) {
+    config$mfn_exemption_shares <- load_mfn_exemption_shares(other_params$mfn_exemption_shares)
+  }
 
+  # Check for YAML overlay files (counterfactual modifications)
+  yaml_overlay <- load_yaml_overlay(config_path, overlay_mode = TRUE)
+  if (!is.null(yaml_overlay)) {
+    config <- merge_overlay(config, yaml_overlay)
+  }
+
+  config
+}
+
+
+#' Load a historical config with optional reform overlay
+#'
+#' Loads the CSV-based config from a historical directory, then optionally
+#' applies a reform overlay (other_params merge + YAML rate overlays).
+#'
+#' @param historical_path Path to historical config directory (must contain statutory_rates.csv.gz)
+#' @param reform_path Path to reform directory (optional, NULL = no reform)
+#'
+#' @return Config list (same schema as load_scenario_config)
+load_config_with_reform <- function(historical_path, reform_path = NULL) {
+
+  config <- load_scenario_config(historical_path)
+
+  if (is.null(reform_path) || !dir.exists(reform_path)) {
     return(config)
   }
 
-  # =========================================================================
-  # YAML-only path (backward compatible)
-  # =========================================================================
+  message(sprintf('  Applying reform overlay from %s...', reform_path))
 
-  # Load MFN rates from path specified in config.
-  # Path resolution: try relative to config directory first (co-located mfn_rates.csv
-  # generated by tracker), then relative to working directory (resources/ paths).
-  mfn_rates_path <- other_params$mfn_rates
-  if (is.null(mfn_rates_path)) {
-    stop(sprintf('other_params.yaml in %s must specify mfn_rates path', config_path))
-  }
-  if (!file.exists(mfn_rates_path)) {
-    config_relative <- file.path(config_path, mfn_rates_path)
-    if (file.exists(config_relative)) {
-      mfn_rates_path <- config_relative
-    }
-  }
-  mfn_rates <- load_mfn_rates(mfn_rates_path)
+  # Merge other_params if reform provides overrides
+  config$other_params <- merge_other_params(config$other_params, reform_path)
 
-  # Load MFN exemption shares if specified (optional)
-  mfn_exemption_shares <- NULL
-  if (!is.null(other_params$mfn_exemption_shares)) {
-    mfn_exemption_shares <- load_mfn_exemption_shares(other_params$mfn_exemption_shares)
+  # Load and merge YAML rate overlays
+  yaml_overlay <- load_yaml_overlay(reform_path, overlay_mode = TRUE)
+  if (!is.null(yaml_overlay)) {
+    config <- merge_overlay(config, yaml_overlay)
   }
 
-  # Load tariff configs (all optional - missing file = NULL = zero rates)
-  s232_path <- file.path(config_path, 's232.yaml')
-  params_s232 <- if (file.exists(s232_path)) {
-    load_s232_rates(s232_path)
-  } else {
-    NULL
-  }
+  config
+}
 
-  reciprocal_path <- file.path(config_path, 'ieepa_reciprocal.yaml')
-  rates_ieepa_reciprocal <- if (file.exists(reciprocal_path)) {
-    load_ieepa_rates_yaml(reciprocal_path, rate_col_name = 'ieepa_reciprocal_rate')
-  } else {
-    NULL
-  }
 
-  fentanyl_path <- file.path(config_path, 'ieepa_fentanyl.yaml')
-  rates_ieepa_fentanyl <- if (file.exists(fentanyl_path)) {
-    load_ieepa_rates_yaml(fentanyl_path, rate_col_name = 'ieepa_fentanyl_rate')
-  } else {
-    NULL
-  }
-
-  s122_path <- file.path(config_path, 's122.yaml')
-  rates_s122 <- if (file.exists(s122_path)) {
-    load_ieepa_rates_yaml(s122_path, rate_col_name = 's122_rate')
-  } else {
-    NULL
-  }
-
-  s301_path <- file.path(config_path, 's301.yaml')
-  rates_s301 <- if (file.exists(s301_path)) {
-    load_ieepa_rates_yaml(s301_path, rate_col_name = 's301_rate')
-  } else {
-    NULL
-  }
-
-  s201_path <- file.path(config_path, 's201.yaml')
-  rates_s201 <- if (file.exists(s201_path)) {
-    load_ieepa_rates_yaml(s201_path, rate_col_name = 's201_rate')
-  } else {
-    NULL
-  }
-
-  other_tariff_path <- file.path(config_path, 'other.yaml')
-  rates_other <- if (file.exists(other_tariff_path)) {
-    load_ieepa_rates_yaml(other_tariff_path, rate_col_name = 'other_rate')
-  } else {
-    NULL
-  }
-
-  list(
-    params_s232                    = params_s232,
-    rates_ieepa_reciprocal         = rates_ieepa_reciprocal,
-    rates_ieepa_fentanyl           = rates_ieepa_fentanyl,
-    rates_s122                     = rates_s122,
-    rates_s301                     = rates_s301,
-    rates_s201                     = rates_s201,
-    rates_other                    = rates_other,
-    other_params                   = other_params,
-    mfn_rates                      = mfn_rates,
-    mfn_rates_by_product_country   = NULL,
-    mfn_exemption_shares           = mfn_exemption_shares,
-    usmca_product_shares           = usmca_product_shares
-  )
+#' Shallow-merge reform other_params over historical other_params
+#'
+#' Uses modifyList() for a shallow merge: top-level keys from the reform
+#' override the historical values. To override nested keys (e.g., metal_content),
+#' include the full block in the reform other_params.yaml.
+#'
+#' @param base_params Named list from historical other_params.yaml
+#' @param reform_path Path to reform directory
+#'
+#' @return Merged other_params list
+merge_other_params <- function(base_params, reform_path) {
+  reform_params_file <- file.path(reform_path, 'other_params.yaml')
+  if (!file.exists(reform_params_file)) return(base_params)
+  reform_params <- read_yaml(reform_params_file)
+  message(sprintf('  Merging reform other_params: %s', paste(names(reform_params), collapse = ', ')))
+  modifyList(base_params, reform_params)
 }
 
 
@@ -435,6 +480,39 @@ load_yaml_overlay <- function(config_path, overlay_mode = TRUE) {
 }
 
 
+#' Column-level merge for S232 rate matrix
+#'
+#' Unlike single-column authorities, S232 has multiple program columns
+#' (s232_steel_rate, s232_aluminum_rate, etc.). This function merges at
+#' the column level: overlay only updates the program columns it defines,
+#' leaving other programs' rates unchanged for matching (hs10, cty_code) rows.
+#'
+#' @param base_matrix Base S232 rate_matrix tibble
+#' @param overlay_matrix Overlay S232 rate_matrix tibble (may have fewer columns)
+#'
+#' @return Merged rate_matrix tibble
+merge_s232_rate_matrix <- function(base_matrix, overlay_matrix) {
+  if (is.null(overlay_matrix)) return(base_matrix)
+  if (is.null(base_matrix)) return(overlay_matrix)
+
+  overlay_cols <- setdiff(names(overlay_matrix), c('hs10', 'cty_code'))
+  base_only_cols <- setdiff(names(base_matrix), c('hs10', 'cty_code', overlay_cols))
+
+  # Rows not touched by overlay: keep as-is
+  untouched <- base_matrix %>%
+    anti_join(overlay_matrix, by = c('hs10', 'cty_code'))
+
+  # Overlay rows: take overlay columns, join base-only columns from base
+  updated <- overlay_matrix %>%
+    left_join(
+      base_matrix %>% select(hs10, cty_code, all_of(base_only_cols)),
+      by = c('hs10', 'cty_code')
+    )
+
+  bind_rows(untouched, updated)
+}
+
+
 #' Merge YAML overlay onto CSV baseline config
 #'
 #' For each authority present in the overlay, YAML rates overwrite CSV baseline
@@ -460,6 +538,8 @@ merge_overlay <- function(base_config, overlay) {
 
   # Merge s232 (special: has rate_matrix, usmca_exempt, target_total_rules)
   # An overlay with an empty rate_matrix means "set all 232 to zero" (e.g., default: 0).
+  # S232 uses column-level merge: overlay only touches the program columns it defines,
+  # leaving other programs' rates unchanged for matching (hs10, cty_code) rows.
   if (!is.null(overlay$params_s232)) {
     overlay_s232_empty <- is.null(overlay$params_s232$rate_matrix) ||
       nrow(overlay$params_s232$rate_matrix) == 0
@@ -470,7 +550,7 @@ merge_overlay <- function(base_config, overlay) {
     } else if (is.null(base_config$params_s232)) {
       base_config$params_s232 <- overlay$params_s232
     } else {
-      base_config$params_s232$rate_matrix <- merge_rate_tibble(
+      base_config$params_s232$rate_matrix <- merge_s232_rate_matrix(
         base_config$params_s232$rate_matrix,
         overlay$params_s232$rate_matrix
       )
@@ -683,135 +763,101 @@ do_scenario <- function(scenario, config_dir = 'config', output_dir = 'output',
   }
 
   #---------------------------
-  # Detect scenario structure and dispatch
+  # Load scenario definition from scenario.yaml
   #---------------------------
 
-  scenario_path <- file.path(config_dir, scenario)
-  baseline_dir <- file.path(config_dir, 'baseline')
-  baseline_structure <- detect_baseline_structure(baseline_dir)
-  scenario_structure <- detect_scenario_structure(scenario_path)
+  historical_dir <- file.path(config_dir, 'historical')
+  scenario_dir <- file.path(config_dir, 'scenarios', scenario)
+  scenario_def <- load_scenario_definition(scenario_dir, historical_dir)
+
+  counter_dates <- vapply(scenario_def$counterfactual, function(e) e$date, character(1))
+  message(sprintf('Baseline: %s', scenario_def$baseline_date))
+  message(sprintf('Counterfactual dates: %s', paste(counter_dates, collapse = ', ')))
 
   #---------------------------
-  # Process baseline
+  # Process baseline (always a single historical date)
   #---------------------------
 
   message('\n--- Processing baseline ---')
-  baseline_results <- list()
-  baseline_partner_results <- list()
-
-  if (is.null(baseline_structure$baseline_dates)) {
-    # Static baseline: config files directly in baseline/
-    baseline_config <- load_scenario_config(baseline_dir)
-    baseline_etrs <- calc_etrs_for_config(baseline_config, hs10_by_country, country_mapping)
-    baseline_results[['static']] <- baseline_etrs$hs10_country_etrs
-    baseline_partner_results[['static']] <- baseline_etrs$partner_etrs
-  } else {
-    # Time-varying baseline
-    for (date_str in baseline_structure$baseline_dates) {
-      message(sprintf('\n--- Processing baseline date: %s ---', date_str))
-      baseline_path <- file.path(baseline_dir, date_str)
-      baseline_config <- load_scenario_config(baseline_path)
-      baseline_etrs <- calc_etrs_for_config(baseline_config, hs10_by_country, country_mapping)
-      baseline_results[[date_str]] <- baseline_etrs$hs10_country_etrs
-      baseline_partner_results[[date_str]] <- baseline_etrs$partner_etrs
-    }
-  }
+  baseline_path <- file.path(historical_dir, scenario_def$baseline_date)
+  baseline_config <- load_scenario_config(baseline_path)
+  baseline_etrs <- calc_etrs_for_config(baseline_config, hs10_by_country, country_mapping)
+  baseline_results <- list(static = baseline_etrs$hs10_country_etrs)
+  baseline_partner_results <- list(static = baseline_etrs$partner_etrs)
 
   #---------------------------
   # Write baseline levels output
   #---------------------------
 
   message('\nWriting baseline levels...')
+  write_levels_by_sector_country(
+    etr_data    = baseline_partner_results[['static']],
+    output_file = 'gtap_levels_by_sector_country.csv',
+    scenario    = 'baseline',
+    output_base = output_dir
+  )
+  write_country_level_levels(
+    hs10_country_etrs = baseline_results[['static']],
+    output_file       = 'levels_by_census_country.csv',
+    scenario          = 'baseline',
+    output_base       = output_dir
+  )
+  write_country_hts2_levels(
+    hs10_country_etrs = baseline_results[['static']],
+    output_file       = 'levels_by_census_country_hts2.csv',
+    scenario          = 'baseline',
+    output_base       = output_dir
+  )
+  write_overall_levels(
+    etr_data          = baseline_partner_results[['static']],
+    hs10_country_etrs = baseline_results[['static']],
+    country_mapping   = country_mapping,
+    scenario          = 'baseline',
+    output_base       = output_dir
+  )
 
-  if (is.null(baseline_structure$baseline_dates)) {
-    # Static baseline: write single-date levels
-    write_levels_by_sector_country(
-      etr_data    = baseline_partner_results[['static']],
-      output_file = 'gtap_levels_by_sector_country.csv',
-      scenario    = 'baseline',
-      output_base = output_dir
-    )
-    write_country_level_levels(
-      hs10_country_etrs = baseline_results[['static']],
-      output_file       = 'levels_by_census_country.csv',
-      scenario          = 'baseline',
-      output_base       = output_dir
-    )
-    write_country_hts2_levels(
-      hs10_country_etrs = baseline_results[['static']],
-      output_file       = 'levels_by_census_country_hts2.csv',
-      scenario          = 'baseline',
-      output_base       = output_dir
-    )
-    write_overall_levels(
-      etr_data          = baseline_partner_results[['static']],
-      hs10_country_etrs = baseline_results[['static']],
-      country_mapping   = country_mapping,
-      scenario          = 'baseline',
-      output_base       = output_dir
-    )
-  } else {
-    # Time-varying baseline: write stacked levels
-    all_baseline_levels_data <- list()
-    for (date_str in baseline_structure$baseline_dates) {
-      all_baseline_levels_data[[date_str]] <- calc_overall_levels_data(
-        etr_data          = baseline_partner_results[[date_str]],
-        hs10_country_etrs = baseline_results[[date_str]],
-        country_mapping   = country_mapping
-      )
-    }
+  #---------------------------
+  # Load counterfactual configs
+  #---------------------------
 
-    write_levels_by_sector_country_stacked(
-      all_partner_etrs = baseline_partner_results,
-      output_file      = 'gtap_levels_by_sector_country.csv',
-      scenario         = 'baseline',
-      output_base      = output_dir
-    )
-    write_country_level_levels_stacked(
-      all_hs10_country_etrs = baseline_results,
-      output_file           = 'levels_by_census_country.csv',
-      scenario              = 'baseline',
-      output_base           = output_dir
-    )
-    write_country_hts2_levels_stacked(
-      all_hs10_country_etrs = baseline_results,
-      output_file           = 'levels_by_census_country_hts2.csv',
-      scenario              = 'baseline',
-      output_base           = output_dir
-    )
-    write_overall_levels_combined(
-      all_levels_data = all_baseline_levels_data,
-      scenario        = 'baseline',
-      output_base     = output_dir
-    )
+  message('\n--- Loading counterfactual configs ---')
+  counter_configs <- list()
+  for (entry in scenario_def$counterfactual) {
+    message(sprintf('\nLoading config for %s (historical: %s%s)',
+                    entry$date, entry$historical,
+                    if (!is.null(entry$reform)) sprintf(', reform: %s', entry$reform) else ''))
+    historical_path <- file.path(historical_dir, entry$historical)
+    reform_path <- if (!is.null(entry$reform)) file.path(scenario_dir, entry$reform) else NULL
+    counter_configs[[entry$date]] <- load_config_with_reform(historical_path, reform_path)
   }
 
   #---------------------------
   # Dispatch to static or time-varying counterfactual
   #---------------------------
 
-  if (is.null(scenario_structure$counter_dates)) {
-    # Static counterfactual (config files at scenario root)
+  if (length(scenario_def$counterfactual) == 1) {
+    # Single counterfactual entry = static scenario
     result <- do_scenario_static(
-      scenario          = scenario,
-      scenario_path     = scenario_path,
-      output_dir        = output_dir,
-      hs10_by_country   = hs10_by_country,
-      country_mapping   = country_mapping,
-      baseline_results  = baseline_results
+      scenario         = scenario,
+      config           = counter_configs[[counter_dates[1]]],
+      output_dir       = output_dir,
+      hs10_by_country  = hs10_by_country,
+      country_mapping  = country_mapping,
+      baseline_results = baseline_results
     )
   } else {
-    # Time-varying counterfactual
-    message(sprintf('\nDetected time-varying counterfactual with %d dates: %s',
-                    length(scenario_structure$counter_dates), paste(scenario_structure$counter_dates, collapse = ', ')))
+    # Multiple counterfactual entries = time-varying
+    message(sprintf('\nTime-varying counterfactual with %d dates: %s',
+                    length(counter_dates), paste(counter_dates, collapse = ', ')))
     result <- do_scenario_time_varying(
-      scenario          = scenario,
-      scenario_path     = scenario_path,
-      output_dir        = output_dir,
-      counter_dates     = scenario_structure$counter_dates,
-      hs10_by_country   = hs10_by_country,
-      country_mapping   = country_mapping,
-      baseline_results  = baseline_results
+      scenario         = scenario,
+      counter_configs  = counter_configs,
+      counter_dates    = counter_dates,
+      output_dir       = output_dir,
+      hs10_by_country  = hs10_by_country,
+      country_mapping  = country_mapping,
+      baseline_results = baseline_results,
+      series_horizon   = scenario_def$series_horizon
     )
   }
 
@@ -871,7 +917,7 @@ match_baseline <- function(counter_date, baseline_results) {
 #'
 #' Shared helper for static and time-varying counterfactual workflows.
 #'
-#' @param config_path Path to counterfactual config directory
+#' @param config Pre-loaded config list (from load_scenario_config or load_config_with_reform)
 #' @param baseline_key Baseline matcher key ('static' or YYYY-MM-DD)
 #' @param hs10_by_country Pre-loaded import data
 #' @param country_mapping Pre-loaded country mapping
@@ -881,14 +927,13 @@ match_baseline <- function(counter_date, baseline_results) {
 #' @param output_dir Base output directory for shock output
 #'
 #' @return Named list with hs10_country_etrs and partner_etrs
-run_counterfactual <- function(config_path, baseline_key,
+run_counterfactual <- function(config, baseline_key,
                                hs10_by_country, country_mapping,
                                baseline_results,
                                write_shocks = FALSE,
                                shock_scenario = NULL,
                                output_dir = 'output') {
 
-  config <- load_scenario_config(config_path)
   etrs <- calc_etrs_for_config(config, hs10_by_country, country_mapping)
 
   baseline_hs10 <- match_baseline(baseline_key, baseline_results)
@@ -921,19 +966,19 @@ run_counterfactual <- function(config_path, baseline_key,
 #' Run a static (non-time-varying) counterfactual scenario
 #'
 #' @param scenario Scenario name
-#' @param scenario_path Full path to scenario config directory
+#' @param config Pre-loaded counterfactual config
 #' @param output_dir Base output directory
 #' @param hs10_by_country Pre-loaded import data
 #' @param country_mapping Pre-loaded country mapping
 #' @param baseline_results Named list of baseline HS10×country results
 #'
 #' @return partner_etrs invisibly
-do_scenario_static <- function(scenario, scenario_path, output_dir,
+do_scenario_static <- function(scenario, config, output_dir,
                                 hs10_by_country, country_mapping,
                                 baseline_results) {
 
   counterfactual <- run_counterfactual(
-    config_path      = scenario_path,
+    config           = config,
     baseline_key     = 'static',
     hs10_by_country  = hs10_by_country,
     country_mapping  = country_mapping,
@@ -1019,24 +1064,26 @@ do_scenario_static <- function(scenario, scenario_path, output_dir,
 }
 
 
-#' Run a time-varying counterfactual scenario (dated subfolders)
+#' Run a time-varying counterfactual scenario
 #'
-#' Each date subfolder must contain a complete set of config files.
+#' Processes pre-loaded configs for each counterfactual date.
 #' Shock files are written per-date; CSVs are stacked with a date column.
 #'
 #' @param scenario Scenario name
-#' @param scenario_path Full path to scenario config directory
-#' @param output_dir Base output directory
+#' @param counter_configs Named list of pre-loaded configs (keyed by date string)
 #' @param counter_dates Sorted character vector of date strings (YYYY-MM-DD)
+#' @param output_dir Base output directory
 #' @param hs10_by_country Pre-loaded import data
 #' @param country_mapping Pre-loaded country mapping
 #' @param baseline_results Named list of baseline HS10×country results
+#' @param series_horizon End date for validity intervals (from scenario.yaml)
 #'
 #' @return Named list of per-date partner_etrs
-do_scenario_time_varying <- function(scenario, scenario_path, output_dir,
-                                      counter_dates, hs10_by_country,
+do_scenario_time_varying <- function(scenario, counter_configs, counter_dates,
+                                      output_dir, hs10_by_country,
                                       country_mapping,
-                                      baseline_results) {
+                                      baseline_results,
+                                      series_horizon = NULL) {
 
   # Collect per-date results
   all_partner_etrs      <- list()
@@ -1048,8 +1095,8 @@ do_scenario_time_varying <- function(scenario, scenario_path, output_dir,
     message(sprintf('\n--- Processing counterfactual date: %s ---', date_str))
 
     counterfactual <- run_counterfactual(
-      config_path      = file.path(scenario_path, date_str),
-      baseline_key     = date_str,
+      config           = counter_configs[[date_str]],
+      baseline_key     = 'static',
       hs10_by_country  = hs10_by_country,
       country_mapping  = country_mapping,
       baseline_results = baseline_results,
@@ -1080,14 +1127,7 @@ do_scenario_time_varying <- function(scenario, scenario_path, output_dir,
 
   # Compute validity intervals from sorted counter_dates
   # Each date is valid from itself until the day before the next date.
-  # The last date uses series_horizon from other_params (or defaults to +1 year).
-  series_horizon <- NULL
-  first_config_path <- file.path(scenario_path, counter_dates[1])
-  first_other_params_path <- file.path(first_config_path, 'other_params.yaml')
-  if (file.exists(first_other_params_path)) {
-    first_other_params <- read_yaml(first_other_params_path)
-    series_horizon <- first_other_params$series_horizon
-  }
+  # The last date uses series_horizon from scenario.yaml (or defaults to +1 year).
   if (is.null(series_horizon)) {
     series_horizon <- as.character(as.Date(counter_dates[length(counter_dates)]) + 365)
   }

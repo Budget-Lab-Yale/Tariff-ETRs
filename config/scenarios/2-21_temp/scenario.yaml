@@ -1,0 +1,15 @@
+# 2-21_temp: Temporary tariffs scenario
+#
+# Models March 2025 tariff expansion with Section 122 active from Feb 24 - Jul 24.
+# Baseline is pre-inauguration tariff policy.
+
+baseline: '2025-01-01'
+
+counterfactual:
+  - '2026-01-01'                        # Post-inauguration, pre-reciprocal
+  - date: '2026-02-20'                  # Reciprocal + S122 kicks in
+    reform: 'reforms/s122'
+  - date: '2026-07-24'                  # S122 expires (same rates as 2026-02-20, no S122)
+    historical: '2026-02-20'
+
+series_horizon: '2026-12-31'

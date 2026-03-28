@@ -1,0 +1,19 @@
+Config architecture overhaul complete. Tariff-ETRs is ready to be run by downstream consumers.
+
+What changed:
+- Scenarios now defined by config/scenarios/{name}/scenario.yaml
+- Historical tariff snapshots (from tracker) live in config/historical/{date}/
+- YAML-only mode removed; CSV mode is the only path
+- Reform overlays (YAML diffs on historical CSV) support partial S232 program overrides
+- Old config directories (baseline/, 2-21_temp/, etc.) deleted
+
+End-to-end tests passed:
+- 2-21_perm:        2 counterfactual dates, completed successfully
+- 2-21_temp:        3 counterfactual dates (with S122 reform overlay), completed successfully
+- 2-21_temp_flat50: 3 counterfactual dates (with flat metal content + S122 overlays), completed successfully
+
+All 38 historical dates exported from tracker to config/historical/.
+Git-lfs configured for config/historical/**/*.csv.gz.
+
+Note: scenario dates use 2026-02-20 (not 2026-02-24) to match tracker's effective_date for that revision.
+The 2026-07-24 date uses historical: '2026-02-20' (same underlying rates, S122 expired).

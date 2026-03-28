@@ -4,21 +4,20 @@
 #
 # This script runs tariff analysis for one or more scenarios, computing
 # deltas (counterfactual - baseline) and absolute tariff levels.
-# All scenarios share a baseline config (config/baseline/); each scenario
-# provides counterfactual config(s):
-#   - Section 232 tariffs (steel, aluminum, softwood, furniture, autos, etc.)
-#   - IEEPA tariffs (residual catch-all for imports not covered by 232)
-#   - USMCA exemptions with content requirements
+#
+# Each scenario is defined by a scenario.yaml in config/scenarios/{name}/
+# that references historical configs (config/historical/{date}/) and
+# optional reform overlays.
 #
 # Usage (interactive):
 #   1. Specify scenario names in the 'scenarios' vector below
-#   2. Ensure corresponding config files exist in config/{scenario}/
+#   2. Ensure config/scenarios/{name}/scenario.yaml exists
 #   3. Run: source('src/main.R')
 #
 # Usage (command line):
-#   Rscript src/main.R --scenario 11-17 --scenario 12-16
-#   Rscript src/main.R --scenario 11-17 --config-dir /path/to/config --output-dir /path/to/output
-#   Rscript src/main.R --scenario 11-17 --no-cache
+#   Rscript src/main.R --scenario 2-21_temp --scenario 2-21_perm
+#   Rscript src/main.R --scenario 2-21_temp --config-dir /path/to/config --output-dir /path/to/output
+#   Rscript src/main.R --scenario 2-21_temp --no-cache
 #
 # CLI arguments:
 #   --scenario       Scenario name (can be specified multiple times)

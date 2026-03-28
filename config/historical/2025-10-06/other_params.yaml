@@ -1,0 +1,39 @@
+mfn_rates: resources/mfn_rates_2025.csv
+mfn_exemption_shares: resources/mfn_exemption_shares.csv
+us_auto_content_share: 0.4
+us_auto_assembly_share: 0.33
+auto_rebate_rate: 0.0
+ieepa_usmca_exception: 1.0
+s122_usmca_exception: 0.0
+s301_usmca_exception: 0.0
+usmca_exempt:
+  aluminum: 0.0
+  aluminum_derivatives: 0.0
+  auto_parts: 1.0
+  autos_light_trucks: 1.0
+  autos_passenger: 1.0
+  buses: 0.0
+  kitchen_cabinets: 0.0
+  mhd_parts: 1.0
+  mhd_vehicles: 1.0
+  softwood: 0.0
+  steel: 0.0
+  wood_furniture: 0.0
+metal_content:
+  method: bea
+  bea_table: total
+  bea_granularity: detail
+  primary_chapters:
+  - '72'
+  - '73'
+  - '76'
+  - '74'
+  metal_programs:
+  - steel
+  - aluminum
+  - aluminum_derivatives
+  program_metal_types:
+    steel: steel
+    aluminum: aluminum
+    aluminum_derivatives: aluminum
+usmca_product_shares: resources/usmca_product_shares_2025.csv
