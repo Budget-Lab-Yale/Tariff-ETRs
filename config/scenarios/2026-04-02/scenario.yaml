@@ -1,0 +1,55 @@
+# 2026-04-02: Current law timeline (S122 temporary)
+#
+# Full historical tariff timeline from inauguration through current law.
+# Section 122 expires 150 days after enactment (2026-07-20).
+
+baseline: '2025-01-01'
+
+counterfactual:
+  # 2025 policy changes
+  - '2025-01-27'      # China IEEPA fentanyl (+10%)
+  - '2025-02-01'
+  - '2025-02-04'      # CA/MX fentanyl (+25%); China fentanyl (+20%)
+  - '2025-03-04'      # USMCA carve-outs; 232 derivatives
+  - '2025-03-05'
+  - '2025-03-12'      # 232 Autos (25%)
+  - '2025-04-02'      # IEEPA Phase 1 reciprocal (Liberation Day)
+  - '2025-04-03'      # China IEEPA: 34% -> 84%
+  - '2025-04-05'      # China IEEPA: 84% -> 125%; Phase 1 suspended
+  - '2025-04-09'      # Phase 1 suspension continues
+  - '2025-04-11'      # 232 Auto parts
+  - '2025-04-14'      # Geneva: China 125% -> 34% (suspended to 10%)
+  - '2025-04-22'
+  - '2025-05-02'      # 232 derivatives doubled (25% -> 50%)
+  - '2025-05-14'
+  - '2025-06-04'      # 232 steel/aluminum 50%
+  - '2025-07-01'      # CA fentanyl: 25% -> 35%; copper 232
+  - '2025-08-07'      # IEEPA Phase 2 reciprocal; Brazil EO (+40%)
+  - '2025-08-12'
+  - '2025-08-20'      # India EO (+25%)
+  - '2025-08-28'
+  - '2025-09-03'
+  - '2025-09-12'      # Japan floor (15%)
+  - '2025-09-19'      # EU exemption entries
+  - '2025-09-26'      # Section 122 entries
+  - '2025-10-06'      # MHD vehicles/buses 232; copper 232
+  - '2025-10-15'      # 301 cranes (100%); China fentanyl: 20% -> 10%
+  - '2025-10-22'
+  - '2025-10-31'
+  - '2025-11-05'
+  - '2025-11-12'
+  - '2025-11-15'      # S. Korea floor (15%); 232 auto S. Korea
+
+  # 2026 policy changes
+  - '2026-01-01'      # Switzerland/Liechtenstein floor (15%)
+  - '2026-01-16'      # Semiconductor tariffs (25%)
+  - '2026-01-30'
+  - '2026-02-12'      # Argentina beef quota
+  - '2026-02-20'      # IEEPA invalidated (SCOTUS); Section 122 Phase 3 (10%)
+
+  # S122 expiry (150 days after 2026-02-20)
+  - date: '2026-07-20'
+    historical: '2026-02-20'
+    reform: 'reforms/s122_expired'
+
+series_horizon: '2026-12-31'

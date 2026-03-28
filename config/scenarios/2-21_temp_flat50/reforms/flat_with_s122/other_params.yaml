@@ -1,9 +1,0 @@
-# Override metal content to flat 50% share + enable s122 USMCA exception
-# (shallow-merged over historical other_params.yaml)
-
-metal_content:
-  method: 'flat'
-  flat_share: 0.5
-  primary_chapters: ['72', '73', '76', '74']
-
-s122_usmca_exception: 1

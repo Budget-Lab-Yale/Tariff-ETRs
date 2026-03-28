@@ -361,11 +361,11 @@ load_ieepa_rates_yaml <- function(yaml_file,
       })
     )
 
-  # Only build the full HS10 × country grid if there are non-zero headline rates
-  # or product_rates that apply to all countries. Otherwise, product_country_rates
-  # will build the sparse result directly (avoids creating millions of zero rows).
+  # Only build the full HS10 × country grid if there are non-zero headline rates,
+  # product_rates that apply to all countries, or overlay_mode (where explicit zeros
+  # must be preserved to suppress base rates).
   has_product_rates <- !is.null(config$product_rates) && length(config$product_rates) > 0
-  needs_full_grid <- any(country_headline$rate > 0) || has_product_rates
+  needs_full_grid <- any(country_headline$rate > 0) || has_product_rates || overlay_mode
 
   if (needs_full_grid) {
     rate_matrix <- country_headline %>%

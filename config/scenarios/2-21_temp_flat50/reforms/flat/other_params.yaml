@@ -1,7 +1,0 @@
-# Override metal content to flat 50% share
-# (shallow-merged over historical other_params.yaml)
-
-metal_content:
-  method: 'flat'
-  flat_share: 0.5
-  primary_chapters: ['72', '73', '76', '74']

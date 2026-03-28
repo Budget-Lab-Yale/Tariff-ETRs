@@ -396,6 +396,23 @@ load_config_with_reform <- function(historical_path, reform_path = NULL) {
   # Merge other_params if reform provides overrides
   config$other_params <- merge_other_params(config$other_params, reform_path)
 
+  # Disable entire authorities if specified in other_params
+  disabled <- config$other_params$disable_authorities
+  if (!is.null(disabled)) {
+    authority_keys <- list(
+      s232 = 'params_s232', ieepa_reciprocal = 'rates_ieepa_reciprocal',
+      ieepa_fentanyl = 'rates_ieepa_fentanyl', s122 = 'rates_s122',
+      s301 = 'rates_s301', s201 = 'rates_s201', other = 'rates_other'
+    )
+    for (auth in disabled) {
+      key <- authority_keys[[auth]]
+      if (!is.null(key)) {
+        config[[key]] <- NULL
+        message(sprintf('  Disabled authority: %s', auth))
+      }
+    }
+  }
+
   # Load and merge YAML rate overlays
   yaml_overlay <- load_yaml_overlay(reform_path, overlay_mode = TRUE)
   if (!is.null(yaml_overlay)) {

@@ -1,4 +1,0 @@
-# Enable s122 USMCA exception for this reform period
-# (shallow-merged over historical other_params.yaml)
-
-s122_usmca_exception: 1

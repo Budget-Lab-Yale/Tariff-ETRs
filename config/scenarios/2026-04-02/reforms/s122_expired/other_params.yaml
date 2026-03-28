@@ -1,0 +1,3 @@
+# Section 122 expired (150-day sunset)
+disable_authorities:
+  - s122
