@@ -25,7 +25,7 @@
 # Usage:
 #   Rscript scripts/test_scenarios.R [config_dir]
 #
-# Default config_dir: config/2-21_perm/2026-02-24 (has all 5 authority types)
+# Default config_dir: config/historical/2026-02-20 (has all authority types)
 #
 # Note on rate_s122: Section 122 is included in the stacking formula but has
 # no dedicated scenario toggle in the original plan. This is because S122 is
@@ -49,7 +49,7 @@ source('src/calculations.R')
 # =============================================================================
 
 args <- commandArgs(trailingOnly = TRUE)
-config_dir <- if (length(args) >= 1) args[[1]] else 'config/2-21_perm/2026-02-24'
+config_dir <- if (length(args) >= 1) args[[1]] else 'config/historical/2026-02-20'
 
 message('=============================================================================')
 message('Counterfactual Scenario Validation')
@@ -80,7 +80,7 @@ record_test <- function(name, passed, detail = '') {
 
 message('Loading shared data...')
 
-usmca_shares <- read_csv('resources/usmca_shares.csv', show_col_types = FALSE)
+
 country_mapping <- read_csv(
   'resources/country_partner_mapping.csv',
   col_types = cols(cty_code = col_character()),
@@ -119,17 +119,19 @@ message('')
 #'
 #' @param config Full config from load_scenario_config()
 #' @param import_data HS10 x country import data
-#' @param usmca_data USMCA share data
 #' @param metal_content Metal content shares
 #' @param zero_232 If TRUE, pass NULL for all 232 parameters
 #' @param zero_ieepa_recip If TRUE, pass NULL for IEEPA reciprocal
 #' @param zero_ieepa_fent If TRUE, pass NULL for IEEPA fentanyl
 #' @param zero_s122 If TRUE, pass NULL for Section 122
 #' @param zero_s301 If TRUE, pass NULL for Section 301
-run_etr <- function(config, import_data, usmca_data, metal_content,
+#' @param zero_s201 If TRUE, pass NULL for Section 201
+#' @param zero_other If TRUE, pass NULL for other tariffs
+run_etr <- function(config, import_data, metal_content,
                     zero_232 = FALSE, zero_ieepa_recip = FALSE,
                     zero_ieepa_fent = FALSE, zero_s122 = FALSE,
-                    zero_s301 = FALSE) {
+                    zero_s301 = FALSE, zero_s201 = FALSE,
+                    zero_other = FALSE) {
   calc_weighted_etr(
     rates_s232              = if (zero_232) NULL else {
       if (!is.null(config$params_s232)) config$params_s232$rate_matrix else NULL
@@ -144,8 +146,10 @@ run_etr <- function(config, import_data, usmca_data, metal_content,
     rates_ieepa_fentanyl   = if (zero_ieepa_fent) NULL else config$rates_ieepa_fentanyl,
     rates_s122             = if (zero_s122) NULL else config$rates_s122,
     rates_s301             = if (zero_s301) NULL else config$rates_s301,
+    rates_s201             = if (zero_s201) NULL else config$rates_s201,
+    rates_other            = if (zero_other) NULL else config$rates_other,
     import_data            = import_data,
-    usmca_data             = usmca_data,
+    usmca_product_shares   = config$usmca_product_shares,
     us_auto_content_share  = config$other_params$us_auto_content_share,
     auto_rebate            = config$other_params$auto_rebate_rate,
     us_assembly_share      = config$other_params$us_auto_assembly_share,
@@ -156,6 +160,7 @@ run_etr <- function(config, import_data, usmca_data, metal_content,
     metal_programs         = config$other_params$metal_content$metal_programs %||% character(0),
     program_metal_types    = config$other_params$metal_content$program_metal_types %||% NULL,
     mfn_rates              = config$mfn_rates,
+    mfn_rates_by_product_country = config$mfn_rates_by_product_country,
     mfn_exemption_shares   = config$mfn_exemption_shares
   )
 }
@@ -168,29 +173,30 @@ run_etr <- function(config, import_data, usmca_data, metal_content,
 message('Computing ETRs for 6 scenarios...')
 
 message('  [1/6] Full authority...')
-etrs_full <- run_etr(full_config, hs10_by_country, usmca_shares, metal_content)
+etrs_full <- run_etr(full_config, hs10_by_country, metal_content)
 
 message('  [2/6] No IEEPA (reciprocal + fentanyl removed)...')
-etrs_no_ieepa <- run_etr(full_config, hs10_by_country, usmca_shares, metal_content,
+etrs_no_ieepa <- run_etr(full_config, hs10_by_country, metal_content,
                           zero_ieepa_recip = TRUE, zero_ieepa_fent = TRUE)
 
 message('  [3/6] No 232...')
-etrs_no_232 <- run_etr(full_config, hs10_by_country, usmca_shares, metal_content,
+etrs_no_232 <- run_etr(full_config, hs10_by_country, metal_content,
                         zero_232 = TRUE)
 
 message('  [4/6] No S301...')
-etrs_no_301 <- run_etr(full_config, hs10_by_country, usmca_shares, metal_content,
+etrs_no_301 <- run_etr(full_config, hs10_by_country, metal_content,
                         zero_s301 = TRUE)
 
 message('  [5/6] No S122...')
-etrs_no_s122 <- run_etr(full_config, hs10_by_country, usmca_shares, metal_content,
+etrs_no_s122 <- run_etr(full_config, hs10_by_country, metal_content,
                          zero_s122 = TRUE)
 
 message('  [6/6] MFN only (all authorities removed)...')
-etrs_mfn_only <- run_etr(full_config, hs10_by_country, usmca_shares, metal_content,
+etrs_mfn_only <- run_etr(full_config, hs10_by_country, metal_content,
                           zero_232 = TRUE, zero_ieepa_recip = TRUE,
                           zero_ieepa_fent = TRUE, zero_s122 = TRUE,
-                          zero_s301 = TRUE)
+                          zero_s301 = TRUE, zero_s201 = TRUE,
+                          zero_other = TRUE)
 
 message('')
 
@@ -202,7 +208,7 @@ message('')
 message('--- Test 1: Baseline identity ---')
 
 # Run the same config a second time
-etrs_full_2 <- run_etr(full_config, hs10_by_country, usmca_shares, metal_content)
+etrs_full_2 <- run_etr(full_config, hs10_by_country, metal_content)
 
 # Compare via calc_delta (the function used in production)
 delta <- calc_delta(etrs_full, etrs_full_2)
