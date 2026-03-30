@@ -22,7 +22,7 @@
 library(tidyverse)
 
 # ---- Configuration ----------------------------------------------------------
-scenario          <- '2-21_temp'
+scenario          <- '2026-04-02'
 our_levels_file   <- sprintf('output/%s/levels_by_census_country.csv', scenario)
 cbo_file          <- '../conventional-tariff-analysis-model/outputs/nov15_tariff_policy/product_country_etr.csv'
 cache_file        <- 'cache/hs10_by_country_gtap_2024_con.rds'

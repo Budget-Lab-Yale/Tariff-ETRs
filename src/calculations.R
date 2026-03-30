@@ -48,64 +48,6 @@
 #
 # =============================================================================
 
-# -----------------------------------------------------------------------------
-# Scenario structure detection
-# -----------------------------------------------------------------------------
-
-#' Extract valid YYYY-MM-DD date subdirectories from a directory
-#'
-#' @param dir_path Path to directory to scan
-#'
-#' @return Sorted character vector of date strings, or NULL if none found
-find_date_subdirs <- function(dir_path) {
-  if (!dir.exists(dir_path)) return(NULL)
-  subdirs <- list.dirs(dir_path, full.names = FALSE, recursive = FALSE)
-  date_pattern <- '^\\d{4}-\\d{2}-\\d{2}$'
-  date_candidates <- subdirs[grepl(date_pattern, subdirs)]
-  valid_dates <- date_candidates[!is.na(as.Date(date_candidates, format = '%Y-%m-%d'))]
-  if (length(valid_dates) == 0) return(NULL)
-  sort(valid_dates)
-}
-
-
-#' Detect baseline structure (shared across scenarios)
-#'
-#' Checks that the shared baseline directory exists and detects whether
-#' it is static (config files at top level) or time-varying (YYYY-MM-DD
-#' subfolders).
-#'
-#' @param baseline_dir Path to the shared baseline config directory
-#'
-#' @return Named list with:
-#'   - baseline_dates: sorted date strings if time-varying, NULL if static
-detect_baseline_structure <- function(baseline_dir) {
-  if (!dir.exists(baseline_dir)) {
-    stop(sprintf('Shared baseline directory not found: %s', baseline_dir))
-  }
-
-  list(
-    baseline_dates = find_date_subdirs(baseline_dir)
-  )
-}
-
-
-#' Detect counterfactual structure for a scenario
-#'
-#' Examines the scenario config directory for:
-#'   - YYYY-MM-DD subfolders as counterfactual dates (time-varying)
-#'   - or config files at the top level (static counterfactual)
-#'
-#' @param scenario_dir Path to the scenario config directory
-#'
-#' @return Named list with:
-#'   - counter_dates: sorted date strings if counterfactual is time-varying, NULL if static
-detect_scenario_structure <- function(scenario_dir) {
-  list(
-    counter_dates = find_date_subdirs(scenario_dir)
-  )
-}
-
-
 #' Load scenario definition from scenario.yaml
 #'
 #' Reads scenario.yaml and normalizes counterfactual entries to a uniform
@@ -147,9 +89,12 @@ load_scenario_definition <- function(scenario_dir, historical_dir) {
       # String shorthand: date = historical date, no reform
       list(date = entry, historical = entry, reform = NULL)
     } else if (is.list(entry)) {
-      date_val <- as.character(entry$date)
-      if (is.null(date_val)) {
+      if (is.null(entry$date)) {
         stop('Each counterfactual entry must have a date field')
+      }
+      date_val <- as.character(entry$date)
+      if (length(date_val) != 1 || !grepl('^\\d{4}-\\d{2}-\\d{2}$', date_val)) {
+        stop(sprintf('Invalid date in counterfactual entry: "%s"', paste(date_val, collapse = ', ')))
       }
       historical_val <- if (!is.null(entry$historical)) as.character(entry$historical) else date_val
       reform_val <- if (!is.null(entry$reform)) as.character(entry$reform) else NULL

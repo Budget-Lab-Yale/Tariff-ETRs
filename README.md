@@ -32,7 +32,7 @@ Tariff-ETRs/
 │   │       ├── statutory_rates.csv.gz
 │   │       └── other_params.yaml
 │   └── scenarios/                # User-authored scenario definitions
-│       └── 2-21_temp/
+│       └── 2026-04-02/
 │           ├── scenario.yaml     # Defines baseline + counterfactual
 │           └── reforms/
 │               └── s122/
@@ -127,7 +127,7 @@ HTS10 codes map to GTAP sectors via a crosswalk derived from [Angel Aguiar's 6-d
 
 2. Set scenarios in `src/main.R`:
    ```r
-   scenarios <- c('2-21_perm', '2-21_temp')
+   scenarios <- c('2026-04-02')
    ```
 
 3. Run:

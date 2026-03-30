@@ -36,9 +36,13 @@ source('src/data_processing.R')
 load_baseline_policy_rates <- function() {
   message('\n--- Loading baseline policy rates ---')
 
-  # Load S232 rates
-  params_s232 <- load_s232_rates('config/baseline/s232.yaml')
-  rate_matrix_232 <- params_s232$rate_matrix
+  # Load policy rates from a historical config via load_scenario_config()
+  source('src/calculations.R')
+  baseline_date <- '2025-01-01'
+  baseline_config <- load_scenario_config(file.path('config/historical', baseline_date))
+
+  # Extract S232 rates from CSV config
+  rate_matrix_232 <- baseline_config$s232$rate_matrix
 
   # Compute max S232 rate across all programs per HS10 x country
   # NAs are structural: steel HS10 codes have NA in aluminum columns and vice versa.
@@ -54,11 +58,8 @@ load_baseline_policy_rates <- function() {
   message(sprintf('S232: %s non-zero HS10 x country combinations',
                   format(nrow(s232_rates), big.mark = ',')))
 
-  # Load S301 rates
-  s301_rates <- load_ieepa_rates_yaml(
-    'config/baseline/s301.yaml',
-    rate_col_name = 's301_rate'
-  ) %>%
+  # Extract S301 rates from CSV config
+  s301_rates <- baseline_config$s301 %>%
     filter(s301_rate > 0) %>%
     select(hs10, cty_code, s301_rate)
 

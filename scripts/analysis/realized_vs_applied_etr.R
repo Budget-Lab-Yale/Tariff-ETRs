@@ -237,7 +237,7 @@ print_china_detail <- function(hs2_data) {
 # Load our model's baseline output if available
 load_applied_baseline <- function() {
   # Check if baseline output exists (from a prior run)
-  levels_file <- 'output/2-21_temp/levels_by_sector_country.csv'
+  levels_file <- 'output/2026-04-02/gtap_levels_by_sector_country.csv'
   if (!file.exists(levels_file)) {
     message('No baseline output found at ', levels_file)
     return(NULL)

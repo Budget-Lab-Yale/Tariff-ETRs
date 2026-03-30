@@ -19,7 +19,7 @@ library(tidyverse)
 library(readxl)
 
 # ---- Configuration ----------------------------------------------------------
-scenario          <- '2-21_temp'
+scenario          <- '2026-04-02'
 levels_file       <- sprintf('output/%s/levels_by_census_country.csv', scenario)
 benchmark_file    <- 'C:/Users/jar335/Downloads/s122_actual_country_comparison.xlsx'
 iso3_mapping_file <- 'resources/census_to_iso3.csv'

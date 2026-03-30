@@ -123,7 +123,7 @@ config/
       other_params.yaml
 
   scenarios/
-    2-21_temp/
+    2026-04-02/
       scenario.yaml                    # Defines baseline + counterfactual
       reforms/
         s122/

@@ -15,9 +15,9 @@
 #   3. Run: source('src/main.R')
 #
 # Usage (command line):
-#   Rscript src/main.R --scenario 2-21_temp --scenario 2-21_perm
-#   Rscript src/main.R --scenario 2-21_temp --config-dir /path/to/config --output-dir /path/to/output
-#   Rscript src/main.R --scenario 2-21_temp --no-cache
+#   Rscript src/main.R --scenario 2026-04-02
+#   Rscript src/main.R --scenario 2026-04-02 --config-dir /path/to/config --output-dir /path/to/output
+#   Rscript src/main.R --scenario 2026-04-02 --no-cache
 #
 # CLI arguments:
 #   --scenario       Scenario name (can be specified multiple times)
@@ -123,8 +123,7 @@ if (is.null(cli_config)) {
   import_data_path <- 'C:/Users/jar335/Downloads'
   use_cache <- TRUE
   scenarios <- c(
-    '2-21_perm',
-    '2-21_temp'
+    '2026-04-02'
   )
 } else {
   # CLI mode: use parsed arguments
