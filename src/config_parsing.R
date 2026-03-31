@@ -10,6 +10,7 @@
 #   - load_s232_rates():           Load Section 232 rates at country level with defaults
 #   - load_ieepa_rates_yaml():    Load IEEPA rates at country level with hierarchical config
 #   - load_metal_content():       Load metal content shares for 232 derivative adjustment
+#   - loader_context():            Shared context: HS10 universe, country codes, mnemonic map
 #
 # =============================================================================
 
@@ -37,6 +38,30 @@ get_mnemonic_mapping <- function(country_partner_file = 'resources/country_partn
     deframe()
 
   return(mnemonic_map)
+}
+
+
+#' Load shared context for YAML rate loaders
+#'
+#' Returns the HS10 universe, country code universe, and mnemonic mapping
+#' that both load_s232_rates() and load_ieepa_rates_yaml() need.
+#'
+#' @param crosswalk_file Path to HS10-GTAP crosswalk CSV
+#' @param census_codes_file Path to Census country codes CSV
+#' @param country_partner_file Path to country-partner mapping CSV
+#'
+#' @return Named list with: hs10_codes, all_country_codes, mnemonic_map
+loader_context <- function(crosswalk_file = 'resources/hs10_gtap_crosswalk.csv',
+                           census_codes_file = 'resources/census_codes.csv',
+                           country_partner_file = 'resources/country_partner_mapping.csv') {
+  crosswalk <- read_csv(crosswalk_file, show_col_types = FALSE) %>%
+    mutate(hs10 = as.character(hs10))
+
+  list(
+    hs10_codes         = unique(crosswalk$hs10),
+    all_country_codes  = load_census_codes(census_codes_file)$cty_code,
+    mnemonic_map       = get_mnemonic_mapping(country_partner_file)
+  )
 }
 
 
@@ -146,17 +171,11 @@ load_s232_rates <- function(yaml_file,
   # Read YAML configuration
   params_s232 <- read_yaml(yaml_file)
 
-  # Load mnemonic mapping for resolving friendly country names
-
-  mnemonic_map <- get_mnemonic_mapping(country_partner_file)
-
-  # Read HS10 universe from crosswalk
-  crosswalk <- read_csv(crosswalk_file, show_col_types = FALSE) %>%
-    mutate(hs10 = as.character(hs10))
-  hs10_codes <- unique(crosswalk$hs10)
-
-  # Read country universe from Census codes
-  all_country_codes <- load_census_codes(census_codes_file)$cty_code
+  # Load shared context (HS10 universe, country codes, mnemonic map)
+  ctx <- loader_context(crosswalk_file, census_codes_file, country_partner_file)
+  hs10_codes <- ctx$hs10_codes
+  all_country_codes <- ctx$all_country_codes
+  mnemonic_map <- ctx$mnemonic_map
 
   # Extract USMCA exempt flags
   usmca_exempt_flags <- sapply(names(params_s232), function(t) params_s232[[t]]$usmca_exempt)
@@ -299,13 +318,11 @@ load_ieepa_rates_yaml <- function(yaml_file,
   # Read YAML configuration
   config <- read_yaml(yaml_file)
 
-  # Load mnemonic mapping for resolving friendly country names
-  mnemonic_map <- get_mnemonic_mapping(country_partner_file)
-
-  # Read HS10 universe
-  crosswalk <- read_csv(crosswalk_file, show_col_types = FALSE) %>%
-    mutate(hs10 = as.character(hs10))
-  hs10_codes <- unique(crosswalk$hs10)
+  # Load shared context (HS10 universe, country codes, mnemonic map)
+  ctx <- loader_context(crosswalk_file, census_codes_file, country_partner_file)
+  hs10_codes <- ctx$hs10_codes
+  all_country_codes <- ctx$all_country_codes
+  mnemonic_map <- ctx$mnemonic_map
 
   # Exclude exempt products if specified (blanket authority minus exemption list).
   # Used for authorities like IEEPA reciprocal that apply to ALL products except
@@ -317,9 +334,6 @@ load_ieepa_rates_yaml <- function(yaml_file,
     message(sprintf('  Excluded %d exempt products (%d HS10 codes)',
                     length(config$exempt_products), length(exempt_hs10)))
   }
-
-  # Read country universe
-  all_country_codes <- load_census_codes(census_codes_file)$cty_code
 
   # Resolve mnemonics in headline_rates (e.g., 'china' → '5700', 'eu' → 27 codes)
   headline_rates <- resolve_country_mnemonics(config$headline_rates, mnemonic_map)
