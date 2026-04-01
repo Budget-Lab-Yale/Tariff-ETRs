@@ -8,11 +8,13 @@ s122_usmca_exception: 1.0
 s301_usmca_exception: 0.0
 usmca_exempt:
   aluminum: 0.0
+  aluminum_derivatives: 0.0
+  auto_parts: 1.0
   autos_light_trucks: 1.0
   autos_passenger: 1.0
   buses: 0.0
-  copper: 0.0
   kitchen_cabinets: 0.0
+  mhd_parts: 1.0
   mhd_vehicles: 1.0
   softwood: 0.0
   steel: 0.0
@@ -29,9 +31,9 @@ metal_content:
   metal_programs:
   - steel
   - aluminum
-  - copper
+  - aluminum_derivatives
   program_metal_types:
     steel: steel
     aluminum: aluminum
-    copper: copper
+    aluminum_derivatives: aluminum
 usmca_product_shares: resources/usmca_product_shares_2025.csv
