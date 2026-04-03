@@ -1,0 +1,24 @@
+# Section 232 Pharmaceuticals (effective 2026-09-29)
+# S122 already expired on 2026-07-20 (150-day sunset)
+disable_authorities:
+  - s122
+
+# Country-level pharma adjustment shares
+# Effective rate = pharma_rate * (1 - generic_share) * (1 - exempt_share)
+# Explicit country codes override mnemonic expansions regardless of order.
+
+# Generic drug share: fraction of imports that are generic (no additional tariff)
+pharma_generic_share:
+  china: 0.95
+  '5330': 0.95         # India
+  default: 0.20
+
+# Exempt company share: fraction of patented imports from Annex II/III companies
+pharma_exempt_share:
+  eu: 0.75             # EU-27 base (mnemonic first, overridden below)
+  uk: 0.75
+  japan: 0.75
+  default: 0.40
+  '4190': 0.95         # Ireland (overrides eu)
+  '4419': 0.95         # Switzerland
+  '4231': 0.95         # Belgium (overrides eu)

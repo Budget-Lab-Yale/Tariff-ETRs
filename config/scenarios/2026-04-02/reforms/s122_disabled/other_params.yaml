@@ -1,0 +1,3 @@
+# Disable S122 only (stacking exercise base layer)
+disable_authorities:
+  - s122

@@ -101,23 +101,25 @@ resolve_country_mnemonics <- function(rates_config, mnemonic_map) {
   resolved <- list()
   valid_mnemonics <- names(mnemonic_map)
 
+  # Two-pass resolution: mnemonics first, then explicit codes override.
+  # This ensures explicit country codes always win regardless of YAML key order.
+  explicit_codes <- list()
+
   for (key in names(rates_config)) {
     rate <- rates_config[[key]]
 
     if (key == 'default') {
-      # Keep default as-is
       resolved[['default']] <- rate
     } else if (key %in% valid_mnemonics) {
-      # This is a mnemonic - expand to all constituent country codes
+      # Pass 1: expand mnemonics
       country_codes <- mnemonic_map[[key]]
       for (code in country_codes) {
         resolved[[code]] <- rate
       }
     } else if (grepl('^[0-9]+$', key)) {
-      # Valid numeric country code
-      resolved[[key]] <- rate
+      # Defer explicit codes to pass 2
+      explicit_codes[[key]] <- rate
     } else {
-      # Invalid key - not 'default', not a mnemonic, not numeric
       stop(
         'Invalid country identifier in config: "', key, '"\n',
         '  Must be one of:\n',
@@ -129,10 +131,46 @@ resolve_country_mnemonics <- function(rates_config, mnemonic_map) {
     }
   }
 
+  # Pass 2: explicit codes override mnemonic expansions
+  for (key in names(explicit_codes)) {
+    resolved[[key]] <- explicit_codes[[key]]
+  }
+
   return(resolved)
 }
 
 
+#' Resolve a pharma share config (with mnemonics) to a country-level tibble
+#'
+#' Takes a named list from other_params (e.g., pharma_generic_share) with
+#' country mnemonics and a default, resolves to a tibble of (cty_code, share).
+#'
+#' @param share_config Named list from YAML (e.g., list(china = 0.95, default = 0.20))
+#' @param mnemonic_map Mnemonic → country code mapping from get_mnemonic_mapping()
+#' @param all_country_codes Character vector of all Census country codes
+#' @param col_name Name for the share column in the returned tibble
+#'
+#' @return Tibble with columns: cty_code, {col_name}. NULL if share_config is NULL.
+resolve_pharma_share <- function(share_config, mnemonic_map, all_country_codes, col_name) {
+  if (is.null(share_config)) return(NULL)
+
+  resolved <- resolve_country_mnemonics(share_config, mnemonic_map)
+
+  # Expand default to all countries not explicitly listed
+  default_val <- resolved[['default']]
+  resolved[['default']] <- NULL
+  if (!is.null(default_val)) {
+    remaining <- setdiff(all_country_codes, names(resolved))
+    for (code in remaining) {
+      resolved[[code]] <- default_val
+    }
+  }
+
+  tibble(
+    cty_code = names(resolved),
+    !!col_name := as.numeric(resolved)
+  )
+}
 
 
 #' Load Section 232 tariff rates as complete HS10 × country tibble
@@ -164,7 +202,8 @@ resolve_country_mnemonics <- function(rates_config, mnemonic_map) {
 load_s232_rates <- function(yaml_file,
                            crosswalk_file = 'resources/hs10_gtap_crosswalk.csv',
                            census_codes_file = 'resources/census_codes.csv',
-                           country_partner_file = 'resources/country_partner_mapping.csv') {
+                           country_partner_file = 'resources/country_partner_mapping.csv',
+                           overlay_mode = FALSE) {
 
   message('Loading Section 232 rates from YAML...')
 
@@ -200,7 +239,17 @@ load_s232_rates <- function(yaml_file,
     tt_config <- params_s232[[tariff_name]]$target_total
     if (!is.null(tt_config) && length(tt_config) > 0) {
       tt_resolved <- resolve_country_mnemonics(tt_config, mnemonic_map)
-      tt_resolved[['default']] <- NULL  # target_total should not have a default
+
+      # Expand default to all countries not explicitly listed
+      tt_default <- tt_resolved[['default']]
+      tt_resolved[['default']] <- NULL
+      if (!is.null(tt_default)) {
+        remaining <- setdiff(all_country_codes, names(tt_resolved))
+        for (code in remaining) {
+          tt_resolved[[code]] <- tt_default
+        }
+      }
+
       if (length(tt_resolved) > 0) {
         target_total_rules[[tariff_name]] <- tibble(
           cty_code = names(tt_resolved),
@@ -216,8 +265,9 @@ load_s232_rates <- function(yaml_file,
       pattern <- '^$'  # Matches nothing
     }
 
-    # Build country rates lookup (only countries with non-zero rates)
-    country_rates_nonzero <- tibble(
+    # Build country rates lookup
+    # In overlay mode, keep zeros so they can suppress baseline rates.
+    country_rates <- tibble(
       cty_code = all_country_codes,
       country_rate = sapply(all_country_codes, function(code) {
         if (!is.null(rates_config[[code]])) {
@@ -226,11 +276,13 @@ load_s232_rates <- function(yaml_file,
           default_rate
         }
       })
-    ) %>%
-      filter(country_rate > 0)
+    )
+    if (!overlay_mode) {
+      country_rates <- country_rates %>% filter(country_rate > 0)
+    }
 
-    # Build sparse rate matrix for this tariff
-    if (nrow(country_rates_nonzero) > 0 && length(hts_codes) > 0) {
+    # Build rate matrix for this tariff
+    if (nrow(country_rates) > 0 && length(hts_codes) > 0) {
       # Get covered HS10 codes
       covered_hs10 <- hs10_codes[str_detect(hs10_codes, pattern)]
 
@@ -239,9 +291,9 @@ load_s232_rates <- function(yaml_file,
 
         tariff_matrix <- expand_grid(
           hs10 = covered_hs10,
-          cty_code = country_rates_nonzero$cty_code
+          cty_code = country_rates$cty_code
         ) %>%
-          left_join(country_rates_nonzero, by = 'cty_code') %>%
+          left_join(country_rates, by = 'cty_code') %>%
           rename(!!rate_col_name := country_rate)
 
         tariff_matrices[[tariff_name]] <- tariff_matrix

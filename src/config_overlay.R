@@ -170,7 +170,7 @@ load_yaml_overlay <- function(config_path, overlay_mode = TRUE) {
   overlay <- list()
 
   if (found[['s232']]) {
-    overlay$params_s232 <- load_s232_rates(yaml_files[['s232']])
+    overlay$params_s232 <- load_s232_rates(yaml_files[['s232']], overlay_mode = overlay_mode)
   }
 
   rate_map <- list(

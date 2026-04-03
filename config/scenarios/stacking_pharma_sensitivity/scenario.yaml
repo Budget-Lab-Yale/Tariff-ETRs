@@ -1,0 +1,30 @@
+# Stacking Exercise 3: Pharma sensitivity (no S122)
+#
+# Each date is a cumulative layer — look at LEVELS output.
+# Marginal impact = level[layer N] - level[layer N-1]
+# Dates are arbitrary labels (not real policy dates).
+
+baseline: '2025-01-01'
+
+counterfactual:
+  # Layer 0: Current law (2026-02-20) minus S122
+  - date: '2026-03-01'
+    historical: '2026-02-20'
+    reform: '../2026-04-02/reforms/s122_disabled'
+
+  # Layer 1: + best-guess pharma
+  - date: '2026-03-02'
+    historical: '2026-02-20'
+    reform: '../2026-04-02/reforms/pharma_232'
+
+  # Layer 2: remove company carveout
+  - date: '2026-03-03'
+    historical: '2026-02-20'
+    reform: '../2026-04-02/reforms/pharma_232_no_exempt'
+
+  # Layer 3: remove generic carveout (full statutory)
+  - date: '2026-03-04'
+    historical: '2026-02-20'
+    reform: '../2026-04-02/reforms/pharma_232_full_statutory'
+
+series_horizon: '2026-12-31'

@@ -1,0 +1,10 @@
+# Section 232 Pharmaceuticals — full statutory rates
+# No generic carveout, no company carveout
+disable_authorities:
+  - s122
+
+pharma_generic_share:
+  default: 0
+
+pharma_exempt_share:
+  default: 0

@@ -1,0 +1,20 @@
+# Combined: Section 232 Metal Overhaul + Section 122 Expired
+#
+# Metal overhaul (April 6, 2026): full-value tariffs, disable metal_share scaling
+# S122 expiry (July 20, 2026): 150-day sunset
+
+disable_authorities:
+  - s122
+
+metal_content:
+  method: bea
+  bea_table: total
+  bea_granularity: detail
+  primary_chapters:
+  - '72'
+  - '73'
+  - '76'
+  - '74'
+  metal_programs: []
+
+us_metal_origin_share: 0

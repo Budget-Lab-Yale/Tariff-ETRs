@@ -36,6 +36,21 @@ calc_etrs_for_config <- function(config, hs10_by_country, country_mapping) {
     import_data = hs10_by_country
   )
 
+  # Resolve pharma adjustment shares (country mnemonics → tibbles)
+  pharma_generic_share <- NULL
+  pharma_exempt_share <- NULL
+  if (!is.null(config$other_params$pharma_generic_share) ||
+      !is.null(config$other_params$pharma_exempt_share)) {
+    mnemonic_map <- get_mnemonic_mapping()
+    all_cty_codes <- unique(hs10_by_country$cty_code)
+    pharma_generic_share <- resolve_pharma_share(
+      config$other_params$pharma_generic_share, mnemonic_map, all_cty_codes, 'generic_share'
+    )
+    pharma_exempt_share <- resolve_pharma_share(
+      config$other_params$pharma_exempt_share, mnemonic_map, all_cty_codes, 'exempt_share'
+    )
+  }
+
   hs10_country_etrs <- calc_weighted_etr(
     rates_s232              = if (!is.null(config$params_s232)) config$params_s232$rate_matrix else NULL,
     usmca_exempt_s232       = if (!is.null(config$params_s232)) config$params_s232$usmca_exempt else NULL,
@@ -59,7 +74,10 @@ calc_etrs_for_config <- function(config, hs10_by_country, country_mapping) {
     program_metal_types    = config$other_params$metal_content$program_metal_types %||% NULL,
     mfn_rates                    = config$mfn_rates,
     mfn_rates_by_product_country = config$mfn_rates_by_product_country,
-    mfn_exemption_shares         = config$mfn_exemption_shares
+    mfn_exemption_shares         = config$mfn_exemption_shares,
+    pharma_generic_share         = pharma_generic_share,
+    pharma_exempt_share          = pharma_exempt_share,
+    us_metal_origin_share        = config$other_params$us_metal_origin_share %||% 0
   )
 
   message('Aggregating HS10×country results to partner×GTAP level...')
@@ -149,7 +167,10 @@ calc_weighted_etr <- function(rates_s232,
                               program_metal_types = NULL,
                               mfn_rates = NULL,
                               mfn_rates_by_product_country = NULL,
-                              mfn_exemption_shares = NULL) {
+                              mfn_exemption_shares = NULL,
+                              pharma_generic_share = NULL,
+                              pharma_exempt_share = NULL,
+                              us_metal_origin_share = 0) {
 
   # =============================================================================
   # Build complete rate matrix by joining config tables with import data
@@ -457,6 +478,41 @@ calc_weighted_etr <- function(rates_s232,
   # Clean up statutory_mfn (only needed for target-total computations above)
   rate_matrix <- rate_matrix %>%
     select(-statutory_mfn)
+
+  # =============================================================================
+  # Apply pharma patented × exempt adjustment
+  # Scales the pharma 232 rate by (1 - generic_share) * (1 - exempt_share)
+  # per country, capturing both generic/patented split and company exemptions.
+  # =============================================================================
+  if ('s232_pharmaceuticals_rate' %in% names(rate_matrix) &&
+      !is.null(pharma_generic_share) && !is.null(pharma_exempt_share)) {
+    rate_matrix <- rate_matrix %>%
+      left_join(pharma_generic_share, by = 'cty_code') %>%
+      left_join(pharma_exempt_share, by = 'cty_code') %>%
+      mutate(
+        generic_share = if_else(is.na(generic_share), 0, generic_share),
+        exempt_share = if_else(is.na(exempt_share), 0, exempt_share),
+        s232_pharmaceuticals_rate = s232_pharmaceuticals_rate *
+          (1 - generic_share) * (1 - exempt_share)
+      ) %>%
+      select(-generic_share, -exempt_share)
+  }
+
+  # =============================================================================
+  # Apply US-origin metal discount
+  # The EO provides a 10% rate for articles where the metal was processed in the
+  # US (smelted/cast for aluminum/copper, melted/poured for steel). This blends
+  # the full rate with 10% based on the estimated US-origin share of imports.
+  # effective_rate = rate * (1 - share) + 0.10 * share
+  # =============================================================================
+  if (us_metal_origin_share > 0) {
+    us_origin_rate <- 0.10
+    for (col in rate_s232_cols) {
+      rate_matrix <- rate_matrix %>%
+        mutate(!!col := !!sym(col) * (1 - us_metal_origin_share) +
+                 us_origin_rate * us_metal_origin_share * (!!sym(col) > 0))
+    }
+  }
 
   # =============================================================================
   # Apply metal content shares to Section 232 metal program rates

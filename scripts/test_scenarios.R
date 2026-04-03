@@ -108,6 +108,21 @@ metal_content <- load_metal_content(
   import_data = hs10_by_country
 )
 
+# Resolve pharma adjustment shares (if present in config)
+pharma_generic_share <- NULL
+pharma_exempt_share <- NULL
+if (!is.null(full_config$other_params$pharma_generic_share) ||
+    !is.null(full_config$other_params$pharma_exempt_share)) {
+  mnemonic_map <- get_mnemonic_mapping()
+  all_cty_codes <- unique(hs10_by_country$cty_code)
+  pharma_generic_share <- resolve_pharma_share(
+    full_config$other_params$pharma_generic_share, mnemonic_map, all_cty_codes, 'generic_share'
+  )
+  pharma_exempt_share <- resolve_pharma_share(
+    full_config$other_params$pharma_exempt_share, mnemonic_map, all_cty_codes, 'exempt_share'
+  )
+}
+
 message('')
 
 
@@ -161,7 +176,9 @@ run_etr <- function(config, import_data, metal_content,
     program_metal_types    = config$other_params$metal_content$program_metal_types %||% NULL,
     mfn_rates              = config$mfn_rates,
     mfn_rates_by_product_country = config$mfn_rates_by_product_country,
-    mfn_exemption_shares   = config$mfn_exemption_shares
+    mfn_exemption_shares   = config$mfn_exemption_shares,
+    pharma_generic_share   = pharma_generic_share,
+    pharma_exempt_share    = pharma_exempt_share
   )
 }
 

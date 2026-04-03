@@ -1,0 +1,6 @@
+ts <- readRDS('C:/Users/jar335/Documents/Repositories/tariff-rate-tracker/data/timeseries/rate_timeseries.rds')
+cat('Columns:\n')
+cat(paste(names(ts), collapse = '\n'), '\n')
+cat(sprintf('\nRows: %s\n', format(nrow(ts), big.mark = ',')))
+cat(sprintf('Revisions: %d\n', length(unique(ts$revision))))
+cat(sprintf('Date range: %s to %s\n', min(ts$valid_from), max(ts$valid_until)))
