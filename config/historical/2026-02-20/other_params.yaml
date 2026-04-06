@@ -31,12 +31,12 @@ metal_content:
   - '74'
   metal_programs:
   - steel
-  - steel_derivatives
   - aluminum
   - aluminum_derivatives
+  - steel_derivatives
   program_metal_types:
     steel: steel
-    steel_derivatives: steel
     aluminum: aluminum
     aluminum_derivatives: aluminum
+    steel_derivatives: steel
 usmca_product_shares: resources/usmca_product_shares_2025.csv

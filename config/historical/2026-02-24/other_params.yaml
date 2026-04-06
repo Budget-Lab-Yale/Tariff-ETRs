@@ -18,6 +18,7 @@ usmca_exempt:
   mhd_vehicles: 1.0
   softwood: 0.0
   steel: 0.0
+  steel_derivatives: 0.0
   wood_furniture: 0.0
 metal_content:
   method: bea
@@ -32,8 +33,10 @@ metal_content:
   - steel
   - aluminum
   - aluminum_derivatives
+  - steel_derivatives
   program_metal_types:
     steel: steel
     aluminum: aluminum
     aluminum_derivatives: aluminum
+    steel_derivatives: steel
 usmca_product_shares: resources/usmca_product_shares_2025.csv
