@@ -283,8 +283,19 @@ load_s232_rates <- function(yaml_file,
 
     # Build rate matrix for this tariff
     if (nrow(country_rates) > 0 && length(hts_codes) > 0) {
-      # Get covered HS10 codes
+      # Get covered HS10 codes by expanding prefixes against the crosswalk universe
       covered_hs10 <- hs10_codes[str_detect(hs10_codes, pattern)]
+
+      # In overlay mode, also include exact 10-digit codes from the YAML that
+      # may not be in the crosswalk. Without this, legacy zeroing programs can't
+      # create zero-rate overlay rows for products outside the crosswalk, and
+      # merge_s232_rate_matrix() keeps the untouched historical positive rate.
+      if (overlay_mode) {
+        exact_10 <- hts_codes[nchar(hts_codes) == 10]
+        if (length(exact_10) > 0) {
+          covered_hs10 <- unique(c(covered_hs10, as.character(exact_10)))
+        }
+      }
 
       if (length(covered_hs10) > 0) {
         rate_col_name <- paste0('s232_', tariff_name, '_rate')

@@ -14,9 +14,11 @@
 # UK gets reduced rates: 25% for I-A, 15% for I-B.
 #
 # Usage:
-#   Rscript scripts/build_metal_232_reform.R [annex_text_path]
+#   Rscript scripts/build_metal_232_reform.R [annex_text_path] [output_dir] [historical_csv]
 #
 # Default annex path: C:/Users/jar335/Downloads/annex.txt
+# Default output dir: config/scenarios/metal_232_overhaul/reforms/metal_232
+# Default historical CSV: config/historical/2026-02-20/statutory_rates.csv.gz
 # =============================================================================
 
 library(stringr)
@@ -30,7 +32,9 @@ library(rlang)
 # -----------------------------------------------------------------------------
 args <- commandArgs(trailingOnly = TRUE)
 annex_path <- if (length(args) >= 1) args[1] else 'C:/Users/jar335/Downloads/annex.txt'
-output_dir <- 'config/scenarios/metal_232_overhaul/reforms/metal_232'
+output_dir <- if (length(args) >= 2) args[2] else 'config/scenarios/metal_232_overhaul/reforms/metal_232'
+# Historical CSV for extracting old 232 product scope (used for legacy zeroing)
+historical_csv <- if (length(args) >= 3) args[3] else 'config/historical/2026-02-20/statutory_rates.csv.gz'
 mfn_path <- 'resources/mfn_rates_2025.csv'
 
 if (!file.exists(annex_path)) {
@@ -270,30 +274,67 @@ for (prog_name in names(iii_keys)) {
 # The overlay adds NEW annex-tier programs but doesn't touch OLD program columns
 # (steel, aluminum, aluminum_derivatives, steel_derivatives). Without explicit
 # zeros, legacy rates survive via pmax and Annex II/III products get wrong rates.
-# Fix: zero out old programs for ALL annex products so only new programs apply.
+#
+# Fix: extract ALL HS10 codes with positive rates from the historical CSV for
+# each old program. This is the only reliable way to ensure complete zeroing —
+# the old scope spans dozens of chapters beyond 72-76 and cannot be captured
+# by a fixed set of chapter prefixes.
 
-all_annex_codes <- unique(unlist(section_codes[grep('^(ia|ib|ii|iii)_', names(section_codes))]))
-
-# The EO terminates old HTSUS headings (Annex IV item 11), so ALL products in
-# old 232 programs that aren't on a new annex list lose coverage. We must zero
-# out the old programs with broad prefixes (not just annex codes) to catch
-# products like 7201-7205 that are in the old baseline but not on any annex.
-legacy_suppressor_codes <- sort(unique(c(
-  '72', '73',     # All primary steel (covers 7201-7306 and anything the tracker had)
-  '76',           # All primary aluminum
-  '74',           # All copper
-  all_annex_codes # All derivative codes from annexes I-A, I-B, II, III
-)))
-message(sprintf('  Suppressing legacy programs with %d codes (incl. chapter prefixes)',
-                length(legacy_suppressor_codes)))
-
-for (old_prog in c('steel', 'aluminum', 'aluminum_derivatives', 'steel_derivatives')) {
-  programs[[old_prog]] <- list(
-    base = legacy_suppressor_codes,
-    rates = list(default = 0),
-    usmca_exempt = 0
-  )
+message('\nExtracting old 232 product scope from historical CSV...')
+if (!file.exists(historical_csv)) {
+  stop(sprintf('Historical CSV not found: %s\n  Provide path as 3rd argument.', historical_csv))
 }
+
+hist_header <- names(read_csv(historical_csv, n_max = 0, show_col_types = FALSE))
+old_s232_cols <- hist_header[str_detect(hist_header, '^s232_')]
+message(sprintf('  Found %d old 232 columns: %s',
+                length(old_s232_cols), paste(old_s232_cols, collapse = ', ')))
+
+# Map old column names to legacy program names
+# Column s232_steel_rate -> program 'steel', etc.
+# Only zero out metal programs (steel, aluminum, and their derivatives).
+# Non-metal programs (autos, softwood, etc.) are untouched by the metal overhaul.
+legacy_metal_programs <- c('steel', 'steel_derivatives', 'aluminum', 'aluminum_derivatives')
+old_metal_cols <- paste0('s232_', legacy_metal_programs)
+old_metal_cols <- old_metal_cols[old_metal_cols %in% old_s232_cols]
+
+if (length(old_metal_cols) == 0) {
+  stop('No old metal 232 columns found in historical CSV!')
+}
+
+# Read only the hts10 column + old metal columns (skip everything else)
+# Use col_select for memory efficiency on large CSVs
+hist_data <- read_csv(historical_csv, show_col_types = FALSE,
+                       col_select = c('hts10', all_of(old_metal_cols)),
+                       col_types = cols(hts10 = col_character(), .default = col_double()))
+
+# For each old program, get all unique HS10 codes with positive rates
+for (old_prog in legacy_metal_programs) {
+  old_col <- paste0('s232_', old_prog)
+  if (!(old_col %in% names(hist_data))) {
+    message(sprintf('  %s: column not in CSV, skipping', old_prog))
+    next
+  }
+
+  old_hs10 <- hist_data %>%
+    filter(!!sym(old_col) > 0) %>%
+    pull(hts10) %>%
+    unique() %>%
+    sort()
+
+  message(sprintf('  %s: %d products with positive rates in historical CSV',
+                  old_prog, length(old_hs10)))
+
+  if (length(old_hs10) > 0) {
+    programs[[old_prog]] <- list(
+      base = old_hs10,
+      rates = list(default = 0),
+      usmca_exempt = 0
+    )
+  }
+}
+
+rm(hist_data)  # free memory
 
 # -----------------------------------------------------------------------------
 # Verify Annex III MFN rates
