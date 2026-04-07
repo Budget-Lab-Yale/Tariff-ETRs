@@ -9,7 +9,6 @@ s301_usmca_exception: 0.0
 usmca_exempt:
   aluminum: 0.0
   aluminum_derivatives: 0.0
-  auto_parts: 1.0
   autos_light_trucks: 1.0
   autos_passenger: 1.0
   steel: 0.0
@@ -21,7 +20,6 @@ metal_content:
   - '72'
   - '73'
   - '76'
-  - '74'
   metal_programs:
   - steel
   - aluminum

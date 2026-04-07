@@ -893,11 +893,22 @@ calc_overall_levels_data <- function(etr_data, hs10_country_etrs = NULL,
 
   level_lines <- format_level_table(result$by_country, result$gtap_total, result$census_total)
 
+  # Authority decomposition (Census weights only)
+  decomp_data <- NULL
+  decomp_lines <- character(0)
+  if (!is.null(hs10_country_etrs) && !is.null(country_mapping) &&
+      'contrib_mfn' %in% names(hs10_country_etrs)) {
+    decomp_data <- calc_decomp_data(hs10_country_etrs, country_mapping)
+    decomp_lines <- format_decomp_table(decomp_data)
+  }
+
   list(
     by_country   = result$by_country,
     gtap_total   = result$gtap_total,
     census_total = result$census_total,
-    level_lines  = level_lines
+    level_lines  = level_lines,
+    decomp_data  = decomp_data,
+    decomp_lines = decomp_lines
   )
 }
 
@@ -908,6 +919,106 @@ format_level_table <- function(country_levels, gtap_total, census_total = NULL) 
     gtap_col = 'gtap_level', census_col = 'census_level',
     header = 'Overall Tariff Levels by Country (MFN baseline + policy tariffs):'
   )
+}
+
+
+# Authority decomposition column definitions
+CONTRIB_COLS <- c('contrib_mfn', 'contrib_s232', 'contrib_ieepa_reciprocal',
+                  'contrib_ieepa_fentanyl', 'contrib_s122', 'contrib_s301',
+                  'contrib_s201', 'contrib_other')
+CONTRIB_LABELS <- c('MFN', 'S232', 'IEEPA-R', 'IEEPA-F', 'S122', 'S301', 'S201', 'Other')
+
+
+#' Compute authority decomposition using Census import weights
+#'
+#' @param hs10_country_etrs Data frame with contrib_* columns
+#' @param country_mapping Data frame with cty_code, partner
+#'
+#' @return Named list: by_country (tibble), totals (named numeric vector)
+calc_decomp_data <- function(hs10_country_etrs, country_mapping) {
+
+  with_partner <- hs10_country_etrs %>%
+    left_join(
+      country_mapping %>% select(cty_code, partner) %>% distinct(),
+      by = 'cty_code'
+    ) %>%
+    mutate(partner = if_else(is.na(partner), 'row', partner))
+
+  by_country <- with_partner %>%
+    group_by(partner) %>%
+    summarise(
+      total_imports = sum(imports),
+      across(all_of(CONTRIB_COLS), ~ sum(. * imports)),
+      .groups = 'drop'
+    ) %>%
+    mutate(
+      across(all_of(CONTRIB_COLS), ~ if_else(total_imports > 0, . / total_imports, 0))
+    ) %>%
+    select(-total_imports)
+
+  overall <- with_partner %>%
+    summarise(
+      total_imports = sum(imports),
+      across(all_of(CONTRIB_COLS), ~ sum(. * imports))
+    ) %>%
+    mutate(across(all_of(CONTRIB_COLS), ~ . / total_imports))
+
+  totals <- unlist(overall[1, CONTRIB_COLS])
+
+  list(by_country = by_country, totals = totals)
+}
+
+
+#' Format authority decomposition as text lines
+#'
+#' @param decomp_data Result from calc_decomp_data()
+#'
+#' @return Character vector of formatted lines
+format_decomp_table <- function(decomp_data) {
+  by_country <- decomp_data$by_country
+  totals <- decomp_data$totals
+
+  # Header
+  col_width <- 9
+  header_labels <- c(CONTRIB_LABELS, 'Total')
+  header_line <- sprintf('%-10s', '') %>%
+    paste0(paste(sprintf(paste0('%', col_width, 's'), header_labels), collapse = ''))
+  sep_line <- sprintf('%-10s', '-------') %>%
+    paste0(paste(sprintf(paste0('%', col_width, 's'), rep('-------', length(header_labels))), collapse = ''))
+
+  lines <- c(
+    'Tariff Decomposition by Authority (2024 Census Weights):',
+    '========================================================',
+    '',
+    header_line,
+    sep_line
+  )
+
+  # Sort by total descending
+  by_country <- by_country %>%
+    mutate(total = rowSums(across(all_of(CONTRIB_COLS)))) %>%
+    arrange(desc(total))
+
+  for (i in 1:nrow(by_country)) {
+    vals <- unlist(by_country[i, CONTRIB_COLS]) * 100
+    total_val <- sum(vals)
+    row_str <- sprintf('%-10s', toupper(by_country$partner[i])) %>%
+      paste0(paste(sprintf(paste0('%', col_width - 1, '.2f%%'), vals), collapse = '')) %>%
+      paste0(sprintf(paste0('%', col_width - 1, '.2f%%'), total_val))
+    lines <- c(lines, row_str)
+  }
+
+  total_vals <- totals * 100
+  total_sum <- sum(total_vals)
+  total_str <- sprintf('%-10s', '') %>%
+    paste0(paste(sprintf(paste0('%', col_width - 1, 's'), rep('', length(header_labels))), collapse = ''))
+  lines <- c(lines, '',
+    sprintf('%-10s', 'TOTAL') %>%
+      paste0(paste(sprintf(paste0('%', col_width - 1, '.2f%%'), total_vals), collapse = '')) %>%
+      paste0(sprintf(paste0('%', col_width - 1, '.2f%%'), total_sum))
+  )
+
+  lines
 }
 
 
@@ -936,9 +1047,18 @@ write_overall_levels <- function(etr_data, hs10_country_etrs = NULL,
   cat(paste(result$level_lines, collapse = '\n'))
   cat('\n\n')
 
+  all_lines <- result$level_lines
+
+  # Append decomposition if available
+  if (length(result$decomp_lines) > 0) {
+    cat(paste(result$decomp_lines, collapse = '\n'))
+    cat('\n\n')
+    all_lines <- c(all_lines, '', '', result$decomp_lines)
+  }
+
   # Write to file
   output_path <- get_output_path(output_file, scenario, output_base)
-  writeLines(result$level_lines, output_path)
+  writeLines(all_lines, output_path)
 
   message(sprintf('Wrote overall tariff levels to %s', output_path))
 
@@ -1027,11 +1147,16 @@ write_overall_levels_combined <- function(all_levels_data,
       ''
     )
 
-    all_lines <- c(all_lines, section_header, data$level_lines, '', '')
+    section_lines <- data$level_lines
+    if (length(data$decomp_lines) > 0) {
+      section_lines <- c(section_lines, '', '', data$decomp_lines)
+    }
+
+    all_lines <- c(all_lines, section_header, section_lines, '', '')
 
     # Print to console
     cat('\n')
-    cat(paste(c(section_header, data$level_lines), collapse = '\n'))
+    cat(paste(c(section_header, section_lines), collapse = '\n'))
     cat('\n\n')
   }
 

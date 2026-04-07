@@ -1,398 +1,165 @@
-# Tariff Delta Calculator
+# Tariff ETR Calculator
 
-Calculate tariff deltas (counterfactual - baseline) and absolute tariff levels on U.S. imports by trading partner and GTAP sector under various tariff policy scenarios. **Delta values represent the change from a configurable baseline scenario.**
+Computes effective tariff rates on U.S. imports under configurable policy scenarios. Outputs tariff deltas (counterfactual minus baseline) and absolute tariff levels by trading partner, GTAP sector, Census country, and HTS chapter.
 
-## Overview
+## Quick Start
 
-This project analyzes U.S. import trade data to compute tariff changes incorporating:
-- **Section 232 tariffs**: Steel, aluminum, softwood lumber, furniture, automobiles, and auto parts
-- **IEEPA Reciprocal tariffs**: Broad-based tariffs (mutually exclusive with Section 232)
-- **IEEPA Fentanyl tariffs**: Targeted tariffs that stack for China, mutually exclusive otherwise
-- **Section 122 tariffs**: Balance-of-payments tariffs that stack on top of all other authorities
-- **Section 301 tariffs**: Product-specific tariffs (primarily China) that stack unconditionally on full customs value
-- **USMCA exemptions**: Trade agreement provisions with content requirements
-- **Metal content adjustment**: Section 232 derivative products taxed on metal content share only
-- **Baseline scenarios**: Any scenario can serve as a baseline; deltas are computed as counterfactual level - baseline level
+```bash
+# CLI
+Rscript src/main.R --scenario 2026-04-06
 
-## Repository Structure
-
-```
-Tariff-ETRs/
-├── src/
-│   ├── main.R              # Main execution script
-│   ├── config_parsing.R    # Config loading and rate expansion
-│   ├── data_processing.R   # Census data processing
-│   └── calculations.R      # Delta/level calculations and aggregation
-├── config/
-│   ├── historical/               # Tracker-generated snapshots (git-lfs)
-│   │   ├── 2025-01-01/           # Pre-inauguration
-│   │   │   ├── statutory_rates.csv.gz
-│   │   │   └── other_params.yaml
-│   │   └── 2026-02-24/           # Reciprocal kicks in
-│   │       ├── statutory_rates.csv.gz
-│   │       └── other_params.yaml
-│   └── scenarios/                # User-authored scenario definitions
-│       └── 2026-04-02/
-│           ├── scenario.yaml     # Defines baseline + counterfactual
-│           └── reforms/
-│               └── s122/
-│                   ├── s122.yaml           # Section 122 overlay
-│                   └── other_params.yaml   # s122_usmca_exception: 1
-├── resources/
-│   ├── hs10_gtap_crosswalk.csv       # HTS10 to GTAP sector mapping
-│   ├── country_partner_mapping.csv   # Census country code → partner group
-│   ├── census_codes.csv              # Census country codes and names
-│   ├── usmca_shares.csv              # USMCA-qualifying trade shares
-│   ├── gtap_import_weights.csv       # Import weights for aggregation
-│   ├── mfn_rates_2025.csv            # MFN baseline tariff rates (HS8 level)
-│   ├── mfn_exemption_shares.csv     # MFN exemption shares (HS2 × country)
-│   ├── gtap_bea_crosswalk.csv        # GTAP → BEA industry mapping (for metal content)
-│   ├── metal_content_shares_*.csv    # Pre-computed metal content shares (GTAP/NAICS/detail)
-│   ├── naics_bea_*_crosswalk.csv     # NAICS → BEA crosswalks (summary and detail)
-│   ├── bea/                          # BEA I-O source data
-│   └── cbo/                          # CBO HTS derivative product lists
-├── cache/
-│   └── hs10_by_country_gtap_2024_con.rds  # Cached import data
-├── output/
-│   ├── baseline/                                # Baseline tariff levels (no deltas/shocks)
-│   │   ├── gtap_levels_by_sector_country.csv    # Tariff levels (sector × partner)
-│   │   ├── levels_by_census_country.csv         # Tariff levels by census country
-│   │   ├── levels_by_census_country_hts2.csv    # Tariff levels by country × HTS chapter
-│   │   └── overall_levels.txt                   # Summary: total tariff levels
-│   ├── {static-scenario}/
-│   │   ├── shocks.txt                           # GTAP shock commands
-│   │   ├── gtap_deltas_by_sector_country.csv         # Delta matrix (sector × partner)
-│   │   ├── deltas_by_census_country.csv         # Deltas by census country
-│   │   ├── deltas_by_census_country_hts2.csv    # Deltas by country × HTS chapter
-│   │   ├── overall_deltas.txt                   # Summary: delta statistics
-│   │   ├── gtap_levels_by_sector_country.csv         # Tariff levels (sector × partner)
-│   │   ├── levels_by_census_country.csv         # Tariff levels by census country
-│   │   ├── levels_by_census_country_hts2.csv    # Tariff levels by country × HTS chapter
-│   │   └── overall_levels.txt                   # Summary: total tariff levels
-│   └── {time-varying-scenario}/
-│       ├── 2026-01-01/shocks.txt                # Per-date shock commands
-│       ├── 2026-02-24/shocks.txt
-│       ├── gtap_deltas_by_sector_country.csv         # Stacked CSV (date column first)
-│       ├── deltas_by_census_country.csv         # Stacked CSV (date column first)
-│       ├── deltas_by_census_country_hts2.csv    # Stacked CSV (date column first)
-│       ├── overall_deltas.txt                   # Combined with per-date sections
-│       ├── gtap_levels_by_sector_country.csv         # Stacked levels (date column first)
-│       ├── levels_by_census_country.csv         # Stacked levels (date column first)
-│       ├── levels_by_census_country_hts2.csv    # Stacked levels (date column first)
-│       └── overall_levels.txt                   # Combined levels with per-date sections
-└── README.md
+# Interactive (RStudio)
+# Edit the `scenarios` vector in src/main.R, then:
+source('src/main.R')
 ```
 
-## Requirements
+**Requirements:** R 4.0+, `tidyverse`, `yaml`. No other dependencies.
 
-- R (version 4.0+)
-- R packages: `tidyverse`, `yaml`
-- U.S. import data files (fixed-width format, 2024)
+## How It Works
 
-## Data Sources
+1. **Parse scenario** — read `scenario.yaml` to get a baseline date and one or more counterfactual dates (each optionally modified by a reform overlay)
+2. **Load imports** — read Census fixed-width import data at HTS10 × country granularity (cached after first run)
+3. **Compute tariffs** — for each config, apply stacking rules across tariff authorities (MFN, Section 232, IEEPA reciprocal/fentanyl, Section 122, Section 301, Section 201, other)
+4. **Compute deltas** — counterfactual tariff level minus baseline tariff level at HTS10 × country
+5. **Aggregate & write** — roll up to partner × GTAP sector using import-weighted averages; write CSVs, GTAP shock commands, and summary text
 
-**Import Data:**
-- Source: [U.S. Census Bureau - Merchandise Trade Imports](https://www.census.gov/foreign-trade/data/IMDB.html)
-- Format: Monthly ZIP files (IMDByymm.ZIP) containing IMP_DETL.TXT fixed-width format files
-- Location: Set `import_data_path` in `main.R` or via `--import-data-path` CLI flag (environment-specific; no universal default)
+## Repository Layout
 
-**Country Codes:**
-The project uses Census Bureau country codes. Tariff rates are specified at the country level, with calculations at HTS10×country level before aggregating to 8 partner groups:
+```
+src/
+  main.R                 Entry point (CLI + interactive)
+  config_parsing.R       Config loading and rate expansion
+  data_processing.R      Census import data processing
+  etr_engine.R           Core tariff calculation and stacking
+  config_overlay.R       Historical config loading and reform merges
+  scenario_workflow.R    Scenario orchestration (static + time-varying)
+  outputs.R              Output formatting and file writing
 
-| Partner | Countries |
-|---------|-----------|
+config/
+  historical/{date}/     Tracker-generated snapshots (statutory_rates.csv.gz + other_params.yaml)
+  scenarios/{name}/      User-authored scenario definitions (scenario.yaml + reform dirs)
+
+resources/               Static crosswalks and reference data
+scripts/                 Ad-hoc analysis, data building, and validation scripts
+output/{scenario}/       Generated results (gitignored)
+cache/                   Processed import data cache (gitignored)
+docs/                    Architecture diagrams and reference PDFs
+```
+
+## Scenarios
+
+A scenario is defined by a `scenario.yaml` in `config/scenarios/{name}/`:
+
+```yaml
+baseline: '2025-01-01'
+
+counterfactual:
+  - '2026-02-20'                         # Use historical config as-is
+  - date: '2026-04-06'                   # Historical + reform overlay
+    historical: '2026-02-20'
+    reform: 'reforms/metal_232'
+  - date: '2026-07-20'
+    historical: '2026-02-20'
+    reform: 'reforms/metal_232_s122_expired'
+
+series_horizon: '2026-12-31'
+```
+
+- **Baseline**: a date in `config/historical/` — the "before" world
+- **Counterfactual**: one or more dates representing the "after" world. A plain string uses the historical config directly. An object with `reform` applies YAML overlays on top of the historical config. An object with `historical` lets you pin a different historical snapshot (useful when the reform modifies an earlier snapshot).
+- **Single entry** → static scenario (one set of outputs)
+- **Multiple entries** → time-varying scenario (per-date shocks, stacked CSVs with validity intervals)
+
+### Historical Configs
+
+Generated by [tariff-rate-tracker](https://github.com/john-ricco/tariff-rate-tracker) and stored in `config/historical/{date}/`. Each contains:
+
+- `statutory_rates.csv.gz` — dense HTS10 × country rate matrix with columns for each authority (`mfn_rate`, `s232_*`, `ieepa_reciprocal`, `ieepa_fentanyl`, `s122`, `s301`, `s201`, `other`, `target_total_*`)
+- `other_params.yaml` — paths to MFN rates, MFN exemption shares, USMCA product shares, metal content parameters, auto rebate params, and USMCA exception flags
+
+These files are tracked in Git LFS (the `.csv.gz` files).
+
+### Reform Overlays
+
+Reform directories live alongside the scenario.yaml (e.g., `reforms/metal_232/`) and can contain:
+
+- `other_params.yaml` — shallow-merged over the historical params via `modifyList()`
+- Tariff YAML files (`s232.yaml`, `s122.yaml`, `ieepa_reciprocal.yaml`, etc.) — merged onto the CSV baseline at `(hts10, cty_code)` level. Explicit zeros suppress positive CSV rates; new rows are added.
+
+S232 overlays use column-level merge (only updates programs defined in the overlay). All other authorities use row-level upsert.
+
+## Tariff Stacking Rules
+
+All authorities are combined at HTS10 × country level. MFN is unconditionally additive.
+
+| Authority | Stacking behavior |
+|-----------|-------------------|
+| **MFN** | Always added to final rate |
+| **Section 232** | Takes precedence over IEEPA. On derivative products (outside Ch. 72/73/76), scaled by `metal_share`; IEEPA fills the non-metal portion |
+| **IEEPA Reciprocal** | Applies to imports not covered by 232 |
+| **IEEPA Fentanyl** | China: stacks unconditionally. Others: only applies to base not covered by 232 or reciprocal |
+| **Section 122** | On 232-covered products, applies only to `nonmetal_share`. On non-232 products, full rate |
+| **Section 301** | Unconditionally cumulative on full customs value |
+| **Section 201** | Unconditionally cumulative on full customs value |
+| **Other** | Unconditionally cumulative on full customs value |
+
+The China formula: `mfn + max(232, reciprocal) + fentanyl + s122 + s301 + s201 + other`
+All others: `mfn + (232 > 0 ? 232 : reciprocal + fentanyl) + s122 + s301 + s201 + other`
+
+## Trading Partners
+
+Tariff rates are specified and calculated at Census country level (240 countries). Only the final output aggregates to 8 partner groups for GTAP compatibility:
+
+| Partner | Coverage |
+|---------|----------|
 | china | 5700 |
 | canada | 1220 |
 | mexico | 2010 |
 | japan | 5880 |
 | uk | 4120 |
 | eu | 27 EU member state codes |
-| ftrow | 18 FTA partners (Australia, Korea, Singapore, Chile, Colombia, Peru, Costa Rica, Guatemala, Honduras, Nicaragua, Panama, El Salvador, Dominican Republic, Bahrain, Israel, Jordan, Oman, Morocco) |
-| row | All unmapped countries default to this group |
+| ftrow | 18 FTA partners (Australia, Korea, Singapore, etc.) |
+| row | All unmapped countries (~183) |
 
-See `resources/country_partner_mapping.csv` for the complete mapping.
+Full mapping in `resources/country_partner_mapping.csv`.
 
-**GTAP Crosswalk:**
-HTS10 codes map to GTAP sectors via a crosswalk derived from [Angel Aguiar's 6-digit crosswalk](https://www.gtap.agecon.purdue.edu/resources/res_display.asp?RecordID=5111).
+## Output Files
 
-## Usage
+**Static scenarios** produce files directly in `output/{scenario}/`:
 
-### Running Scenarios
+| File | Contents |
+|------|----------|
+| `shocks.txt` | GTAP-formatted shock commands |
+| `gtap_deltas_by_sector_country.csv` | Delta matrix: GTAP sectors × partners (pp) |
+| `gtap_levels_by_sector_country.csv` | Tariff level matrix: GTAP sectors × partners (pp) |
+| `deltas_by_census_country.csv` | Import-weighted delta by Census country |
+| `levels_by_census_country.csv` | Import-weighted tariff level by Census country |
+| `deltas_by_census_country_hts2.csv` | Delta by country × HTS chapter |
+| `levels_by_census_country_hts2.csv` | Tariff level by country × HTS chapter |
+| `overall_deltas.txt` | Summary delta statistics |
+| `overall_levels.txt` | Summary tariff levels |
 
-1. Populate `config/historical/` from the tracker:
-   ```r
-   # In tariff-rate-tracker repo:
-   generate_etrs_configs_all_revisions(ts, output_base = '../Tariff-ETRs/config/historical')
-   ```
+**Time-varying scenarios** add a `date` column to CSVs (stacked across counterfactual dates with `valid_from`/`valid_until` intervals) and write per-date shock files to `output/{scenario}/{date}/shocks.txt`.
 
-2. Set scenarios in `src/main.R`:
-   ```r
-   scenarios <- c('2026-04-02')
-   ```
+## CLI Reference
 
-3. Run:
-   ```r
-   source('src/main.R')
-   ```
+```
+Rscript src/main.R [options]
 
-### Creating a New Scenario
-
-1. Create scenario directory with a `scenario.yaml`:
-   ```bash
-   mkdir -p config/scenarios/my_scenario
-   ```
-
-2. Write `scenario.yaml` pointing to historical dates:
-   ```yaml
-   baseline: '2025-01-01'
-   counterfactual:
-     - '2026-01-01'
-     - date: '2026-02-24'
-       reform: 'reforms/my_reform'
-   series_horizon: '2026-12-31'
-   ```
-
-3. Create reform dirs with YAML overlays if needed:
-   ```bash
-   mkdir -p config/scenarios/my_scenario/reforms/my_reform
-   # Add s122.yaml, other_params.yaml, etc.
-   ```
-
-4. Add to `scenarios` in `main.R` and run
-
-### Scenario Structure
-
-Each scenario is defined by a `scenario.yaml` in `config/scenarios/{name}/`. It references:
-- A **baseline** historical date (the "before" world)
-- One or more **counterfactual** entries (the "after" world), each referencing a historical date + optional reform overlay
-
-Historical snapshots are generated by `tariff-rate-tracker` and live in `config/historical/{date}/`, each containing `statutory_rates.csv.gz` + `other_params.yaml`.
-
-Reform directories contain optional YAML overlay files that modify the historical config:
-- `other_params.yaml` — shallow-merged over historical params
-- Tariff YAML files (`s122.yaml`, `s232.yaml`, etc.) — merged at `(hs10, cty_code)` level
-
-Multiple counterfactual dates can reference the same reform directory for reuse.
-
-### CSV Mode: `statutory_rates.csv.gz`
-
-All configs use CSV mode. Each historical directory contains a `statutory_rates.csv.gz` with dense per-authority rates at HTS10×country level. Key columns:
-
-- `hts10`, `cty_code` — product × country identifiers
-- `mfn_rate` — MFN rate (tracker is source of truth)
-- `s232_*` — one column per 232 program (dynamic, discovered by `^s232_` prefix)
-- `ieepa_reciprocal`, `ieepa_fentanyl`, `s301`, `s122`, `s201`, `other` — per-authority rates
-- `target_total_*` — floor rates (1:1 naming with rate column)
-
-## Configuration
-
-### Section 232 Tariffs (`s232.yaml`)
-
-Defines tariff rates and product coverage using variable-length HTS codes (4, 6, 8, or 10 digits) with prefix matching. **Optional**: if missing, all Section 232 rates are zero.
-
-```yaml
-steel:
-  base:
-    - '73012010'  # 8-digit: matches HTS10 codes starting with 73012010
-    - '7307'      # 4-digit: matches all HTS10 codes starting with 7307
-  rates:
-    default: 0.50   # Default rate for all countries
-    '4120': 0.25    # UK-specific override
-  target_total:     # Optional: country-level "combined duty floor"
-    japan: 0.15     # Effective 232 add-on = max(0.15 - MFN, 0)
-    eu: 0.15        # Expands to all 27 EU country codes
-  usmca_exempt: 0   # 1 = USMCA exemption applies
+Options:
+  --scenario NAME        Scenario name (repeatable for multiple scenarios)
+  --config-dir PATH      Config directory (default: config/)
+  --output-dir PATH      Output directory (default: output/)
+  --import-data-path PATH   Census import data location (default: C:/Users/jar335/Downloads)
+  --no-cache             Force re-processing of import data (skip cache)
 ```
 
-### IEEPA Rates (`ieepa_reciprocal.yaml`, `ieepa_fentanyl.yaml`)
+## Data Sources
 
-Hierarchical rate structure with three levels of specificity. **Optional**: if missing, all IEEPA rates are zero.
-
-```yaml
-headline_rates:
-  default: 0.10    # Default for unmapped countries
-  '5700': 0.10     # China
-  '1220': 0.00     # Canada (exempt)
-
-product_rates:
-  '8703': 0.0      # Exempt autos for all countries
-
-product_country_rates:
-  - hts: ['87032201', '87032301']
-    country: '5700'
-    rate: 0.50
-
-target_total_rules:          # Optional: reciprocal "combined duty target"
-  uk: 0.10                   # Effective add-on = max(target - MFN, 0)
-  eu: 0.15
-```
-
-`product_country_rates` also supports `countries` (list) to apply one HTS block to multiple countries.
-
-**Stacking Rules:**
-All tariff authorities are combined via a unified stacking formula. MFN is unconditionally additive in all branches:
-- **MFN**: Always additive — included in `final_rate` for every product×country combination
-- **Section 232**: Takes precedence over IEEPA when applicable. For metal derivative products, the 232 rate is scaled by `metal_share`; IEEPA applies to the non-metal portion.
-- **IEEPA Reciprocal**: Applies to imports not covered by Section 232 (or to the non-metal portion of 232 derivatives)
-- **IEEPA Fentanyl**:
-  - *China*: Stacks on top of everything (232 + reciprocal + fentanyl)
-  - *Others*: Only applies to base not covered by 232 or reciprocal (or to the non-metal portion of 232 derivatives)
-- **Section 122**: Stacks on top of all other tariffs. Stacking on 232 controlled by `s122_stacks_on_232` flag in `other_params.yaml`.
-- **Section 301**: Unconditionally cumulative with all other authorities. Applies to full customs value (no metal content scaling).
-
-### Section 122 Tariffs (`s122.yaml`, optional)
-
-Balance-of-payments tariffs that stack on top of all other authorities. Uses the same hierarchical format as IEEPA:
-
-```yaml
-headline_rates:
-  default: 0.0           # Default for all countries
-  china: 0.10            # China-specific override
-
-product_rates:
-  '8703': 0.05           # Product-specific override (all countries)
-
-product_country_rates:
-  - hts: ['87032201']
-    country: '5700'
-    rate: 0.20
-```
-
-When `s122.yaml` is absent from a scenario, Section 122 rates default to zero.
-
-### Section 301 Tariffs (`s301.yaml`, optional)
-
-Product-specific tariffs (Trade Act of 1974, administered by USTR) that stack unconditionally on full customs value. Uses the same hierarchical format as IEEPA:
-
-```yaml
-headline_rates:
-  default: 0.0           # Default for all countries
-  china: 0.25            # China-specific rate
-
-product_rates:
-  '8541': 0.50           # Product-specific override (all countries)
-
-product_country_rates:
-  - hts: ['85414000']
-    country: '5700'
-    rate: 1.00
-```
-
-When `s301.yaml` is absent from a scenario, Section 301 rates default to zero.
-
-### Metal Content Shares (`other_params.yaml`)
-
-Section 232 tariffs on derivative products (outside HTS Chapters 72/73/76) legally apply only to the metal content share of the product, not the full customs value. The non-metal portion receives IEEPA tariffs instead.
-
-```yaml
-metal_content:
-  method: 'bea'                      # 'flat', 'bea', or 'cbo'
-  flat_share: 1.0                     # Used when method = 'flat'
-  primary_chapters: ['72', '73', '76'] # Forced to share = 1.0
-  bea_table: 'domestic'               # BEA: 'domestic' or 'total'
-  bea_granularity: 'gtap'             # BEA: 'gtap', 'naics', or 'detail'
-  metal_programs:                     # 232 tariff names that are metal programs
-    - steel
-    - aluminum_base_articles
-    - aluminum_derivative_9903_85_04
-    - copper_derivatives
-  program_metal_types:                # Per-metal-type scaling (detail mode)
-    steel: 'steel'
-    aluminum_base_articles: 'aluminum'
-    aluminum_derivative_9903_85_04: 'aluminum'
-    copper_derivatives: 'copper'
-  # CBO-specific parameters (optional, defaults match CBO's config):
-  cbo_high_share: 0.75               # Used when method = 'cbo'
-  cbo_low_share: 0.25                # Used when method = 'cbo'
-  cbo_copper_share: 0.90             # Used when method = 'cbo'
-```
-
-**Methods:**
-- `flat`: Uniform metal share for all derivative products (e.g., 1.0 = full value, 0.5 = TPC assumption, 0.0 = lower bound)
-- `bea`: Industry-varying shares computed from BEA Input-Output requirements (primary metals inputs / total industry output). Three granularity levels:
-  - `gtap`: Shares at the GTAP sector level (~45 sectors)
-  - `naics`: Shares at the HS10 level via HS10 → NAICS → BEA summary chaining (~20K products), falling back to GTAP-level for unmatched codes
-  - `detail`: Per-metal-type shares (steel, aluminum, copper, other) via the 2017 BEA Detail IO table (~402 commodities, 10 metal sub-industries). When combined with `program_metal_types`, each 232 program is scaled by its own metal type's share rather than the aggregate. Falls back to GTAP-level aggregate for unmatched codes.
-- `cbo`: Product-level shares from the [CBO conventional tariff analysis model](https://github.com/US-CBO/conventional-tariff-analysis-model). Classifies Section 232 derivatives into three buckets: high metal content (75%, 168 products), low metal content (25%, 735 products), and copper derivatives (90%, 118 products). Products not in any CBO list default to 100%. HTS lists are stored in `resources/cbo/`.
-
-**Per-Metal-Type Scaling (`program_metal_types`):** When `bea_granularity: 'detail'` is used with `program_metal_types`, each 232 program is scaled by the share of its specific metal type (e.g., a steel program uses `steel_share`, an aluminum program uses `aluminum_share`). Valid types: `steel`, `aluminum`, `copper`, `other`. Programs not in `program_metal_types` fall back to aggregate `metal_share`. Without `program_metal_types`, all programs use aggregate `metal_share` (backward compatible).
-
-**When `metal_content` is absent** from `other_params.yaml`, defaults to `flat` with `share = 1.0` (identical to pre-metal-content behavior).
-
-**To regenerate BEA shares:** Run `python scripts/build_naics_crosswalks.py` then `Rscript scripts/build_metal_content_shares.R` from the project root.
-
-## Output
-
-### Shock Commands (`shocks.txt`)
-
-GTAP-formatted commands:
-```
-Shock tms("i_s","China","USA") = 50.0;
-Shock tms("nfm","China","USA") = 50.0;
-```
-
-### Delta Matrix (`gtap_deltas_by_sector_country.csv`)
-
-Wide-format CSV with tariff deltas in percentage points. Rows are GTAP sectors, columns are partner groups. Values represent the change from baseline scenario.
-
-### Country-Level Deltas (`deltas_by_census_country.csv`)
-
-Overall delta for each census country, weighted by 2024 imports:
-
-```csv
-cty_code,country_name,etr
-5700,China,24.02
-1220,Canada,8.45
-```
-
-Sorted by delta descending.
-
-### Country × HTS Chapter Deltas (`deltas_by_census_country_hts2.csv`)
-
-Deltas by country and 2-digit HTS chapter. Countries as rows, chapters (01-97) as columns.
-
-### Summary Statistics (`overall_deltas.txt`)
-
-Overall deltas by partner using both GTAP weights and 2024 Census import weights, plus tariff coverage statistics.
-
-### Tariff Levels (`gtap_levels_by_sector_country.csv`)
-
-Total tariff levels (MFN + policy tariffs) in percentage points. Same format as `gtap_deltas_by_sector_country.csv` but represents absolute tariff rates. MFN is included in the stacking formula as an unconditionally additive component; rates are specified per-config via the `mfn_rates` pointer in `other_params.yaml`.
-
-### Country-Level Tariff Levels (`levels_by_census_country.csv`)
-
-Total tariff level for each census country, weighted by 2024 imports. Same format as `deltas_by_census_country.csv` but represents absolute tariff rates.
-
-### Country × HTS Chapter Tariff Levels (`levels_by_census_country_hts2.csv`)
-
-Tariff levels by country and 2-digit HTS chapter. Same format as `deltas_by_census_country_hts2.csv` but represents absolute tariff rates.
-
-### Overall Tariff Levels (`overall_levels.txt`)
-
-Overall tariff levels by partner using both GTAP weights and 2024 Census import weights.
-
-## Trading Partner Groups
-
-| Partner | Description |
-|---------|-------------|
-| china | Mainland China |
-| canada | Canada |
-| mexico | Mexico |
-| japan | Japan |
-| uk | United Kingdom |
-| eu | European Union (27 members) |
-| ftrow | Free Trade Rest of World |
-| row | Rest of World |
-
-## How It Works
-
-1. **Read scenario.yaml**: Parse baseline date, counterfactual entries, and reform references
-2. **Load Imports**: Read Census IMP_DETL.TXT files, aggregate by HTS10×country (cached)
-3. **Process Baseline**: Load historical CSV config for baseline date, compute tariff levels
-4. **Build Counterfactual Configs**: For each counterfactual entry, load historical CSV + apply reform overlay
-5. **Compute Deltas**: Delta = counterfactual level - baseline level at HS10×country level
-6. **Aggregate**: Roll up to partner×GTAP level using import-weighted averaging
-7. **Output**: Write shock commands, CSVs, and summary statistics
+- **Import data**: [U.S. Census Bureau Merchandise Trade Imports](https://www.census.gov/foreign-trade/data/IMDB.html) — monthly ZIP files (IMDByymm.ZIP) containing IMP_DETL.TXT fixed-width files
+- **GTAP crosswalk**: Derived from [Angel Aguiar's HS6 crosswalk](https://www.gtap.agecon.purdue.edu/resources/res_display.asp?RecordID=5111)
+- **Metal content**: BEA Input-Output tables (2024 summary, 2017 detail) or CBO derivative product lists
+- **MFN rates**: HS8-level ad valorem rates from the HTS (specific-duty-only lines coded as 0)
 
 ## Contact
 

@@ -13,6 +13,7 @@ usmca_exempt:
   autos_light_trucks: 1.0
   autos_passenger: 1.0
   buses: 0.0
+  copper: 0.0
   kitchen_cabinets: 0.0
   mhd_parts: 1.0
   mhd_vehicles: 1.0
@@ -28,15 +29,16 @@ metal_content:
   - '72'
   - '73'
   - '76'
-  - '74'
   metal_programs:
   - steel
-  - steel_derivatives
   - aluminum
   - aluminum_derivatives
+  - steel_derivatives
+  - copper
   program_metal_types:
     steel: steel
-    steel_derivatives: steel
     aluminum: aluminum
     aluminum_derivatives: aluminum
+    steel_derivatives: steel
+    copper: copper
 usmca_product_shares: resources/usmca_product_shares_2025.csv

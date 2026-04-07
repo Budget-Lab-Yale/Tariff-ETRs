@@ -753,31 +753,25 @@ calc_weighted_etr <- function(rates_s232,
       # 4. Section 301, Section 201, other: Unconditionally cumulative with all other
       #    authorities. Apply to full customs value (no metal content scaling).
 
-      final_rate = mfn_rate + case_when(
-        # China: Fentanyl stacks on top of normal 232-reciprocal logic
-        # For metal 232 derivatives: reciprocal and s122 apply to non-metal portion
-        # Section 301, 201, other always apply to full customs value
-        cty_code == CTY_CHINA ~ if_else(
-          rate_s232_max > 0,
-          rate_s232_max + ieepa_reciprocal_rate * nonmetal_share
-            + ieepa_fentanyl_rate + s122_rate * nonmetal_share
-            + s301_rate + s201_rate + other_rate,
-          ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate
-            + s301_rate + s201_rate + other_rate
-        ),
+      # Per-authority contributions (sum to final_rate for decomposition output)
+      contrib_mfn = mfn_rate,
+      contrib_s232 = if_else(rate_s232_max > 0, rate_s232_max, 0),
+      contrib_ieepa_reciprocal = if_else(rate_s232_max > 0,
+        ieepa_reciprocal_rate * nonmetal_share, ieepa_reciprocal_rate),
+      contrib_ieepa_fentanyl = case_when(
+        cty_code == CTY_CHINA ~ ieepa_fentanyl_rate,
+        rate_s232_max > 0 ~ ieepa_fentanyl_rate * nonmetal_share,
+        TRUE ~ ieepa_fentanyl_rate
+      ),
+      contrib_s122 = if_else(rate_s232_max > 0,
+        s122_rate * nonmetal_share, s122_rate),
+      contrib_s301 = s301_rate,
+      contrib_s201 = s201_rate,
+      contrib_other = other_rate,
 
-        # Everyone else: 232 takes precedence; reciprocal, fentanyl, and s122
-        # apply to non-metal portion of derivatives (content-based split).
-        # Section 301, 201, other always apply to full customs value.
-        rate_s232_max > 0 ~
-          rate_s232_max + ieepa_reciprocal_rate * nonmetal_share
-            + ieepa_fentanyl_rate * nonmetal_share
-            + s122_rate * nonmetal_share + s301_rate + s201_rate + other_rate,
-
-        # Otherwise use all IEEPA + s122 + s301 + s201 + other
-        TRUE ~ ieepa_reciprocal_rate + ieepa_fentanyl_rate + s122_rate
-          + s301_rate + s201_rate + other_rate
-      )
+      final_rate = contrib_mfn + contrib_s232 + contrib_ieepa_reciprocal
+        + contrib_ieepa_fentanyl + contrib_s122 + contrib_s301
+        + contrib_s201 + contrib_other
     )
 
   # =============================================================================
@@ -806,7 +800,11 @@ calc_weighted_etr <- function(rates_s232,
     mutate(level = final_rate)
 
   hs10_country_etrs <- hs10_country_etrs %>%
-    select(hs10, cty_code, gtap_code, imports, etr, level, base_s232, base_ieepa, base_neither)
+    select(hs10, cty_code, gtap_code, imports, etr, level,
+           contrib_mfn, contrib_s232, contrib_ieepa_reciprocal,
+           contrib_ieepa_fentanyl, contrib_s122, contrib_s301,
+           contrib_s201, contrib_other,
+           base_s232, base_ieepa, base_neither)
 
   return(hs10_country_etrs)
 }
@@ -836,12 +834,17 @@ aggregate_countries_to_partners <- function(hs10_country_etrs, country_mapping) 
   # Aggregate to partner × GTAP level using import-weighted average
   # NOTE: weighted_etr and weighted_level must be computed BEFORE imports is overwritten
   # (dplyr summarise gotcha — later expressions see the scalar aggregate, not the vector)
+  contrib_cols <- c('contrib_mfn', 'contrib_s232', 'contrib_ieepa_reciprocal',
+                    'contrib_ieepa_fentanyl', 'contrib_s122', 'contrib_s301',
+                    'contrib_s201', 'contrib_other')
+
   partner_etrs <- etrs_with_partner %>%
     group_by(partner, gtap_code) %>%
     summarise(
       total_imports = sum(imports),
       weighted_etr = sum(etr * imports),
       weighted_level = sum(level * imports),
+      across(all_of(contrib_cols), ~ sum(. * imports), .names = 'w_{.col}'),
       base_s232 = sum(base_s232),
       base_ieepa = sum(base_ieepa),
       base_neither = sum(base_neither),
@@ -849,9 +852,13 @@ aggregate_countries_to_partners <- function(hs10_country_etrs, country_mapping) 
     ) %>%
     mutate(
       etr = if_else(total_imports > 0, weighted_etr / total_imports, 0),
-      level = if_else(total_imports > 0, weighted_level / total_imports, 0)
+      level = if_else(total_imports > 0, weighted_level / total_imports, 0),
+      across(starts_with('w_contrib_'), ~ if_else(total_imports > 0, . / total_imports, 0))
     ) %>%
-    select(partner, gtap_code, etr, level, base_s232, base_ieepa, base_neither)
+    rename_with(~ str_replace(., '^w_', ''), starts_with('w_contrib_')) %>%
+    select(partner, gtap_code, etr, level,
+           all_of(contrib_cols),
+           base_s232, base_ieepa, base_neither)
 
   return(partner_etrs)
 }

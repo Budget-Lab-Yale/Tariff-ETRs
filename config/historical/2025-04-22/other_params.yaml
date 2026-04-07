@@ -12,7 +12,6 @@ usmca_exempt:
   auto_parts: 1.0
   autos_light_trucks: 1.0
   autos_passenger: 1.0
-  mhd_vehicles: 1.0
   steel: 0.0
 metal_content:
   method: bea
@@ -22,7 +21,6 @@ metal_content:
   - '72'
   - '73'
   - '76'
-  - '74'
   metal_programs:
   - steel
   - aluminum
