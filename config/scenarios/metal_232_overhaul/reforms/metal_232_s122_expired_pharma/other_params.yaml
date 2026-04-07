@@ -13,7 +13,9 @@ metal_content:
   - '74'
   metal_programs: []
 
-us_metal_origin_share: 0
+us_metal_origin_share: 0.01
+de_minimis_weight_share: 0.02
+motorcycle_mfg_share: 0.001
 
 pharma_generic_share:
   china: 0.95

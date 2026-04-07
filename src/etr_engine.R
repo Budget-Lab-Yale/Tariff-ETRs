@@ -37,10 +37,16 @@ calc_etrs_for_config <- function(config, hs10_by_country, country_mapping) {
   )
 
   # Resolve pharma adjustment shares (country mnemonics → tibbles)
+  # Both blocks must be provided together — supplying one without the other is a config error.
   pharma_generic_share <- NULL
   pharma_exempt_share <- NULL
-  if (!is.null(config$other_params$pharma_generic_share) ||
-      !is.null(config$other_params$pharma_exempt_share)) {
+  has_generic <- !is.null(config$other_params$pharma_generic_share)
+  has_exempt  <- !is.null(config$other_params$pharma_exempt_share)
+  if (has_generic != has_exempt) {
+    stop('pharma_generic_share and pharma_exempt_share must both be provided (or both omitted). ',
+         'Got generic: ', has_generic, ', exempt: ', has_exempt)
+  }
+  if (has_generic && has_exempt) {
     mnemonic_map <- get_mnemonic_mapping()
     all_cty_codes <- unique(hs10_by_country$cty_code)
     pharma_generic_share <- resolve_pharma_share(
@@ -77,7 +83,9 @@ calc_etrs_for_config <- function(config, hs10_by_country, country_mapping) {
     mfn_exemption_shares         = config$mfn_exemption_shares,
     pharma_generic_share         = pharma_generic_share,
     pharma_exempt_share          = pharma_exempt_share,
-    us_metal_origin_share        = config$other_params$us_metal_origin_share %||% 0
+    us_metal_origin_share        = config$other_params$us_metal_origin_share %||% 0,
+    de_minimis_weight_share      = config$other_params$de_minimis_weight_share %||% 0,
+    motorcycle_mfg_share         = config$other_params$motorcycle_mfg_share %||% 0
   )
 
   message('Aggregating HS10×country results to partner×GTAP level...')
@@ -170,7 +178,9 @@ calc_weighted_etr <- function(rates_s232,
                               mfn_exemption_shares = NULL,
                               pharma_generic_share = NULL,
                               pharma_exempt_share = NULL,
-                              us_metal_origin_share = 0) {
+                              us_metal_origin_share = 0,
+                              de_minimis_weight_share = 0,
+                              motorcycle_mfg_share = 0) {
 
   # =============================================================================
   # Build complete rate matrix by joining config tables with import data
@@ -511,6 +521,44 @@ calc_weighted_etr <- function(rates_s232,
       rate_matrix <- rate_matrix %>%
         mutate(!!col := !!sym(col) * (1 - us_metal_origin_share) +
                  us_origin_rate * us_metal_origin_share * (!!sym(col) > 0))
+    }
+  }
+
+  # =============================================================================
+  # Apply de minimis weight exemption
+  # Products where metal < 15% of total product weight are exempt from S232.
+  # Only applies to Annex I-B and III (not I-A), excluding primary metal chapters
+  # (72, 73, 74, 76) where the product IS the metal. Share reduces effective rate
+  # uniformly across eligible products (CBP data not yet available for product-level).
+  # =============================================================================
+  if (de_minimis_weight_share > 0) {
+    de_minimis_cols <- rate_s232_cols[str_detect(rate_s232_cols, '_ib|_iii')]
+    primary_chapters <- c('72', '73', '74', '76')
+    for (col in de_minimis_cols) {
+      rate_matrix <- rate_matrix %>%
+        mutate(!!col := if_else(
+          substr(hs10, 1, 2) %in% primary_chapters,
+          !!sym(col),
+          !!sym(col) * (1 - de_minimis_weight_share)
+        ))
+    }
+  }
+
+  # =============================================================================
+  # Apply motorcycle manufacturing exemption
+  # Parts imported exclusively for US motorcycle production are exempt from S232.
+  # Only applies to Annex I-B, chapters 84, 85, 87.
+  # =============================================================================
+  if (motorcycle_mfg_share > 0) {
+    motorcycle_cols <- rate_s232_cols[str_detect(rate_s232_cols, '_ib')]
+    motorcycle_chapters <- c('84', '85', '87')
+    for (col in motorcycle_cols) {
+      rate_matrix <- rate_matrix %>%
+        mutate(!!col := if_else(
+          substr(hs10, 1, 2) %in% motorcycle_chapters,
+          !!sym(col) * (1 - motorcycle_mfg_share),
+          !!sym(col)
+        ))
     }
   }
 

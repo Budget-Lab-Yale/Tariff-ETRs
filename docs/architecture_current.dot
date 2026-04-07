@@ -1,0 +1,130 @@
+// =============================================================================
+// CURRENT ARCHITECTURE: Two Repos, Duplicated Logic, CSV Bridge
+// =============================================================================
+// Render: dot -Tpng docs/architecture_current.dot -o docs/architecture_current.png -Gdpi=150
+
+digraph current {
+    rankdir=TB;
+    fontname="Helvetica";
+    node [fontname="Helvetica", fontsize=12, margin="0.2,0.1"];
+    edge [fontname="Helvetica", fontsize=10];
+    label=<<B>Current Architecture</B><BR/>Two repos, duplicated logic, CSV bridge>;
+    labelloc=t;
+    fontsize=18;
+    nodesep=0.4;
+    ranksep=0.5;
+
+    // =====================================================================
+    // EXTERNAL INPUTS
+    // =====================================================================
+    hts [label="HTS JSON\nArchives", shape=cylinder, style=filled, fillcolor="#E8E8E8"];
+    census [label="Census Import\nData", shape=cylinder, style=filled, fillcolor="#E8E8E8"];
+    bea [label="BEA / DataWeb\n(metal, USMCA,\nMFN data)", shape=cylinder, style=filled, fillcolor="#E8E8E8"];
+
+    // =====================================================================
+    // TRACKER
+    // =====================================================================
+    subgraph cluster_tracker {
+        label=<<B>tariff-rate-tracker/</B>>;
+        style=filled; fillcolor="#EBF5FB"; color="#2980B9";
+        fontsize=14; fontcolor="#2980B9";
+
+        t_parse [label="HTS Parsing\n(Ch99 footnotes,\nrate extraction)", shape=box, style="filled,rounded", fillcolor=white];
+
+        subgraph cluster_t_engine {
+            label="Calculation Engine";
+            style=filled; fillcolor="#FADBD8"; color="#E74C3C";
+            fontcolor="#C0392B"; fontsize=11;
+
+            t_calc [label="USMCA + Metal Scaling\n+ Floors + Stacking\n(hardcoded rules)", shape=box, style="filled,rounded", fillcolor="#FDEDEC"];
+        }
+
+        t_timeseries [label="rate_timeseries.rds\n(daily series)", shape=note, style=filled, fillcolor="#D5F5E3"];
+
+        subgraph cluster_bridge {
+            label=<<B>generate_etrs_config.R</B><BR/>(bridge layer)>;
+            style=filled; fillcolor="#FEF9E7"; color="#F39C12";
+            fontcolor="#E67E22"; fontsize=11;
+
+            strip [label="STRIP final_rate\nExport statutory rates\n+ params YAML", shape=box, style="filled,rounded", fillcolor="#FEF5E1"];
+        }
+    }
+
+    // =====================================================================
+    // THE CSV INTERFACE
+    // =====================================================================
+    csv_dirs [
+        label=<<B>config/historical/{date}/</B><BR/>40 folders x 15MB CSV + YAML<BR/>(~600MB on disk)>,
+        shape=folder, style=filled, fillcolor="#FDEBD0", color="#E67E22"
+    ];
+
+    // =====================================================================
+    // ETRs
+    // =====================================================================
+    subgraph cluster_etrs {
+        label=<<B>Tariff-ETRs/</B>>;
+        style=filled; fillcolor="#F5EEF8"; color="#8E44AD";
+        fontsize=14; fontcolor="#8E44AD";
+
+        e_load [label="Load CSV + Parse Config\n(40x, ~20 sec each)\nAlso re-loads metal content\neach time", shape=box, style="filled,rounded", fillcolor=white];
+
+        subgraph cluster_e_engine {
+            label="Calculation Engine  (DUPLICATE)";
+            style=filled; fillcolor="#FADBD8"; color="#E74C3C";
+            fontcolor="#C0392B"; fontsize=11;
+
+            e_calc [label="USMCA + Metal Scaling\n+ Floors + Stacking\n(hardcoded rules)", shape=box, style="filled,rounded", fillcolor="#FDEDEC"];
+        }
+
+        e_reform [label="Reform Overlay\n(YAML diffs)", shape=box, style="filled,rounded", fillcolor=white];
+        e_delta [label="Import Weighting\n+ Delta Computation", shape=box, style="filled,rounded", fillcolor=white];
+
+        subgraph cluster_gtap {
+            label="GTAP Post-Processing";
+            style=filled; fillcolor="#FEF9E7"; color="#F39C12";
+            fontcolor="#E67E22"; fontsize=10;
+            gtap [label="HS10->GTAP crosswalk\nCountry->Partner aggregation\nShock formatting", shape=box, style="filled,rounded", fillcolor="#FEF5E1"];
+        }
+
+        output [label="Output:\nDeltas, Levels,\nGTAP Shocks", shape=note, style=filled, fillcolor="#D5F5E3"];
+    }
+
+    // =====================================================================
+    // EDGES
+    // =====================================================================
+    hts -> t_parse;
+    bea -> t_calc [style=dashed, color="#999999", label="  data"];
+    bea -> e_calc [style=dashed, color="#999999", label="  same data  "];
+    census -> e_delta [style=dashed, color="#999999"];
+
+    t_parse -> t_calc;
+    t_calc -> t_timeseries;
+    t_calc -> strip [label=<<I>discards computed<BR/>final_rate</I>>, fontcolor="#E67E22", color="#E67E22"];
+    strip -> csv_dirs [color="#E67E22", penwidth=2];
+
+    csv_dirs -> e_load [
+        label=<<B>  40 reads x 3.9M rows</B><BR/>  <I>bottleneck</I>>,
+        color="#E74C3C", fontcolor="#C0392B", penwidth=2
+    ];
+    e_load -> e_reform;
+    e_reform -> e_calc;
+    e_calc -> e_delta [label=<<I>re-derives same<BR/>final_rate</I>>, fontcolor="#C0392B"];
+    e_delta -> gtap;
+    gtap -> output;
+
+    // =====================================================================
+    // ANNOTATIONS
+    // =====================================================================
+    { rank=same; hts; census; bea; }
+
+    legend [
+        shape=plaintext,
+        label=<
+            <TABLE BORDER="0" CELLBORDER="1" CELLSPACING="0" CELLPADDING="6">
+            <TR><TD BGCOLOR="#FADBD8">Red</TD><TD ALIGN="LEFT">Duplicated calculation logic (maintained in two repos)</TD></TR>
+            <TR><TD BGCOLOR="#FEF9E7">Orange</TD><TD ALIGN="LEFT">Bridge / waste (strips results, reformats, wrong-repo concerns)</TD></TR>
+            <TR><TD COLSPAN="2" ALIGN="LEFT"><B>Runtime: ~20-30 min</B> for 40-date scenario<BR/>(40x CSV parse + 40x full engine run)</TD></TR>
+            </TABLE>
+        >
+    ];
+}

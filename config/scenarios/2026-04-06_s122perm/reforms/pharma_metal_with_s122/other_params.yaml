@@ -23,3 +23,7 @@ metal_content:
   - '76'
   - '74'
   metal_programs: []
+
+us_metal_origin_share: 0.01
+de_minimis_weight_share: 0.02
+motorcycle_mfg_share: 0.001

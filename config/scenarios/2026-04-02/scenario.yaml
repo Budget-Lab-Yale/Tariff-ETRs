@@ -47,19 +47,4 @@ counterfactual:
   - '2026-02-12'      # Argentina beef quota
   - '2026-02-20'      # IEEPA invalidated (SCOTUS); Section 122 Phase 3 (10%)
 
-  # Section 232 Metal Content Overhaul — full value tariffs, new annex tiers
-  - date: '2026-04-06'
-    historical: '2026-02-24'
-    reform: 'reforms/metal_232'
-
-  # S122 expiry (150 days after 2026-02-20) + metal overhaul persists
-  - date: '2026-07-20'
-    historical: '2026-02-24'
-    reform: 'reforms/metal_232_s122_expired'
-
-  # Section 232 Pharmaceuticals — best guess (generic + exempt carveouts)
-  - date: '2026-09-29'
-    historical: '2026-02-20'
-    reform: 'reforms/pharma_232'
-
 series_horizon: '2026-12-31'

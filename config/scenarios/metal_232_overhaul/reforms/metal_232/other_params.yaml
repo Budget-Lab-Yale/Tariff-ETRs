@@ -16,8 +16,19 @@ metal_content:
   - '74'
   metal_programs: []
 
-# US-origin metal discount: share of imports where metal was processed in the US
-# (smelted/cast for aluminum/copper, melted/poured for steel).
-# Blends the full 232 rate with the 10% US-origin rate.
-# Set to 0 = no discount (default). Increase to model US round-tripping.
-us_metal_origin_share: 0
+# Section 232 exemption shares (April 6, 2026 EO)
+# These share-based parameters reduce effective S232 rates for specific exemption
+# categories. Values from GTA/SGEPT calibration pending empirical CBP data.
+#
+# US-origin metal: articles where metal was melted/poured (steel) or smelted/cast
+#   (aluminum/copper) in the US receive 10% rate instead of full annex rate.
+#   Applies to all annexes. Blended: rate * (1 - share) + 0.10 * share.
+us_metal_origin_share: 0.01
+#
+# De minimis weight: products where metal < 15% of product weight are exempt from
+#   S232. Applies to Annex I-B and III only, excluding primary chapters (72-76).
+de_minimis_weight_share: 0.02
+#
+# Motorcycle manufacturing: parts imported exclusively for US motorcycle production
+#   are exempt. Applies to Annex I-B only, chapters 84, 85, 87.
+motorcycle_mfg_share: 0.001

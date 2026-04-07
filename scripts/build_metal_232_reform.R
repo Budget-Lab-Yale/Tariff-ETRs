@@ -167,6 +167,22 @@ for (i in seq_along(lines)) {
   # Skip years
   if (code %in% c('2025', '2026', '2027', '2028', '2029')) next
 
+  # Skip heading references in multi-line descriptions.
+  # When a description wraps across lines, a heading reference like "heading\n8427"
+  # can place a bare chapter number at the start of a line, fooling the regex.
+  # Detect by checking if the previous line ends with "heading" or "headings".
+  if (i > 1) {
+    prev_trimmed <- str_trim(lines[i - 1])
+    if (str_detect(prev_trimmed, '(?i)headings?\\s*$')) next
+    # Also skip range patterns ("8701 to 8705") that appear in descriptions
+    if (str_detect(lines[i], '^\\s*\\d{4}\\s+to\\s+\\d{4}')) next
+    # Skip codes embedded in description text: if previous line is a description
+    # (starts with a letter and is long) AND this line has "heading" somewhere,
+    # the code is a cross-reference, not a product
+    if (str_detect(prev_trimmed, '^[A-Za-z]') && nchar(prev_trimmed) > 20 &&
+        str_detect(lines[i], '(?i)heading')) next
+  }
+
   key <- paste(sec$annex, sec$type, sep = '_')
   if (is.null(section_codes[[key]])) {
     section_codes[[key]] <- character(0)
@@ -267,6 +283,87 @@ for (prog_name in names(iii_keys)) {
   if (!is.null(codes) && length(codes) > 0) {
     programs[[prog_name]] <- build_program(codes, 0.0001, uk_rate = 0.0001,
                                            target_total_rate = 0.15)
+  }
+}
+
+# --- Annex II exclusions ---
+# The EO lists codes at mixed granularity: a 6-digit code in Annex I-B (e.g., 850300)
+# means "all HS8 sub-codes under 8503.00". But some specific HS8 sub-codes under
+# that prefix are explicitly removed via Annex II (e.g., 85030045, 85030090).
+# Annex II takes precedence. We handle this by expanding both the active program
+# codes and Annex II codes to HS10, removing overlaps, and rebuilding.
+
+annex_ii_codes <- c(
+  section_codes[['ii_steel_derivatives']] %||% character(0),
+  section_codes[['ii_aluminum_derivatives']] %||% character(0)
+)
+
+if (length(annex_ii_codes) > 0) {
+  message('\nApplying Annex II exclusions...')
+
+  # Load HS10 universe from historical CSV to expand prefixes
+  hs10_universe <- hist_data_raw <- read_csv(
+    historical_csv, show_col_types = FALSE,
+    col_select = 'hts10',
+    col_types = cols(hts10 = col_character())
+  ) %>% pull(hts10) %>% unique()
+
+  # Expand Annex II codes to HS10 set
+  ii_hs10 <- character(0)
+  for (code in annex_ii_codes) {
+    ii_hs10 <- c(ii_hs10, hs10_universe[str_starts(hs10_universe, code)])
+  }
+  ii_hs10 <- unique(ii_hs10)
+  message(sprintf('  Annex II covers %d HS10 codes', length(ii_hs10)))
+
+  # For each active program, check for Annex II overlaps
+  active_progs <- c(
+    'steel_ia', 'steel_derivatives_ia', 'aluminum_ia', 'aluminum_derivatives_ia',
+    'copper_ia', 'steel_derivatives_ib', 'aluminum_derivatives_ib', 'copper_ib',
+    'steel_derivatives_iii', 'aluminum_derivatives_iii'
+  )
+
+  for (prog_name in active_progs) {
+    if (is.null(programs[[prog_name]])) next
+    codes <- programs[[prog_name]]$base
+
+    # Expand program codes to HS10
+    prog_hs10 <- character(0)
+    for (code in codes) {
+      prog_hs10 <- c(prog_hs10, hs10_universe[str_starts(hs10_universe, code)])
+    }
+    prog_hs10 <- unique(prog_hs10)
+
+    # Find overlap with Annex II
+    overlap <- intersect(prog_hs10, ii_hs10)
+    if (length(overlap) == 0) next
+
+    message(sprintf('  %s: %d HS10 codes overlap with Annex II', prog_name, length(overlap)))
+
+    # Identify which prefix codes have partial overlap (some sub-codes removed)
+    # For each original code, check if ALL its expansions are in Annex II (full remove)
+    # or only some (partial — need to split into specific HS10 codes)
+    new_codes <- character(0)
+    for (code in codes) {
+      code_hs10 <- hs10_universe[str_starts(hs10_universe, code)]
+      code_overlap <- intersect(code_hs10, ii_hs10)
+
+      if (length(code_overlap) == 0) {
+        # No overlap — keep original code as-is
+        new_codes <- c(new_codes, code)
+      } else if (length(code_overlap) == length(code_hs10)) {
+        # Entire prefix removed by Annex II — drop this code
+        message(sprintf('    Dropping %s (fully in Annex II)', code))
+      } else {
+        # Partial overlap — replace prefix with specific HS10 codes not in Annex II
+        kept <- setdiff(code_hs10, ii_hs10)
+        message(sprintf('    Splitting %s: %d kept, %d removed',
+                        code, length(kept), length(code_overlap)))
+        new_codes <- c(new_codes, kept)
+      }
+    }
+
+    programs[[prog_name]]$base <- sort(unique(new_codes))
   }
 }
 

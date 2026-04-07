@@ -3,17 +3,17 @@ baseline: '2025-01-01'
 counterfactual:
   # Metal overhaul (s122 still active, pharma not yet)
   - date: '2026-04-06'
-    historical: '2026-02-24'
+    historical: '2026-02-20'
     reform: 'reforms/metal_232'
 
   # Metal overhaul + s122 expired (pharma not yet)
   - date: '2026-07-20'
-    historical: '2026-02-24'
+    historical: '2026-02-20'
     reform: 'reforms/metal_232_s122_expired'
 
   # Metal overhaul + s122 expired + pharma 232
   - date: '2026-09-29'
-    historical: '2026-02-24'
+    historical: '2026-02-20'
     reform: 'reforms/metal_232_s122_expired_pharma'
 
 series_horizon: '2026-12-31'

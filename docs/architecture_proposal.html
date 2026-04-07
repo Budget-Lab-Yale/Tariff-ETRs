@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tariff Rate Tracker: Proposed Architecture Redesign</title>
+<style>
+  body {
+    font-family: 'Georgia', serif;
+    max-width: 800px;
+    margin: 40px auto;
+    padding: 0 20px;
+    line-height: 1.7;
+    color: #2c3e50;
+    font-size: 16px;
+  }
+  h1 {
+    font-size: 1.8em;
+    border-bottom: 2px solid #2c3e50;
+    padding-bottom: 8px;
+    margin-top: 0;
+  }
+  h2 {
+    font-size: 1.3em;
+    color: #34495e;
+    margin-top: 2em;
+  }
+  .subtitle {
+    color: #7f8c8d;
+    font-size: 0.95em;
+    margin-top: -10px;
+    margin-bottom: 30px;
+  }
+  .diagram {
+    text-align: center;
+    margin: 30px 0;
+  }
+  .diagram img {
+    max-width: 100%;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+  }
+  .diagram .caption {
+    font-size: 0.85em;
+    color: #7f8c8d;
+    margin-top: 8px;
+  }
+  .callout {
+    background: #f8f9fa;
+    border-left: 4px solid #3498db;
+    padding: 12px 16px;
+    margin: 20px 0;
+    font-size: 0.95em;
+  }
+  .callout.problem {
+    border-left-color: #e74c3c;
+    background: #fdf2f2;
+  }
+  .callout.result {
+    border-left-color: #27ae60;
+    background: #f2fdf5;
+  }
+  code {
+    background: #f0f0f0;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-size: 0.9em;
+  }
+  .folder-tree {
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 0.85em;
+    background: #f8f9fa;
+    padding: 16px 20px;
+    border-radius: 4px;
+    line-height: 1.5;
+    white-space: pre;
+    overflow-x: auto;
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 16px 0;
+    font-size: 0.9em;
+  }
+  th, td {
+    border: 1px solid #ddd;
+    padding: 8px 12px;
+    text-align: left;
+  }
+  th {
+    background: #f8f9fa;
+    font-weight: bold;
+  }
+  .page-break {
+    page-break-before: always;
+    margin-top: 3em;
+  }
+  hr {
+    border: none;
+    border-top: 1px solid #eee;
+    margin: 2em 0;
+  }
+</style>
+</head>
+<body>
+
+<h1>Tariff Rate Infrastructure: Proposed Redesign</h1>
+<p class="subtitle">John Ricco &mdash; April 2026</p>
+
+<h2>The Problem</h2>
+
+<p>We currently maintain two R repositories for tariff rate analysis: <strong>tariff-rate-tracker</strong> (which parses USITC data and computes tariff rates from source) and <strong>Tariff-ETRs</strong> (which runs counterfactual scenarios and computes deltas against a baseline). These repos duplicate about 800 lines of identical calculation logic&mdash;the same stacking rules, USMCA exemptions, metal content scaling, and floor rate logic, maintained independently in two places.</p>
+
+<p>A bridge script (<code>generate_etrs_config.R</code>) connects the two. It takes the tracker's computed tariff rates, <em>strips the final answer</em>, and exports the raw per-authority statutory rates to dense CSV files. ETRs then reads those CSVs and re-derives the same final answer using its own copy of the calculation engine&mdash;40 times sequentially for a typical time-varying scenario.</p>
+
+<div class="callout problem">
+<strong>Result:</strong> A 40-date scenario takes 20&ndash;30 minutes to run, dominated by reading 40 large CSV files (3.9M rows each) and running 40 full engine passes. The tracker already computed these answers; ETRs is just re-doing the work.
+</div>
+
+<div class="diagram">
+  <img src="architecture_current.svg" alt="Current architecture diagram">
+  <div class="caption">Current architecture: two repos, duplicated logic (red), bridge layer (orange)</div>
+</div>
+
+<h2>The Proposal</h2>
+
+<p>Consolidate everything into <strong>tariff-rate-tracker</strong> as the single repository for tariff rate computation&mdash;both historical tracking and counterfactual analysis. Move GTAP-specific post-processing (sector crosswalks, partner aggregation, shock formatting) to whatever downstream repo runs the GTAP model. Archive Tariff-ETRs.</p>
+
+<p>The redesign is built on three ideas:</p>
+
+<p><strong>1. Separate data from config.</strong> Import weights, metal content shares (from BEA), USMCA utilization rates (from DataWeb), and MFN exemption shares (from Census) are <em>data</em>&mdash;they describe the world and change annually at most. Tariff rates, adjustment parameters, and stacking rules are <em>config</em>&mdash;they describe policy and change with each Executive Order. Data is loaded once per run and shared across all dates. Config is per-revision, stored in its own folder.</p>
+
+<p><strong>2. Parameterize the stacking rules.</strong> Today the stacking logic is hardcoded in R: a <code>case_when</code> that knows "fentanyl stacks for China but not others" and "Section 301 is always cumulative." In the redesign, these rules live in a <code>stacking.yaml</code> file. Each authority declares its behavior (<em>exclusive with 232</em> or <em>cumulative</em>) and any country-level overrides. The engine reads the YAML and applies generic logic&mdash;no authority names hardcoded. Adding a new tariff authority means adding a YAML entry, not editing R code.</p>
+
+<p><strong>3. Cache aggressively, re-compute only when needed.</strong> The HTS parser generates a config folder for each revision date. The engine then pre-computes <code>final_rates.rds</code> for each folder and caches it. When running a scenario, historical dates just read the cache (instant). Only dates with a reform overlay need to re-run the engine. For a typical 40-date scenario with one reform, that's 39 cache reads plus 1 engine run.</p>
+
+<div class="diagram">
+  <img src="architecture_proposed.svg" alt="Proposed architecture diagram">
+  <div class="caption">Proposed architecture: single repo, config/data separation, parameterized engine</div>
+</div>
+
+<h2 class="page-break">How It Works</h2>
+
+<p>The system has four components. The first two are <em>preprocessing</em> (run once, cached). The second two are <em>scenario analysis</em> (run on demand).</p>
+
+<p><strong>HTS Parser</strong> &mdash; Reads USITC HTS JSON archives, extracts Chapter 99 footnotes, classifies tariff authorities, and generates a config folder for each revision date. This is the tracker's existing core capability. Each folder contains three files:</p>
+
+<div class="folder-tree">config/historical/2025-04-02/
+  rates.csv.gz      Statutory rates per authority, hs10 x country (sparse)
+  params.yaml       Adjustment parameters (rebate, USMCA flags, metal method, floors)
+  stacking.yaml     How authorities interact (exclusive, cumulative, overrides)</div>
+
+<p><strong>Engine</strong> &mdash; A set of pure R functions: <code>compute_final_rates(config, data)</code>. Takes a rate table (from config) and product/country characteristics (from data), applies adjustments (USMCA, metal scaling, MFN exemptions, floor rates), then applies stacking rules (from <code>stacking.yaml</code>). Returns a <code>final_rate</code> per product and country. Used by both preprocessing (to populate the cache) and the scenario runner (for reformed dates).</p>
+
+<p><strong>Scenario Builder</strong> &mdash; Reads a <code>scenario.yaml</code> that defines a baseline date, a timeline, and any reforms. Resolves the timeline to a set of revision dates (by default, all historical revisions between baseline and horizon). For each date, assembles the appropriate config: either the historical folder as-is, or the historical folder with a reform overlay applied.</p>
+
+<p><strong>Delta Computation</strong> &mdash; For each date in the timeline, joins the assembled config with data, runs the engine (or reads the cache), and computes the delta (counterfactual rate minus baseline rate) weighted by import values. Writes country-level and HTS2-level output files.</p>
+
+<h2>What a Scenario Looks Like</h2>
+
+<p>A scenario is defined by a short YAML file. The keyword <code>historical</code> means "follow all revision dates from the tracker's timeline automatically"&mdash;no need to enumerate them. You only specify where you diverge from history:</p>
+
+<div class="folder-tree">baseline: '2025-01-01'
+counterfactual: historical
+reforms:
+  - date: '2026-07-20'
+    from: '2026-02-20'
+    apply: reforms/s122_expired
+series_horizon: '2026-12-31'</div>
+
+<p>A reform is a diff against a historical config folder. It can override rates, parameters, and/or stacking rules:</p>
+
+<div class="folder-tree">rates:
+  s122: 0                        # zero out all Section 122 rates
+params:
+  s122_usmca_exception: 1       # change an adjustment parameter
+stacking:
+  ieepa_fentanyl:
+    type: cumulative             # change how an authority stacks</div>
+
+<div class="callout result">
+<strong>Result:</strong> A 40-date scenario runs in ~30 seconds (39 cached reads at ~0.1s each + 1 engine run at ~2s + import weighting). Down from 20&ndash;30 minutes. The stacking rules live in one place. No bridge file, no format conversion, no duplicated logic.
+</div>
+
+<h2>Migration Plan</h2>
+
+<table>
+<tr><th>Phase</th><th>What</th><th>Effort</th></tr>
+<tr><td>1</td><td>Extract engine functions from ETRs, parameterize stacking rules into YAML, wire into tracker</td><td>~3 days</td></tr>
+<tr><td>2</td><td>Port scenario runner into tracker (scenario.yaml, reform overlays, delta computation, import weighting)</td><td>~2 days</td></tr>
+<tr><td>3</td><td>Verify output parity: tracker scenario output matches ETRs output for existing scenarios</td><td>~1 day</td></tr>
+<tr><td>4</td><td>Move GTAP post-processing to downstream repo. Delete <code>generate_etrs_config.R</code>. Archive Tariff-ETRs.</td><td>~1 day</td></tr>
+</table>
+
+</body>
+</html>

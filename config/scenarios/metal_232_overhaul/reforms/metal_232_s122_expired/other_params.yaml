@@ -1,11 +1,10 @@
-# Combined: Section 232 Metal Overhaul + Section 122 Expired
+# Section 232 Metal Content Overhaul (April 6, 2026)
+# EO: "Strengthening Actions Taken to Adjust Imports of Aluminum, Steel, and Copper"
 #
-# Metal overhaul (April 6, 2026): full-value tariffs, disable metal_share scaling
-# S122 expiry (July 20, 2026): 150-day sunset
-
-disable_authorities:
-  - s122
-
+# Tariffs now apply to full customs value — disable metal_share scaling.
+# Setting metal_programs to empty list means:
+#   - No metal_share scaling of 232 rates (rates apply at face value)
+#   - nonmetal_share = 0 for all products (IEEPA fully displaced by 232)
 metal_content:
   method: bea
   bea_table: total
@@ -17,4 +16,19 @@ metal_content:
   - '74'
   metal_programs: []
 
-us_metal_origin_share: 0
+# Section 232 exemption shares (April 6, 2026 EO)
+# These share-based parameters reduce effective S232 rates for specific exemption
+# categories. Values from GTA/SGEPT calibration pending empirical CBP data.
+#
+# US-origin metal: articles where metal was melted/poured (steel) or smelted/cast
+#   (aluminum/copper) in the US receive 10% rate instead of full annex rate.
+#   Applies to all annexes. Blended: rate * (1 - share) + 0.10 * share.
+us_metal_origin_share: 0.01
+#
+# De minimis weight: products where metal < 15% of product weight are exempt from
+#   S232. Applies to Annex I-B and III only, excluding primary chapters (72-76).
+de_minimis_weight_share: 0.02
+#
+# Motorcycle manufacturing: parts imported exclusively for US motorcycle production
+#   are exempt. Applies to Annex I-B only, chapters 84, 85, 87.
+motorcycle_mfg_share: 0.001
