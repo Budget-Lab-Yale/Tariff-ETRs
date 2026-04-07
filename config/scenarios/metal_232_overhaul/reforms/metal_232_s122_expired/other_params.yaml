@@ -1,10 +1,13 @@
-# Section 232 Metal Content Overhaul (April 6, 2026)
+# Section 232 Metal Content Overhaul (April 6, 2026) + S122 expired
 # EO: "Strengthening Actions Taken to Adjust Imports of Aluminum, Steel, and Copper"
 #
 # Tariffs now apply to full customs value — disable metal_share scaling.
 # Setting metal_programs to empty list means:
 #   - No metal_share scaling of 232 rates (rates apply at face value)
 #   - nonmetal_share = 0 for all products (IEEPA fully displaced by 232)
+disable_authorities:
+  - s122
+
 metal_content:
   method: bea
   bea_table: total
