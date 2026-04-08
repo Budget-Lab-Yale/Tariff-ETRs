@@ -57,7 +57,7 @@ rm(snap); gc()
 cat('\n\n=== ETRs VIEW ===\n')
 
 # Load the statutory_rates CSV to see what ETRs starts from
-config_dir <- file.path(etrs_dir, 'config', 'historical', '2026-02-20')
+config_dir <- file.path(etrs_dir, 'config', 'historical', '2026-02-24')
 csv_path <- file.path(config_dir, 'statutory_rates.csv.gz')
 csv <- read_csv(csv_path, col_types = cols(.default = col_character()))
 

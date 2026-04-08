@@ -7,19 +7,19 @@
 baseline: '2025-01-01'
 
 counterfactual:
-  # Layer 0: Current law (2026-02-20) minus S122
+  # Layer 0: Current law (2026-02-24) minus S122
   - date: '2026-03-01'
-    historical: '2026-02-20'
+    historical: '2026-02-24'
     reform: '../2026-04-02/reforms/s122_disabled'
 
   # Layer 1: + best-guess pharma (no S122)
   - date: '2026-03-02'
-    historical: '2026-02-20'
+    historical: '2026-02-24'
     reform: '../2026-04-02/reforms/pharma_232'
 
   # Layer 2: + metal overhaul (no S122)
   - date: '2026-03-03'
-    historical: '2026-02-20'
+    historical: '2026-02-24'
     reform: '../2026-04-02/reforms/pharma_metal_no_s122'
 
 series_horizon: '2026-12-31'

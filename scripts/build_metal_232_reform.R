@@ -18,7 +18,7 @@
 #
 # Default annex path: C:/Users/jar335/Downloads/annex.txt
 # Default output dir: config/scenarios/metal_232_overhaul/reforms/metal_232
-# Default historical CSV: config/historical/2026-02-20/statutory_rates.csv.gz
+# Default historical CSV: config/historical/2026-02-24/statutory_rates.csv.gz
 # =============================================================================
 
 library(stringr)
@@ -34,7 +34,7 @@ args <- commandArgs(trailingOnly = TRUE)
 annex_path <- if (length(args) >= 1) args[1] else 'C:/Users/jar335/Downloads/annex.txt'
 output_dir <- if (length(args) >= 2) args[2] else 'config/scenarios/metal_232_overhaul/reforms/metal_232'
 # Historical CSV for extracting old 232 product scope (used for legacy zeroing)
-historical_csv <- if (length(args) >= 3) args[3] else 'config/historical/2026-02-20/statutory_rates.csv.gz'
+historical_csv <- if (length(args) >= 3) args[3] else 'config/historical/2026-02-24/statutory_rates.csv.gz'
 mfn_path <- 'resources/mfn_rates_2025.csv'
 
 if (!file.exists(annex_path)) {

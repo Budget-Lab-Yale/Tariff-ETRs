@@ -54,12 +54,12 @@ A scenario is defined by a `scenario.yaml` in `config/scenarios/{name}/`:
 baseline: '2025-01-01'
 
 counterfactual:
-  - '2026-02-20'                         # Use historical config as-is
+  - '2026-02-24'                         # Use historical config as-is
   - date: '2026-04-06'                   # Historical + reform overlay
-    historical: '2026-02-20'
+    historical: '2026-02-24'
     reform: 'reforms/metal_232'
   - date: '2026-07-20'
-    historical: '2026-02-20'
+    historical: '2026-02-24'
     reform: 'reforms/metal_232_s122_expired'
 
 series_horizon: '2026-12-31'

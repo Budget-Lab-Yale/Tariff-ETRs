@@ -10,7 +10,7 @@ xwalk <- read_csv('resources/hs10_gtap_crosswalk.csv', show_col_types = FALSE,
                    col_types = cols(hs10 = col_character()))
 
 # Get all HS10 codes from the latest tracker CSV
-csv_data <- read_csv('config/historical/2026-02-20/statutory_rates.csv.gz',
+csv_data <- read_csv('config/historical/2026-02-24/statutory_rates.csv.gz',
                       show_col_types = FALSE, col_types = cols(hts10 = col_character()),
                       col_select = 'hts10')
 csv_hs10 <- sort(unique(csv_data$hts10))

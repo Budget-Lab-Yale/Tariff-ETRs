@@ -25,7 +25,7 @@
 # Usage:
 #   Rscript scripts/test_scenarios.R [config_dir]
 #
-# Default config_dir: config/historical/2026-02-20 (has all authority types)
+# Default config_dir: config/historical/2026-02-24 (has all authority types)
 #
 # Note on rate_s122: Section 122 is included in the stacking formula but has
 # no dedicated scenario toggle in the original plan. This is because S122 is
@@ -49,7 +49,7 @@ source('src/calculations.R')
 # =============================================================================
 
 args <- commandArgs(trailingOnly = TRUE)
-config_dir <- if (length(args) >= 1) args[[1]] else 'config/historical/2026-02-20'
+config_dir <- if (length(args) >= 1) args[[1]] else 'config/historical/2026-02-24'
 
 message('=============================================================================')
 message('Counterfactual Scenario Validation')

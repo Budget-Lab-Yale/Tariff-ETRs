@@ -45,6 +45,6 @@ counterfactual:
   - '2026-01-16'      # Semiconductor tariffs (25%)
   - '2026-01-30'
   - '2026-02-12'      # Argentina beef quota
-  - '2026-02-20'      # IEEPA invalidated (SCOTUS); Section 122 Phase 3 (10%)
+  - '2026-02-24'      # IEEPA invalidated (SCOTUS); Section 122 Phase 3 (10%)
 
 series_horizon: '2026-12-31'

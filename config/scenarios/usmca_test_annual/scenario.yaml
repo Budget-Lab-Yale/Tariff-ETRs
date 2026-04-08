@@ -5,9 +5,9 @@ baseline: '2025-01-01'
 
 counterfactual:
   - '2026-02-12'      # Pre-IEEPA repeal
-  - '2026-02-20'      # IEEPA invalidated; Section 122 Phase 3
+  - '2026-02-24'      # IEEPA invalidated; Section 122 Phase 3
   - date: '2026-07-20'
-    historical: '2026-02-20'
+    historical: '2026-02-24'
     reform: 'reforms/s122_expired'
 
 series_horizon: '2026-12-31'

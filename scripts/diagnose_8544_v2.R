@@ -63,7 +63,7 @@ source(file.path(etrs_dir, 'src', 'config_parsing.R'))
 imports <- readRDS(file.path(etrs_dir, 'cache', 'hs10_by_country_gtap_2024_con.rds')) %>%
   filter(!stringr::str_detect(hs10, '^(98|99)'), !is.na(gtap_code))
 
-other_params <- yaml::read_yaml(file.path(etrs_dir, 'config', 'historical', '2026-02-20', 'other_params.yaml'))
+other_params <- yaml::read_yaml(file.path(etrs_dir, 'config', 'historical', '2026-02-24', 'other_params.yaml'))
 bea_shares <- load_metal_content(
   metal_content_config = other_params$metal_content,
   import_data = imports

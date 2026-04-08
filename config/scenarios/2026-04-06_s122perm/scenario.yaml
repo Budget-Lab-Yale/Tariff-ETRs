@@ -1,6 +1,6 @@
 # Current law through 2026 (S122 permanent)
 #
-# Base: 2026-02-20 (post-IEEPA overturn, S122 active)
+# Base: 2026-02-24 (post-IEEPA overturn, S122 active)
 # April 6: Metal 232 overhaul (full-value annex tiers)
 # Sept 29: Pharma 232 layers on
 # S122 stays active throughout (no July 20 expiry)
@@ -9,16 +9,16 @@ baseline: '2025-01-01'
 
 counterfactual:
   # Current law baseline (S122 active, no metal/pharma reforms)
-  - '2026-02-20'
+  - '2026-02-24'
 
   # Metal 232 overhaul kicks in, S122 stays active
   - date: '2026-04-06'
-    historical: '2026-02-20'
+    historical: '2026-02-24'
     reform: 'reforms/metal_232'
 
   # Pharma 232 layers on, S122 still active
   - date: '2026-09-29'
-    historical: '2026-02-20'
+    historical: '2026-02-24'
     reform: 'reforms/pharma_metal_with_s122'
 
 series_horizon: '2026-12-31'

@@ -12,7 +12,7 @@ message(sprintf('Loading timeseries from %s ...', ts_path))
 ts <- readRDS(ts_path)
 message(sprintf('Loaded %s rows', format(nrow(ts), big.mark = ',')))
 
-remaining_dates <- c('2026-02-12', '2026-02-20')
+remaining_dates <- c('2026-02-12', '2026-02-24')
 
 for (d in remaining_dates) {
   output_dir <- file.path('config/historical', d)
