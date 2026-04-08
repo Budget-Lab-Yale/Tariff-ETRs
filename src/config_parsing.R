@@ -703,7 +703,7 @@ load_metal_content <- function(metal_content_config = NULL,
       # Unmatched: per-type shares = 0, total falls back to flat_share
       steel_share       = if_else(is.na(steel_share), 0, steel_share),
       aluminum_share    = if_else(is.na(aluminum_share), 0, aluminum_share),
-      copper_share      = if_else(is.na(copper_share), 0, copper_share),
+      copper_share      = if_else(is.na(copper_share), 0, pmin(copper_share, 1.0)),
       other_metal_share = if_else(is.na(other_metal_share), 0, other_metal_share),
       metal_share       = if_else(is.na(metal_share), flat_share, metal_share)
     ) %>%
