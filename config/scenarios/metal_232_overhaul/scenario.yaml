@@ -7,7 +7,7 @@ counterfactual:
     reform: 'reforms/metal_232'
 
   # Metal overhaul + s122 expired (pharma not yet)
-  - date: '2026-07-20'
+  - date: '2026-07-24'
     historical: '2026-02-24'
     reform: 'reforms/metal_232_s122_expired'
 

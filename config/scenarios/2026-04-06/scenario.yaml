@@ -17,7 +17,7 @@ counterfactual:
     reform: 'reforms/metal_232'
 
   # S122 expires (150 days), metal overhaul persists
-  - date: '2026-07-20'
+  - date: '2026-07-24'
     historical: '2026-02-24'
     reform: 'reforms/metal_232_s122_expired'
 
