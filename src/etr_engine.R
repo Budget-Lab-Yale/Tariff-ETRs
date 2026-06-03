@@ -348,9 +348,22 @@ calc_weighted_etr <- function(rates_s232,
   #            (2) hs8-level from YAML config with optional exemption shares.
   if (!is.null(mfn_rates_by_product_country)) {
 
-    # CSV path: MFN at hs10×country level (statutory, pre-exemption)
+    # CSV path: MFN at hs10×country level (statutory, pre-exemption).
+    # Historical CSV snapshots are sparse and may omit (hs10, cty) pairs that
+    # had no special tariffs at that date. Fall back to hs8-level MFN for any
+    # row not covered by the CSV so baseline scenarios still carry MFN.
     rate_matrix <- rate_matrix %>%
-      left_join(mfn_rates_by_product_country, by = c('hs10', 'cty_code')) %>%
+      left_join(mfn_rates_by_product_country, by = c('hs10', 'cty_code'))
+
+    if (!is.null(mfn_rates)) {
+      rate_matrix <- rate_matrix %>%
+        mutate(hs8 = substr(hs10, 1, 8)) %>%
+        left_join(mfn_rates %>% rename(mfn_rate_hs8 = mfn_rate), by = 'hs8') %>%
+        mutate(mfn_rate = coalesce(mfn_rate, mfn_rate_hs8)) %>%
+        select(-hs8, -mfn_rate_hs8)
+    }
+
+    rate_matrix <- rate_matrix %>%
       mutate(
         mfn_rate = if_else(is.na(mfn_rate), 0, mfn_rate),
         statutory_mfn = mfn_rate

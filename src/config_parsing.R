@@ -892,11 +892,26 @@ load_statutory_csv <- function(csv_path, other_params, usmca_product_shares) {
 
   mfn_rates_by_product_country <- NULL
   if ('mfn_rate' %in% all_cols) {
+    # Keep all rows even when mfn_rate == 0, so the join records an explicit
+    # zero rather than falling back to the hs8 default for that (hs10, cty)
+    # combination.
     mfn_rates_by_product_country <- csv %>%
-      select(hs10 = hts10, cty_code, mfn_rate) %>%
-      filter(mfn_rate > 0)
+      select(hs10 = hts10, cty_code, mfn_rate)
     message(sprintf('  MFN: %s rows at hs10×country level',
                     format(nrow(mfn_rates_by_product_country), big.mark = ',')))
+  }
+
+  # ---------------------------------------------------------------------------
+  # MFN hs8 fallback: load the YAML-specified hs8 MFN file when the CSV does
+  # not cover every (hs10, cty_code) pair in the import universe. Historical
+  # snapshot CSVs are sparse (only rows with non-zero special tariffs), so
+  # without a fallback the baseline level for unaffected countries would be 0
+  # and deltas would silently absorb MFN.
+  # ---------------------------------------------------------------------------
+
+  mfn_rates_hs8 <- NULL
+  if (!is.null(other_params$mfn_rates) && file.exists(other_params$mfn_rates)) {
+    mfn_rates_hs8 <- load_mfn_rates(other_params$mfn_rates)
   }
 
   # ---------------------------------------------------------------------------
@@ -912,7 +927,7 @@ load_statutory_csv <- function(csv_path, other_params, usmca_product_shares) {
     rates_s201                     = rates_s201,
     rates_other                    = rates_other,
     other_params                   = other_params,
-    mfn_rates                      = NULL,
+    mfn_rates                      = mfn_rates_hs8,
     mfn_rates_by_product_country   = mfn_rates_by_product_country,
     mfn_exemption_shares           = NULL,
     usmca_product_shares           = usmca_product_shares
